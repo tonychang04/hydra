@@ -1,27 +1,37 @@
-# Commander
+# Hydra
 
-**An open-source Claude Code framework for parallel ticket-clearing with isolated worker subagents.**
+**A long-lasting AI agent with many worker heads.** One persistent brain (the **Commander**), many parallel workers (the **heads**). Clears tickets autonomously. Learns from every run. Gradually replaces the human in the loop.
 
-Commander is a long-running Claude Code session that reads GitHub Issues (Linear support planned), classifies them by risk tier, spawns N isolated worker subagents in parallel to clear them, and surfaces only genuinely novel decisions to a human. Each worker runs in its own git worktree, discovers how to test the repo, implements the fix, runs tests (spinning up Docker if needed), and opens a draft PR. A separate review-worker runs `/review` + `/codex review` before the human sees the PR.
+The metaphor is literal: Hydra has one body (the long-running Commander session that keeps memory, tracks state, routes work, and evolves its own policy) and many heads (short-lived worker subagents, one per ticket, each in its own isolated git worktree). Cut off a head (worker fails), two grow back (retry with what was learned). The body is immortal.
 
-Built on top of [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) and [superpowers skills](https://github.com/anthropics/superpowers).
+## What Hydra does
+
+- Reads GitHub Issues (Linear support planned) — tickets either assigned to the operator or labeled `commander-ready`
+- Classifies each ticket by risk tier (T1 auto-merge / T2 human-merge-gate / T3 refuse)
+- Spawns N isolated worker subagents in parallel, each on its own ticket in its own git worktree
+- Each worker reads the repo's own `CLAUDE.md` / `AGENTS.md` / `.claude/skills/`, discovers how to test the repo (docker, .env.example, Makefile), implements, runs tests, and opens a draft PR
+- A separate **review-worker** runs `/review` + `/codex review` on the PR before the human sees it
+- Workers return `QUESTION:` blocks when uncertain; Commander answers from its accumulated memory first, pings the human only when memory can't resolve
+- Every completed ticket feeds the learning loop: cited patterns → per-repo memory → consistent ones graduate into repo-local skills every future agent inherits
+
+Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) and [superpowers skills](https://github.com/anthropics/superpowers).
 
 ## Identity (on purpose, narrow)
 
-Commander is for **three things. Nothing else:**
+Hydra is for **three things. Nothing else:**
 
 1. **Parallel issue-clearing** — N tickets in flight, each isolated, each producing a draft PR
 2. **Auto-testing** — workers discover how to test any repo (docker, .env.example, makefile), run it, document what worked. The same primitive self-tests the commander itself.
-3. **Future cloud env-spawning** — Phase 2: managed cloud sandboxes so workers can stand up the service end-to-end, not just typecheck.
+3. **Future cloud env-spawning** — Phase 2: managed cloud sandboxes so workers can stand up the service end-to-end, not just typecheck. Commander itself graduates from a local Claude Code session to a VM-hosted loop with a Slack / web / SMS chat surface.
 
-Humans are the exception, not the default. The machine runs while you sleep and pings you only for: merge gates on non-trivial PRs, genuinely novel questions, security tripwires, and weekly retros.
+Humans are the exception, not the default. Hydra runs while you sleep and pings you only for: merge gates on non-trivial PRs, genuinely novel questions, security tripwires, and weekly retros. Every time it has to ping you, the answer gets captured so it won't need to ping again for a similar question. The goal is a slow, measurable reduction in how often a human is in the loop.
 
 ## Quick start
 
 ```bash
 # 1. Clone this repo
-git clone https://github.com/YOUR-USERNAME/commander.git
-cd commander
+git clone https://github.com/tonychang04/hydra.git
+cd hydra
 
 # 2. Export your paths
 export COMMANDER_ROOT=$(pwd)
@@ -64,7 +74,7 @@ The session loads `CLAUDE.md` as its system prompt, greets you with queue status
 ```
 You (chat) ──────────────────────────────────────────────┐
                                                          │
-Commander (this dir's claude session)                    │ ← operator asks
+Commander (the body: this dir's long-lived claude session)│ ← operator asks
   │                                                      │   question only
   ├─ reads MEMORY.md, policy.md, budget.json             │   when memory
   ├─ polls GitHub issues (label: commander-ready)        │   can't resolve
@@ -75,9 +85,10 @@ Commander (this dir's claude session)                    │ ← operator asks
   │        isolation="worktree")  ──┐                    │
   │                                 │                    │
   │                                 ▼                    │
-  │                       Worker (fresh context, own     │
-  │                       worktree, own memory, own      │
-  │                       permission scope)              │
+  │                       Head (one of many workers —    │
+  │                       fresh context, own worktree,   │
+  │                       own memory, own permission     │
+  │                       scope, short-lived)            │
   │                         ↓                            │
   │                       Reads repo's CLAUDE.md /       │
   │                       AGENTS.md / .claude/skills/    │
@@ -236,7 +247,7 @@ This is an opinionated framework. PRs welcome for:
 - S3 knowledge store integration
 
 Out of scope (PRs will be declined):
-- Anything that turns commander into a general chat assistant
+- Anything that turns Hydra into a general chat assistant
 - CEO / design / DX / plan-review workflows (use gstack or similar)
 - Deploy controllers / CI replacements
 - Features that loosen the self-modification safety rules in the permission profile
