@@ -1,0 +1,32 @@
+{
+  "_description": "Template for your own golden self-test cases. Copy to golden-cases.json and add your validated closed PRs. Commander runs workers against these in dryrun mode and compares output. A regression means a commander prompt change made worker output meaningfully worse.",
+  "_how_to_add": "After a manual Stage-0 validation of a closed PR in one of your repos, capture: repo, pr_num, parent_commit (pre-fix), key assertions (what the worker MUST produce), and minimum quality signals (tests added? no source regressions? build passes?).",
+  "cases": [
+    {
+      "id": "example-case-id",
+      "repo": "your-org/your-repo",
+      "local_path": "/absolute/path/to/local/clone",
+      "pr_num": 42,
+      "parent_commit": "abc1234",
+      "worker_type": "worker-implementation",
+      "tier": "T2",
+      "ticket_body_summary": "Short description of what the ticket asked for, as you'd write it if re-opening the issue today",
+      "assertions": {
+        "must_touch_paths": ["src/path/to/expected/file.ts"],
+        "must_not_touch_paths": ["package-lock.json", ".github/**"],
+        "must_include_patterns": ["ExpectedClassName", "specificKeyword"],
+        "tests_expected": true,
+        "build_must_pass": true,
+        "lint_must_pass": true,
+        "max_files_changed": 3
+      },
+      "human_baseline": {
+        "files_changed": 2,
+        "source_loc": 15,
+        "tests_added": 0
+      },
+      "last_run": null,
+      "last_result": null
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "phase": 1,
+  "phase1_subscription_caps": {
+    "max_concurrent_workers": 3,
+    "max_wall_clock_per_ticket_minutes": 30,
+    "max_tokens_per_ticket": 500000,
+    "quota_guard_note": "Commander checks for recent rate-limit errors before spawning. If hit, pauses automatically for 1 hour.",
+    "daily_ticket_cap": 20,
+    "warn_if_in_flight_exceeds_minutes": 45
+  },
+  "phase2_api_caps": {
+    "_note": "Ignored in Phase 1 (subscription). Active when commander moves to VM + Anthropic API.",
+    "daily_cap_usd": 50,
+    "per_ticket_cap_usd": 5
+  },
+  "notes": "Phase 1 (Claude Code subscription): cost is flat; real constraints are rate-limit quota, wall-clock, and concurrency. Phase 2 (Anthropic API on VM): $ caps re-activate."
+}

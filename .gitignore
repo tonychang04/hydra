@@ -1,0 +1,36 @@
+# Project-specific knowledge (Phase 2: moves to S3; Phase 1: local-only, never committed)
+memory/learnings-*.md
+!memory/learnings-*.example.md
+memory/archive/
+
+# Runtime state
+state/active.json
+state/budget-used.json
+state/memory-citations.json
+state/quota-health.json
+state/repos.json
+state/commander.lock
+
+# Live operational artifacts
+logs/*
+!logs/.gitkeep
+PAUSE
+
+# Operator-specific config with absolute paths
+.claude/settings.local.json
+!.claude/settings.local.json.example
+
+# Self-test cases reference specific repos on the operator's machine
+self-test/golden-cases.json
+!self-test/golden-cases.example.json
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Node (in case test-discovery runs npm)
+node_modules/
