@@ -9,6 +9,7 @@ state/budget-used.json
 state/memory-citations.json
 state/quota-health.json
 state/repos.json
+state/linear.json
 state/commander.lock
 
 # Live operational artifacts

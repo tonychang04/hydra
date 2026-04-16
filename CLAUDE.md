@@ -56,9 +56,10 @@ When the operator sends a command:
    - Today's ticket count < `daily_ticket_cap`
    - No recent rate-limit error in `state/quota-health.json` (if flagged, auto-pause 1hr)
 3. **Pick tickets** via whichever trigger the repo uses (see `state/repos.json:ticket_trigger`):
-   - **assignee** (default): `gh issue list --assignee @me --state open` — the operator assigns tickets to themselves to dispatch to commander. Simple UX, no labels required.
-   - **label**: `gh issue list --label commander-ready --state open` — explicit opt-in per ticket. Use this if the operator needs to keep `assigned-to-me` free for personal in-progress work.
-   - Always skip any issue already labeled `commander-working` / `commander-pause` / `commander-stuck` (these are state labels commander applies itself during pickup; it creates them lazily on first use).
+   - **assignee** (GitHub default): `gh issue list --assignee @me --state open` — the operator assigns tickets to themselves to dispatch to commander. Simple UX, no labels required.
+   - **label** (GitHub): `gh issue list --label commander-ready --state open` — explicit opt-in per ticket.
+   - **linear**: via the `linear` MCP server, use the trigger (assignee/state/label) configured in `state/linear.json:teams[].trigger`. Requires Linear MCP installed (`claude mcp add linear`).
+   - Always skip any issue already labeled `commander-working` / `commander-pause` / `commander-stuck` (GitHub) or in a commander-managed state (Linear). These are state labels/transitions commander applies itself during pickup; it creates/transitions lazily on first use.
 4. **Classify tier** per `policy.md` BEFORE spawning. Tier 3 → skip. Unclear → ask the operator.
 5. **Spawn** appropriate worker subagent. Pass ticket body, repo path, tier, and memory location in the prompt.
 6. **Track** in `state/active.json` with `{id, ticket, repo, tier, started_at, subagent_type}`.

@@ -12,6 +12,8 @@ skills:
   - superpowers:executing-plans
   - superpowers:requesting-code-review
   - superpowers:verification-before-completion
+mcpServers:
+  - linear
 color: green
 ---
 
@@ -37,7 +39,9 @@ These tell you HOW to test this specific codebase. Follow them verbatim.
 4. Refuse and return "Tier 3" if the ticket needs auth, migration, infra, secrets, or `.github/workflows/` changes.
 5. Commit on a branch named `<repo>/commander/<ticket-num>`.
 6. `gh pr create --draft --title "[T<tier>] <title>" --body "Closes #<num>\n\n## Summary\n...\n\n## Test plan\n..."` — include: closes line, summary, risk tier, test plan
-7. `gh issue edit <num> --remove-label commander-working --add-label commander-review`
+7. Ticket-source update (whichever applies):
+   - **GitHub:** `gh issue edit <num> --remove-label commander-working --add-label commander-review`
+   - **Linear:** via the `linear` MCP server, transition issue state to what `$COMMANDER_ROOT/state/linear.json:state_transitions.on_pr_opened` says (default "In Review"), and post a comment linking the PR
 8. Append to `$COMMANDER_ROOT/logs/<num>.json`: ticket, PR URL, tier, files changed, tests run + results, wall-clock minutes, any surprises
 9. Append ONLY truly non-obvious repo learnings to `$COMMANDER_ROOT/memory/learnings-<repo>.md`
 10. In your final report, list every memory entry you cited via `MEMORY_CITED: learnings-<repo>.md#"<quote>"` lines — one per cited entry

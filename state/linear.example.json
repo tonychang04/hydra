@@ -1,0 +1,39 @@
+{
+  "_description": "Optional Linear integration config. Copy to state/linear.json and fill in. Commander uses this ONLY if at least one repo has ticket_trigger=linear. Requires the Linear MCP server to be installed at the Claude Code level (run: claude mcp add linear).",
+  "enabled": false,
+  "teams": [
+    {
+      "team_id": "TEAM-ID-FROM-LINEAR",
+      "team_name": "Engineering",
+      "trigger": {
+        "type": "assignee",
+        "value": "me"
+      },
+      "_trigger_types": {
+        "assignee": "Pick up issues assigned to the Linear user matching 'me' (the token holder)",
+        "state": "Pick up issues in a specific state — set value to the Linear state name like 'Ready for Hydra' or 'Todo'",
+        "label": "Pick up issues with a specific label — set value to the label name"
+      },
+      "repo_mapping": {
+        "_description": "Map Linear team to GitHub repo(s) — when Hydra picks up a Linear issue, it needs to know which local repo to clone/worktree for the fix.",
+        "your-org/your-repo": {
+          "default_branch": "main"
+        }
+      }
+    }
+  ],
+  "comment_on": {
+    "worker_started": true,
+    "question_asked": true,
+    "pr_opened": true,
+    "pr_merged": true,
+    "worker_stuck": true
+  },
+  "state_transitions": {
+    "_description": "Which Linear state to transition the issue to at each phase. Leave empty to skip transitions.",
+    "on_pickup": "In Progress",
+    "on_pr_opened": "In Review",
+    "on_pr_merged": "Done",
+    "on_stuck": "Blocked"
+  }
+}
