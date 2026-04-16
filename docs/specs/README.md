@@ -37,5 +37,10 @@ This is spec-driven programming. The spec is a compounding artifact: it explains
 
 ## Existing specs
 
-- `../superpowers/specs/2026-04-16-commander-agent-design.md` — the foundational design doc for Hydra (pre-rebrand; status: implemented, Phase 1)
-- `../phase2-s3-knowledge-store.md` — S3 Files knowledge-store plan (status: draft)
+**Implemented (Phase 1):**
+- `../superpowers/specs/2026-04-16-commander-agent-design.md` — foundational design doc for Hydra (pre-rebrand; status: implemented)
+
+**Draft / awaiting implementation** (candidates for "Hydra builds Hydra" — file as issues and let a worker take them):
+- `2026-04-16-retro-workflow.md` — weekly retro command that learns from shipped work
+- `2026-04-16-scheduled-autopickup.md` — cron-ish auto-pickup so Hydra runs while you sleep
+- `../phase2-s3-knowledge-store.md` — S3 Files knowledge-store plan (Phase 2)

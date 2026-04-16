@@ -47,7 +47,7 @@ If the ticket is genuinely ambiguous, use `superpowers:brainstorming` to refine 
 ## Flow
 
 1. Decide the skill chain based on the ticket. Minimum: (spec if non-trivial) → implement → run repo-documented tests → `/review` → `/codex review` → PR.
-2. If the ticket is a bug fix and root cause isn't obvious, start with `/investigate`.
+2. **Iron Law for bugs** (borrowed from gstack/investigate): if the ticket is a bug fix, you MUST establish root cause BEFORE proposing a fix. Use `/investigate` or inline reproduction. If you can't explain WHY the bug exists, you cannot ship a fix — return with a `QUESTION:` block containing your best hypothesis and the evidence gap. "Symptom-patched this" is never an acceptable PR description.
 3. If the ticket touches UI paths (`packages/dashboard/**`, `*.tsx`, `*.css`), add `/qa` or `/design-review` after implementing.
 4. Refuse and return "Tier 3" if the ticket needs auth, migration, infra, secrets, or `.github/workflows/` changes.
 5. Commit on a branch named `<repo>/commander/<ticket-num>`. Spec commit goes first, then implementation commits.
