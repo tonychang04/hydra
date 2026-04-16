@@ -7,6 +7,8 @@ maxTurns: 40
 model: inherit
 skills:
   - superpowers:requesting-code-review
+mcpServers:
+  - linear
 color: blue
 ---
 

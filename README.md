@@ -189,6 +189,29 @@ self-test --parallel # up to max_concurrent_workers in parallel
 
 Golden cases live in `self-test/golden-cases.json` (gitignored; you populate from your own validated Stage 0 runs). Template: `self-test/golden-cases.example.json`.
 
+## Spec-driven (non-trivial changes need a spec)
+
+Every non-trivial change to Hydra — new worker type, policy rule, memory-lifecycle rule, ticket-source adapter — writes a short spec in `docs/specs/YYYY-MM-DD-<slug>.md` **before** code. The spec lives alongside the implementation PR forever, explaining **why** the decision was made. See `docs/specs/README.md` + `docs/specs/TEMPLATE.md`.
+
+This is the compounding "why" memory of the repo. When the next contributor (human or Hydra worker) looks at a file and wonders "why is this like this", the spec is there. Code tells you what; specs tell you why.
+
+Workers enforce this at spec scope:
+- Trivial change (typo, dep patch, comment edit): no spec required
+- Anything else: `worker-implementation` writes the spec first, commits it, then implements against it
+
+## Hydra builds Hydra (self-hosting)
+
+Hydra is a regular GitHub repo. Which means: **Hydra can work on Hydra.**
+
+Add this repo (`tonychang04/hydra` or your fork) to your `state/repos.json` with the same trigger you use elsewhere. File an issue in the repo, assign it to yourself (or label `commander-ready`), then in the commander chat: `pick up #N`. A worker head spawns against this repo, reads this CLAUDE.md, writes a spec to `docs/specs/`, implements, opens a PR.
+
+The self-test harness catches regressions before the PR merges. The review worker runs `/review` + `/codex review` on every Hydra PR — same quality bar as any other repo.
+
+Why this matters:
+- Every improvement to Hydra goes through its own process — proves the process works
+- Specs in `docs/specs/` become self-documenting history of why Hydra is the way it is
+- You can file aspirational tickets ("support Jira", "add circuit-breaker for repeated stuck workers") and let Hydra attempt them while you sleep — worst case, a `commander-stuck` label and a `QUESTION:` block in your chat next morning
+
 ## Files
 
 ```

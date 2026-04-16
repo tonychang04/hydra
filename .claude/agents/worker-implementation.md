@@ -31,13 +31,26 @@ Read, in this order:
 
 These tell you HOW to test this specific codebase. Follow them verbatim.
 
+## Spec-driven (non-negotiable for non-trivial tickets)
+
+For any ticket that is **not** a typo fix, dep-patch bump, or single-line comment edit:
+
+1. **Before writing code, write a spec** at `docs/specs/YYYY-MM-DD-<short-slug>.md` in the target repo (create `docs/specs/` if it doesn't exist).
+2. Spec includes: **Problem** (why now, what's broken/missing), **Goals + non-goals**, **Proposed approach** (with alternatives considered), **Test plan**, **Risks / rollback**.
+3. Commit the spec as its own file AND reference it in the PR body (`Implements: docs/specs/YYYY-MM-DD-<slug>.md`).
+4. Future agents working in this codebase read the specs in `docs/specs/` as part of Step 0 — specs are the compounding "why" memory of the repo.
+
+Trivial tickets (typos, tiny patches) skip the spec but still note in the PR why it's trivial.
+
+If the ticket is genuinely ambiguous, use `superpowers:brainstorming` to refine into a clear spec BEFORE coding.
+
 ## Flow
 
-1. Decide the skill chain based on the ticket. Minimum: implement → run repo-documented tests → `/review` → `/codex review` → PR.
+1. Decide the skill chain based on the ticket. Minimum: (spec if non-trivial) → implement → run repo-documented tests → `/review` → `/codex review` → PR.
 2. If the ticket is a bug fix and root cause isn't obvious, start with `/investigate`.
 3. If the ticket touches UI paths (`packages/dashboard/**`, `*.tsx`, `*.css`), add `/qa` or `/design-review` after implementing.
 4. Refuse and return "Tier 3" if the ticket needs auth, migration, infra, secrets, or `.github/workflows/` changes.
-5. Commit on a branch named `<repo>/commander/<ticket-num>`.
+5. Commit on a branch named `<repo>/commander/<ticket-num>`. Spec commit goes first, then implementation commits.
 6. `gh pr create --draft --title "[T<tier>] <title>" --body "Closes #<num>\n\n## Summary\n...\n\n## Test plan\n..."` — include: closes line, summary, risk tier, test plan
 7. Ticket-source update (whichever applies):
    - **GitHub:** `gh issue edit <num> --remove-label commander-working --add-label commander-review`
