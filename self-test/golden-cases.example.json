@@ -338,6 +338,55 @@
       "last_result": null
     },
     {
+      "id": "ensure-repo-cloned-idempotent",
+      "_description": "Script-only self-test for scripts/ensure-repo-cloned.sh (spec: docs/specs/2026-04-17-cloud-repo-clone.md, ticket #73). Uses the public octocat/Hello-World repo so no GITHUB_TOKEN is required in CI; the unauthenticated HTTPS clone path is the same code path the cloud commander takes for public repos. Each step builds a fresh tmpdir fixture, runs the script, and asserts behavior via exit code + shell grep. Guardrails: bad-slug + missing-repo arguments both exit non-zero; first clone produces a .git dir; second run re-fetches without re-cloning (same SHA and same .git/config inode).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "ensure-repo-cloned.sh bash -n clean",
+          "cmd": "bash -n scripts/ensure-repo-cloned.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "ensure-repo-cloned.sh --help prints usage",
+          "cmd": "scripts/ensure-repo-cloned.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: scripts/ensure-repo-cloned.sh"
+        },
+        {
+          "name": "bad slug (no slash) exits 1 with clear message",
+          "cmd": "scripts/ensure-repo-cloned.sh not-a-slug 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo BADSLUG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADSLUG_OK"
+        },
+        {
+          "name": "slug not in repos.json exits 1",
+          "cmd": "TMP=$(mktemp -d) && printf '{\"repos\":[]}\\n' > \"$TMP/repos.json\" && HYDRA_REPOS_JSON=\"$TMP/repos.json\" scripts/ensure-repo-cloned.sh doesnotexist/doesnotexist 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo MISSING_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MISSING_OK"
+        },
+        {
+          "name": "first call clones octocat/Hello-World; second call re-fetches (same SHA, same .git inode)",
+          "cmd": "set -euo pipefail; TMP=$(mktemp -d); trap 'rm -rf \"$TMP\"' EXIT; printf '{\"repos\":[{\"owner\":\"octocat\",\"name\":\"Hello-World\",\"local_path\":\"/tmp/unused\",\"enabled\":true,\"ticket_trigger\":\"assignee\",\"cloud_local_path\":\"%s/clone\"}]}\\n' \"$TMP\" > \"$TMP/repos.json\"; export HYDRA_REPOS_JSON=\"$TMP/repos.json\"; export HYDRA_CLONE_DEPTH=5; scripts/ensure-repo-cloned.sh octocat/Hello-World >/dev/null 2>&1; test -d \"$TMP/clone/.git\" || { echo FAIL_NO_GIT; exit 1; }; sha1=$(git -C \"$TMP/clone\" rev-parse HEAD); inode1=$(ls -di \"$TMP/clone/.git/config\" | awk '{print $1}'); scripts/ensure-repo-cloned.sh octocat/Hello-World >/dev/null 2>&1; sha2=$(git -C \"$TMP/clone\" rev-parse HEAD); inode2=$(ls -di \"$TMP/clone/.git/config\" | awk '{print $1}'); [ \"$sha1\" = \"$sha2\" ] || { echo FAIL_SHA_DIVERGED; exit 1; }; [ \"$inode1\" = \"$inode2\" ] || { echo FAIL_INODE_DIVERGED; exit 1; }; echo IDEMPOTENT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "IDEMPOTENT_OK"
+        },
+        {
+          "name": "no GITHUB_TOKEN leaked into .git/config on first clone",
+          "cmd": "TMPDIR=$(mktemp -d); cat > \"$TMPDIR/repos.json\" <<CFG\n{\"repos\": [{\"owner\": \"octocat\", \"name\": \"Hello-World\", \"local_path\": \"/tmp/unused\", \"enabled\": true, \"git_url\": \"https://github.com/octocat/Hello-World.git\", \"cloud_local_path\": \"$TMPDIR/clone\"}]}\nCFG\nGITHUB_TOKEN=FAKE_TOKEN_LEAK_SENTINEL HYDRA_REPOS_JSON=\"$TMPDIR/repos.json\" bash scripts/ensure-repo-cloned.sh octocat/Hello-World > /dev/null 2>&1 && ! grep -q FAKE_TOKEN_LEAK_SENTINEL \"$TMPDIR/clone/.git/config\" && echo NO_TOKEN_LEAK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NO_TOKEN_LEAK",
+          "timeout_sec": 30
+        }
+      ],
+      "requires": [],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "hydra-doctor-runs-clean",
       "_description": "Script-only self-test for scripts/hydra-doctor.sh. Exercises the Scripts category in isolation — deterministic, doesn't depend on external state, so it's safe to run in any Hydra worktree. Also asserts --help prints usage. Commander runs this before committing changes to scripts/hydra-doctor.sh. Spec: docs/specs/2026-04-16-hydra-doctor.md (ticket #36).",
       "kind": "script",

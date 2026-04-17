@@ -31,6 +31,16 @@
             "minLength": 1,
             "description": "Absolute path to the local clone."
           },
+          "git_url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional override. Default: https://github.com/<owner>/<name>.git. Used by scripts/ensure-repo-cloned.sh on cloud commanders. See docs/specs/2026-04-17-cloud-repo-clone.md."
+          },
+          "cloud_local_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional override for the cloud-side clone path. Default: /hydra/data/repos/<owner>/<name>. Cloud-only — local commanders keep using local_path. See docs/specs/2026-04-17-cloud-repo-clone.md."
+          },
           "enabled": {
             "type": "boolean"
           },
