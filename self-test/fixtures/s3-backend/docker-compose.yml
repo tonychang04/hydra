@@ -1,0 +1,30 @@
+# Localstack fixture for Phase 2 S3 knowledge store.
+#
+# Provides S3 and DynamoDB locally so scripts/state-{get,put}.sh can be
+# exercised end-to-end without real AWS credentials or a real bucket.
+#
+# Usage (from fixture dir):
+#   docker compose up -d
+#   ./setup-fixture.sh
+#   ./run-e2e.sh
+#   ./teardown-fixture.sh
+#
+# Localstack image is pinned by minor version — bump deliberately when AWS
+# APIs drift.
+
+services:
+  localstack:
+    image: localstack/localstack:3.8
+    container_name: hydra-s3-backend-fixture
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,dynamodb
+      - DEBUG=0
+      - AWS_DEFAULT_REGION=us-east-1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
