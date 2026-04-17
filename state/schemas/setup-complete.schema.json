@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/setup-complete.schema.json",
+  "title": "Hydra setup completion fingerprint",
+  "description": "Written by scripts/hydra-setup.sh (ticket #152) after the first-run wizard succeeds. Presence + shape indicate the operator completed setup; version records the launcher marker at the time of setup so upgrades can detect drift. See docs/specs/2026-04-17-setup-wizard.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "completed_at",
+    "mode"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}$",
+      "description": "8-hex launcher marker from scripts/launcher-marker.sh compute hydra. Pins setup-complete to a specific launcher contract; drift indicates the operator upgraded hydra and setup may benefit from re-run."
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of setup completion. Z suffix only (no offsets), matching the rest of Hydra's timestamp convention."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["interactive", "non-interactive"],
+      "description": "How setup was executed. interactive = the wizard prompted; non-interactive = --non-interactive flag or closed stdin. Useful for logs and for Commander to decide whether to print interactive-only hints."
+    }
+  }
+}
