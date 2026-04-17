@@ -1721,6 +1721,47 @@
       "last_result": null
     },
     {
+      "id": "webhook-receiver-hmac",
+      "_description": "Script-only self-test for scripts/hydra-webhook-receiver.py — the GitHub webhook receiver landed in ticket #41. Spins the receiver up in a subprocess on a random free port against a fixture HYDRA_WEBHOOK_SECRET, exercises the HMAC validation (good signature → 200 + sentinel; bad / missing signature → 401), the event-type filter (issues.assigned → sentinel; issues.opened or pull_request → 204 with no sentinel), the sentinel envelope shape, and two security invariants (the request body never lands in stderr; the secret never lands in stderr). Smoke-test fixture lives at self-test/fixtures/webhook-receiver/run.sh — same pattern as mcp-server-starts and linear-mcp-contract. Runs locally in <5s; no worker spawn, no network, no GitHub auth. Commander runs this before committing changes to scripts/hydra-webhook-receiver.py.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-webhook-receiver.py python ast parse",
+          "cmd": "python3 -c 'import ast; ast.parse(open(\"scripts/hydra-webhook-receiver.py\").read())' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "fixture run.sh bash -n clean",
+          "cmd": "bash -n self-test/fixtures/webhook-receiver/run.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "--check refuses without HYDRA_WEBHOOK_SECRET (exit 1)",
+          "cmd": "unset HYDRA_WEBHOOK_SECRET; python3 scripts/hydra-webhook-receiver.py --check 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo NOSECRET_REFUSED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NOSECRET_REFUSED"
+        },
+        {
+          "name": "--check passes with HYDRA_WEBHOOK_SECRET set (exit 0)",
+          "cmd": "HYDRA_WEBHOOK_SECRET=fixture-secret python3 scripts/hydra-webhook-receiver.py --check >/dev/null 2>&1 && echo CHECK_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CHECK_OK"
+        },
+        {
+          "name": "integration smoke (start receiver, exercise HMAC + filter + sentinel + leak guards)",
+          "cmd": "self-test/fixtures/webhook-receiver/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "scheduled-retro-trigger",
       "_description": "Fixture case for CLAUDE.md's Scheduled autopickup tick step 1.5 (retro due check). Spec: docs/specs/2026-04-17-scheduled-retro.md / ticket #85. Exercises four clock scenarios against a fresh state/autopickup.json fixture: (1) last_retro_run=null + Monday 09:05 local fires the retro, (2) last_retro_run=today T09:00:00 + Monday 10:00 local stays silent (idempotent intra-window), (3) last_retro_run=7 days ago + Monday 09:05 local fires (weekly cadence), (4) Monday 08:59 local or Sunday 23:59 local stays silent (time gate). The scheduled-retro logic lives as an inline commander procedure, not as a spawnable helper, so this case needs both a commander-side tick executor AND a clock-mocking primitive (HYDRA_FAKE_NOW=<ISO8601> override) before it can run live. Today it SKIPs under the 'commander-self' kind (matches autopickup-tick-behavior's pattern) but documents the expected behavior for the next executor pass — same pattern as retro-golden-stub, autopickup-tick-behavior, and worker-timeout-watchdog-rescue.",
       "kind": "commander-self",

@@ -24,8 +24,8 @@
 #     proxy. See docs/phase2-vps-runbook.md §"Wiring up an external agent".
 #
 # NOT in this file (separate tickets):
-#   - webhook routes (#40/#41) — will add routes on the existing /mcp service
-#     (or a dedicated webhook service) once that handler lands.
+#   - PR / comment / label webhook routes (umbrella #40, future tickets) —
+#     this file currently exposes only the issue-assigned receiver from #41.
 #   - Slack bot (#42) — same story; no socket-mode app config here yet.
 
 app = "hydra-commander"              # Operator: rename to your Fly app before first deploy.
@@ -51,8 +51,18 @@ kill_timeout = "30s"
                                         # hydra-mcp-server.py defaults to loopback.
   HYDRA_MCP_ENABLED   = "1"             # Operator rollback: `fly secrets set HYDRA_MCP_ENABLED=0`
                                         # to skip the MCP server background launch.
-  # CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, GITHUB_TOKEN go in `fly secrets`,
-  # never here. See docs/phase2-vps-runbook.md.
+  HYDRA_WEBHOOK_PORT  = "8766"          # Port the GitHub webhook receiver binds inside the VM
+                                        # (#41 / docs/specs/2026-04-17-github-webhook-receiver.md).
+  HYDRA_WEBHOOK_BIND  = "0.0.0.0"       # Bind inside the VM only; the [[services]] block below
+                                        # exposes the receiver via Fly's TLS-terminating edge.
+                                        # Do NOT change for local dev — the script defaults to
+                                        # loopback when this env var is unset.
+  HYDRA_WEBHOOK_ENABLED = "1"           # Operator rollback: `fly secrets set HYDRA_WEBHOOK_ENABLED=0`
+                                        # plus a redeploy to skip the receiver background launch.
+                                        # Without HYDRA_WEBHOOK_SECRET set in `fly secrets`, the
+                                        # receiver still refuses to start regardless of this flag.
+  # CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, GITHUB_TOKEN, HYDRA_WEBHOOK_SECRET go in
+  # `fly secrets`, never here. See docs/phase2-vps-runbook.md.
 
 # Persistent volume — state/memory/logs live here so `fly deploy` doesn't wipe
 # the operator's in-flight workers, memory citations, or retros.
@@ -101,6 +111,36 @@ kill_timeout = "30s"
     # must not travel over cleartext on the public internet. Fly's edge handles
     # TLS termination, so internal_port=8765 is reached by clients via
     # https://<app>.fly.dev/mcp (port 443 → TLS-terminated → internal 8765).
+
+  [[services.tcp_checks]]
+    grace_period  = "30s"
+    interval      = "15s"
+    timeout       = "5s"
+
+# /webhook/github on 8766 — GitHub webhook receiver for issue-assigned events
+# (ticket #41, spec docs/specs/2026-04-17-github-webhook-receiver.md). Same
+# [[services]] shape as the MCP block above for the same reason: Fly only
+# permits one [[http_service]] per config, and this is the lower-level
+# primitive that supports multiple external ports. Auth is HMAC-SHA256
+# (X-Hub-Signature-256) enforced by the receiver itself, NOT a Fly-level
+# bearer; Fly's TLS edge protects the secret in transit. Plaintext :8766 is
+# never exposed publicly — only port 443 → TLS-terminated → internal 8766.
+# Operator wiring: see docs/phase2-vps-runbook.md "Wiring GitHub webhooks".
+[[services]]
+  internal_port = 8766
+  protocol      = "tcp"
+  processes     = ["app"]
+  auto_stop_machines  = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    port     = 443
+    handlers = ["tls", "http"]
+    # Plaintext port 8766 is intentionally not exposed. GitHub delivers webhooks
+    # over TLS; HMAC over cleartext would still leak event metadata. Fly's edge
+    # handles TLS termination, so https://<app>.fly.dev/webhook/github reaches
+    # internal_port=8766 after termination. Do not add a plaintext handler here.
 
   [[services.tcp_checks]]
     grace_period  = "30s"

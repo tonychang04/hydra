@@ -381,6 +381,138 @@ Public repos clone without `GITHUB_TOKEN`; that's how the self-test case runs in
 
 These are documented in the spec so future tickets inherit the context.
 
+## Wiring GitHub webhooks
+
+Phase 1 of webhook-based ticket triggering: GitHub `issues.assigned` events POST to `https://<app>.fly.dev/webhook/github`, the receiver validates HMAC-SHA256, and drops a sentinel file at `state/webhook-triggers/<ts>-<owner>-<repo>-<issue>.json`. A follow-up ticket wires Commander's autopickup tick to short-circuit the timer when sentinels are present; until then the receiver runs additively alongside the 30-min poll. Spec: [`docs/specs/2026-04-17-github-webhook-receiver.md`](specs/2026-04-17-github-webhook-receiver.md) · Ticket: [#41](https://github.com/tonychang04/hydra/issues/41).
+
+This section is **deliberately additive**. The receiver and `[[services]]` stanza in `infra/fly.toml` ship in this PR, but the Fly machine does **not** auto-launch the receiver yet — `infra/entrypoint.sh` integration is a separate ticket (the spec calls it out explicitly to keep this PR's blast radius small). Until that wiring lands, you can launch the receiver manually inside the Fly machine for early testing.
+
+### Step 1 — Generate the webhook secret
+
+```bash
+openssl rand -hex 32
+```
+
+Copy the output (a 64-char hex string). This is the shared secret you'll register on both the GitHub side (so it can sign deliveries) and the Hydra side (so the receiver can validate them).
+
+### Step 2 — Register the secret with Hydra
+
+```bash
+fly secrets set HYDRA_WEBHOOK_SECRET=<paste-secret-here> --app <your-app>
+```
+
+The receiver refuses to start without this secret set (no fallback to "unauthenticated" mode — that would let anyone on the internet drop a sentinel file and bypass tier classification).
+
+### Step 3 — Register the webhook on GitHub
+
+For each repo you want webhook delivery from:
+
+```bash
+gh api --method POST /repos/<owner>/<repo>/hooks \
+  -f name=web \
+  -f active=true \
+  -F events[]=issues \
+  -f config[url]=https://<your-app>.fly.dev/webhook/github \
+  -f config[content_type]=json \
+  -f config[secret]=<paste-secret-here> \
+  -f config[insecure_ssl]=0
+```
+
+Phase 1 subscribes only to `issues` events. The receiver further filters server-side to `action == "assigned"` — other `issues` actions (opened, labeled, closed, etc.) are acknowledged with 204 but produce no sentinel.
+
+If you have `gh` configured against a different account than the one that should own the webhook, prefix with `GH_TOKEN=<token>` or use `--repo <owner>/<repo>`.
+
+### Step 4 — Launch the receiver (manual until the entrypoint integration lands)
+
+SSH into the Fly Machine and start the receiver in a tmux window:
+
+```bash
+fly ssh console --app <your-app>
+# inside the VM:
+$ tmux new-window -t commander -n webhook 'python3 /hydra/scripts/hydra-webhook-receiver.py --bind 0.0.0.0 --port 8766'
+```
+
+(The launcher runs as PID 1's child via the same tmux session as commander; it dies when the Machine stops, restarts on the next deploy.)
+
+Verify it bound:
+
+```bash
+fly ssh console --app <your-app> -C 'curl -sf http://127.0.0.1:8766/'
+# → "hydra-webhook-receiver: POST /webhook/github"
+```
+
+### Step 5 — Verify a real delivery
+
+In GitHub: Settings → Webhooks → click the webhook you just created → Recent Deliveries → click the latest → Redeliver. You should see:
+
+- Response 200 (matched event) or 204 (acknowledged but filtered out — anything other than `issues.assigned`)
+- `fly logs --app <app>` shows one line per delivery: `event=issues action=<X> result=<Y>`
+- For an `issues.assigned` event, a sentinel appears: `fly ssh console --app <app> -C 'ls -la /hydra/data/state/webhook-triggers/'`
+
+### Local development (no Fly)
+
+For testing on a laptop, run the receiver locally and tunnel via [ngrok](https://ngrok.com) or [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/):
+
+```bash
+# terminal 1
+export HYDRA_WEBHOOK_SECRET=<paste-secret-here>
+python3 scripts/hydra-webhook-receiver.py --port 8766
+
+# terminal 2
+ngrok http 8766
+# Use the resulting https://<random>.ngrok-free.app/webhook/github URL when
+# registering the webhook on GitHub.
+```
+
+The receiver defaults to binding `127.0.0.1:8766` — perfect for tunnel-based local dev.
+
+### Rotating the secret
+
+```bash
+NEW=$(openssl rand -hex 32)
+fly secrets set HYDRA_WEBHOOK_SECRET=$NEW --app <your-app>
+# Update each registered webhook with the new secret:
+gh api --method PATCH /repos/<owner>/<repo>/hooks/<hook-id> -f config[secret]=$NEW
+```
+
+There's a brief window where in-flight deliveries signed with the old secret will return 401 — GitHub auto-retries failed deliveries, so they'll succeed once the operator finishes both updates.
+
+### Disabling
+
+Two options, in either order:
+
+- Disable on GitHub: Settings → Webhooks → uncheck Active. Hydra's receiver keeps running but receives nothing.
+- Disable on Hydra: `fly secrets set HYDRA_WEBHOOK_ENABLED=0 --app <app>`. The follow-up entrypoint integration (separate ticket) honors this flag to skip launching the receiver. Until that lands, kill the tmux window manually.
+
+Polling-based pickup continues regardless — `state/autopickup.json` is unchanged by webhook setup.
+
+### Security notes
+
+- **Secret never touches disk on the receiver side.** Read from env var only. Never logged. The self-test `webhook-receiver-hmac` (in `self-test/golden-cases.example.json`) asserts this.
+- **Request body never logged.** Webhook payloads contain issue body text which may be proprietary. Stderr lines log only event type + action + result verb, never the raw JSON.
+- **HMAC compare is constant-time.** Uses `hmac.compare_digest()` — no timing oracle on signature mismatch. 401 responses are opaque ("signature verification failed") with no hint about which half mismatched.
+- **TLS termination at Fly's edge only.** Plaintext port 8766 is bound inside the VM but never exposed publicly. The `[[services]]` stanza in `infra/fly.toml` deliberately omits a plaintext handler.
+- **Body-size cap (1 MiB).** Larger POSTs are 400'd before HMAC compute. GitHub issue payloads are ~100 KiB worst-case so the cap leaves headroom for label-heavy repos.
+- **Per-repo webhook secrets** are NOT supported in Phase 1 — one global `HYDRA_WEBHOOK_SECRET` covers every registered repo. If an operator needs per-repo secret isolation, file a follow-up.
+
+### Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Every delivery returns 401 | Secret mismatch. Re-run `fly secrets set HYDRA_WEBHOOK_SECRET=...` and `gh api --method PATCH /repos/<o>/<r>/hooks/<id> -f config[secret]=...` with the SAME value. |
+| Every delivery returns 204, sentinel never appears | Wrong event subscription. Webhook must be subscribed to `issues` events (not `issue` singular, not `issue_comment`). Re-run the registration `gh api` command above with `-F events[]=issues`. |
+| `fly ssh console -C 'ls /hydra/data/state/webhook-triggers/'` is empty after a successful 200 | The sentinel directory may not exist yet. Receiver auto-creates it on first write — confirm with a `mkdir -p /hydra/data/state/webhook-triggers` and retry. |
+| Receiver refuses to start with `HYDRA_WEBHOOK_SECRET env var is not set` | Secret was unset by a typo'd `fly secrets set`. List secrets with `fly secrets list --app <app>` and confirm `HYDRA_WEBHOOK_SECRET` is present. |
+| Connection refused from GitHub side | The `[[services]]` block in `infra/fly.toml` didn't take effect — re-run `fly deploy --app <app>` and check `fly status --app <app>` shows port 8766 in the services list. |
+
+### Self-test
+
+```bash
+./self-test/run.sh --case webhook-receiver-hmac
+```
+
+Runs offline (no GitHub, no network) — boots the receiver on a random free port, exercises HMAC good/bad/missing, event-filter good/bad, and asserts the body-leak + secret-leak guards. Spec: [`docs/specs/2026-04-17-github-webhook-receiver.md`](specs/2026-04-17-github-webhook-receiver.md).
+
 ## Wiring up an external MCP agent (OpenClaw, Discord bridge, your own Claude)
 
 Once the commander is live with `./hydra mcp serve` booted by `infra/entrypoint.sh`, the MCP surface refuses every request until at least one authorized agent has a real bearer-token hash in `state/connectors/mcp.json`. The `./hydra mcp register-agent` command is the one-step recipe. Spec: [`docs/specs/2026-04-17-mcp-register-agent.md`](specs/2026-04-17-mcp-register-agent.md) · Ticket: [#84](https://github.com/tonychang04/hydra/issues/84).
