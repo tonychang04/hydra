@@ -1217,6 +1217,53 @@
       "last_result": null
     },
     {
+      "id": "entrypoint-dry-run-integrations",
+      "_description": "Script-only self-test for entrypoint.sh stanzas 5b (repo-clone loop) and 5c (slack bot launch), landed in ticket #80. Uses HYDRA_DRY_RUN=1 to exercise the conditional logic without actually cloning or launching anything. Three scenarios via fixture dirs: (1) enabled repo + missing slack.json → logs would-clone + slack-skip; (2) slack.json with enabled=true → logs would-launch-bot; (3) slack.json with enabled=false → logs slack-skip. Spec: docs/specs/2026-04-17-entrypoint-integration.md.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "dry-run: enabled repo + no slack.json → logs would-clone",
+          "cmd": "TMP=$(mktemp -d) && mkdir -p \"$TMP/state\" && printf '{\"repos\":[{\"owner\":\"your-org\",\"name\":\"enabled-repo\",\"enabled\":true},{\"owner\":\"your-org\",\"name\":\"disabled-repo\",\"enabled\":false}]}\\n' > \"$TMP/state/repos.json\" && out=$(HYDRA_DRY_RUN=1 HYDRA_ROOT=\"$TMP\" CLAUDE_CODE_OAUTH_TOKEN=stub GITHUB_TOKEN=stub HYDRA_MCP_ENABLED=0 HYDRA_DATA_DIR=\"$TMP/data\" HYDRA_HEALTH_PORT=0 bash infra/entrypoint.sh 2>&1) && rm -rf \"$TMP\" && echo \"$out\" | grep -F 'DRY RUN: would clone your-org/enabled-repo' && echo FOUND_CLONE",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FOUND_CLONE"
+        },
+        {
+          "name": "dry-run: disabled repo entries are skipped",
+          "cmd": "TMP=$(mktemp -d) && mkdir -p \"$TMP/state\" && printf '{\"repos\":[{\"owner\":\"your-org\",\"name\":\"enabled-repo\",\"enabled\":true},{\"owner\":\"your-org\",\"name\":\"disabled-repo\",\"enabled\":false}]}\\n' > \"$TMP/state/repos.json\" && out=$(HYDRA_DRY_RUN=1 HYDRA_ROOT=\"$TMP\" CLAUDE_CODE_OAUTH_TOKEN=stub GITHUB_TOKEN=stub HYDRA_MCP_ENABLED=0 HYDRA_DATA_DIR=\"$TMP/data\" HYDRA_HEALTH_PORT=0 bash infra/entrypoint.sh 2>&1) && rm -rf \"$TMP\" && ( echo \"$out\" | grep -qF 'disabled-repo' && echo BAD_DISABLED_LEAKED || echo DISABLED_SKIPPED )",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DISABLED_SKIPPED"
+        },
+        {
+          "name": "dry-run: missing slack.json → logs slack skip",
+          "cmd": "TMP=$(mktemp -d) && mkdir -p \"$TMP/state\" && printf '{\"repos\":[]}\\n' > \"$TMP/state/repos.json\" && out=$(HYDRA_DRY_RUN=1 HYDRA_ROOT=\"$TMP\" CLAUDE_CODE_OAUTH_TOKEN=stub GITHUB_TOKEN=stub HYDRA_MCP_ENABLED=0 HYDRA_DATA_DIR=\"$TMP/data\" HYDRA_HEALTH_PORT=0 bash infra/entrypoint.sh 2>&1) && rm -rf \"$TMP\" && echo \"$out\" | grep -F 'Slack bot:' | grep -F 'skipping' && echo FOUND_SLACK_SKIP",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FOUND_SLACK_SKIP"
+        },
+        {
+          "name": "dry-run: slack.json enabled=true → logs would-launch",
+          "cmd": "TMP=$(mktemp -d) && mkdir -p \"$TMP/state/connectors\" && printf '{\"repos\":[]}\\n' > \"$TMP/state/repos.json\" && printf '{\"enabled\":true}\\n' > \"$TMP/state/connectors/slack.json\" && out=$(HYDRA_DRY_RUN=1 HYDRA_ROOT=\"$TMP\" CLAUDE_CODE_OAUTH_TOKEN=stub GITHUB_TOKEN=stub HYDRA_MCP_ENABLED=0 HYDRA_DATA_DIR=\"$TMP/data\" HYDRA_HEALTH_PORT=0 bash infra/entrypoint.sh 2>&1) && rm -rf \"$TMP\" && echo \"$out\" | grep -F 'DRY RUN: would launch hydra-slack-bot' && echo FOUND_SLACK_LAUNCH",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FOUND_SLACK_LAUNCH"
+        },
+        {
+          "name": "dry-run: slack.json enabled=false → logs skip (not launch)",
+          "cmd": "TMP=$(mktemp -d) && mkdir -p \"$TMP/state/connectors\" && printf '{\"repos\":[]}\\n' > \"$TMP/state/repos.json\" && printf '{\"enabled\":false}\\n' > \"$TMP/state/connectors/slack.json\" && out=$(HYDRA_DRY_RUN=1 HYDRA_ROOT=\"$TMP\" CLAUDE_CODE_OAUTH_TOKEN=stub GITHUB_TOKEN=stub HYDRA_MCP_ENABLED=0 HYDRA_DATA_DIR=\"$TMP/data\" HYDRA_HEALTH_PORT=0 bash infra/entrypoint.sh 2>&1) && rm -rf \"$TMP\" && ( echo \"$out\" | grep -qF 'would launch hydra-slack-bot' && echo BAD_LAUNCH_LEAKED || echo SLACK_DISABLED_SKIPPED )",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SLACK_DISABLED_SKIPPED"
+        },
+        {
+          "name": "dry-run: exits before tmux with clean status",
+          "cmd": "TMP=$(mktemp -d) && mkdir -p \"$TMP/state\" && printf '{\"repos\":[]}\\n' > \"$TMP/state/repos.json\" && HYDRA_DRY_RUN=1 HYDRA_ROOT=\"$TMP\" CLAUDE_CODE_OAUTH_TOKEN=stub GITHUB_TOKEN=stub HYDRA_MCP_ENABLED=0 HYDRA_DATA_DIR=\"$TMP/data\" HYDRA_HEALTH_PORT=0 bash infra/entrypoint.sh 2>&1 | grep -F 'HYDRA_DRY_RUN=1 — exiting' && rm -rf \"$TMP\" && echo DRY_RUN_EXIT_LOGGED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DRY_RUN_EXIT_LOGGED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "slack-config-example-valid",
       "_description": "Script-only self-test for the Slack bot config template (spec: docs/specs/2026-04-17-slack-bot.md, ticket #74). jq-validates that state/connectors/slack.json.example declares every field bin/hydra-slack-bot reads at startup: enabled (default false), token-env-var pointers, single allowed_user_id, default_channel, poll interval, repos array, seen-PRs cache path. Also smoke-tests the launcher's refuse-to-start paths: missing config, disabled config, and missing env-var tokens — each must exit non-zero (refuse) or zero with a clean log (disabled). No live Slack API test — that would require a real workspace. Runs locally; no worker spawn, no worktree.",
       "kind": "script",

@@ -209,6 +209,71 @@ else
   log "HYDRA_MCP_ENABLED=0 — skipping MCP server launch (operator opt-out)"
 fi
 
+# ---------- 5b. Clone all enabled repos on boot ----------
+# Cloud commander needs every enabled repo cloned to its cloud_local_path
+# BEFORE the first worker-implementation spawns, otherwise `git worktree add`
+# fails and the ticket bounces. scripts/ensure-repo-cloned.sh is idempotent:
+# first boot clones, subsequent boots re-fetch + reset. Failures for a single
+# repo are logged and skipped — we never let one broken repo brick the whole
+# commander (other repos may still be pickable).
+#
+# Spec: docs/specs/2026-04-17-entrypoint-integration.md (#80)
+REPOS_JSON_PATH="${HYDRA_ROOT}/state/repos.json"
+if [[ -f "${REPOS_JSON_PATH}" ]]; then
+  log "Cloning enabled repos from state/repos.json"
+  enabled_slugs="$(jq -r '.repos[]? | select(.enabled == true) | "\(.owner)/\(.name)"' "${REPOS_JSON_PATH}" 2>/dev/null || true)"
+  if [[ -z "${enabled_slugs}" ]]; then
+    log "No enabled repos — skipping clone loop"
+  else
+    while IFS= read -r slug; do
+      [[ -z "${slug}" ]] && continue
+      if [[ "${HYDRA_DRY_RUN:-0}" == "1" ]]; then
+        log "DRY RUN: would clone ${slug}"
+      else
+        log "ensure-repo-cloned: ${slug}"
+        if ! "${HYDRA_ROOT}/scripts/ensure-repo-cloned.sh" "${slug}" >>"${HYDRA_ROOT}/logs/ensure-repo-cloned.log" 2>&1; then
+          log "ensure-repo-cloned: ${slug} FAILED — continuing (worker will retry on spawn)"
+        fi
+      fi
+    done <<<"${enabled_slugs}"
+  fi
+else
+  log "state/repos.json absent — skipping repo-clone loop"
+fi
+
+# ---------- 5c. Launch Slack bot if configured ----------
+# bin/hydra-slack-bot speaks to Slack via socket mode (outbound WebSocket)
+# so no new port / ingress / secret exposure is required. The bot has its
+# own refuse-to-start gate: missing config exits 1, enabled=false exits 0,
+# missing token env-vars exit 1. So a misconfigured slack.json at worst
+# spawns a short-lived process; commander keeps running either way.
+#
+# Spec: docs/specs/2026-04-17-entrypoint-integration.md (#80)
+SLACK_CFG="${HYDRA_ROOT}/state/connectors/slack.json"
+SLACK_PID=""
+if [[ -f "${SLACK_CFG}" ]] && [[ "$(jq -r .enabled "${SLACK_CFG}" 2>/dev/null)" == "true" ]]; then
+  if [[ "${HYDRA_DRY_RUN:-0}" == "1" ]]; then
+    log "DRY RUN: would launch hydra-slack-bot"
+  else
+    log "Starting hydra-slack-bot (socket mode, outbound only)"
+    ( cd "${HYDRA_ROOT}" && ./bin/hydra-slack-bot >>"${HYDRA_ROOT}/logs/slack-bot.log" 2>&1 ) &
+    SLACK_PID=$!
+    log "hydra-slack-bot pid=${SLACK_PID}"
+  fi
+else
+  log "Slack bot: state/connectors/slack.json missing or enabled=false — skipping"
+fi
+
+# ---------- 5d. Dry-run short-circuit ----------
+# HYDRA_DRY_RUN=1 is for self-tests and operator pre-deploy sanity. We've
+# already logged the repo-clone and slack-bot decisions above; tmux +
+# claude launch are side-effectful enough that running them in a test
+# context isn't useful. Exit 0 tears down the health-server process group.
+if [[ "${HYDRA_DRY_RUN:-0}" == "1" ]]; then
+  log "HYDRA_DRY_RUN=1 — exiting after stanza 5c (pre-tmux) for self-test"
+  exit 0
+fi
+
 # ---------- 6. Launch claude under tmux ----------
 COMMANDER_LOG="${HYDRA_ROOT}/logs/commander.log"
 : > "${COMMANDER_LOG}" || true
@@ -242,6 +307,7 @@ trap '
   log "shutdown signal received"
   tmux kill-session -t '"${HYDRA_TMUX_SESSION}"' 2>/dev/null || true
   [[ -n "${MCP_PID}" ]] && kill "${MCP_PID}" 2>/dev/null || true
+  [[ -n "${SLACK_PID}" ]] && kill "${SLACK_PID}" 2>/dev/null || true
   kill '"${HEALTH_PID}"' 2>/dev/null || true
   exit 0
 ' TERM INT
@@ -259,8 +325,9 @@ TAIL_PID=$!
 # server is intentionally NOT in this wait set — we don't want a crash in
 # the sidecar to kill the core commander loop.)
 wait "${HEALTH_PID}" || true
-log "health server exited — killing tail + tmux + mcp and shutting down"
+log "health server exited — killing tail + tmux + mcp + slack and shutting down"
 kill "${TAIL_PID}" 2>/dev/null || true
 [[ -n "${MCP_PID}" ]] && kill "${MCP_PID}" 2>/dev/null || true
+[[ -n "${SLACK_PID}" ]] && kill "${SLACK_PID}" 2>/dev/null || true
 tmux kill-session -t "${HYDRA_TMUX_SESSION}" 2>/dev/null || true
 exit 1
