@@ -1,0 +1,10 @@
+{
+  "_description": "Fixture for scripts/validate-citations.sh self-test. Contains a quote that does NOT appear in learnings-sample.md; the validator must flag it and exit nonzero.",
+  "citations": {
+    "learnings-sample.md#\"this quote does not exist in the file\"": {
+      "count": 1,
+      "last_cited": "2026-04-16",
+      "tickets": ["sample#999"]
+    }
+  }
+}

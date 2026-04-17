@@ -235,6 +235,8 @@ Memory is short-term. Consistent patterns graduate into repo-local skills so eve
 
 Silent by default. Only notify the operator when promoting a skill (needs his review).
 
+**Canonical tooling for the memory layer** — don't roll your own. Use `scripts/parse-citations.sh` to turn a worker report into a citation delta (then merge into `state/memory-citations.json`), `scripts/validate-learning-entry.sh` to schema-check a `learnings-<repo>.md` before or after writing it, and `scripts/validate-citations.sh` during `compact memory` / `promote learnings` passes to catch stale references whose quoted text no longer exists in the referenced file. All three take an optional `--memory-dir <path>` and default to `$HYDRA_EXTERNAL_MEMORY_DIR` falling back to `./memory/`, so they keep working once the external-memory-split refactor (`docs/specs/2026-04-16-external-memory-split.md`) lands. See `scripts/README.md`.
+
 ## Weekly retro (runs on demand)
 
 The operator says `retro`. You produce a structured weekly summary of what Hydra shipped, where it got stuck, and what the human had to intervene on — then write it to `memory/retros/YYYY-WW.md` (ISO year-week) and surface a one-paragraph summary in chat.

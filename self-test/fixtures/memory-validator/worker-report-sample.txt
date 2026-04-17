@@ -1,0 +1,22 @@
+TICKET: sample#123
+
+# Worker final report (fixture)
+
+Summary: implemented the widget flap; opened draft PR #999.
+
+Followed the usual commander flow: read memory, ran repo-documented tests, opened draft PR.
+
+## What I cited from memory
+
+MEMORY_CITED: learnings-sample.md#"npm install strips peer markers"
+MEMORY_CITED: learnings-sample.md#"Commit specs before code changes"
+MEMORY_CITED: learnings-sample.md#"docker compose up -d"
+
+## Files changed
+
+- src/widget/flap.ts
+- src/widget/flap.test.ts
+
+## Test plan
+
+- `pnpm test src/widget/flap.test.ts` — passes locally.
