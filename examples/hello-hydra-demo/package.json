@@ -1,0 +1,16 @@
+{
+  "name": "hello-hydra-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runnable 10-minute Hydra demo. Zero external deps — uses node:test and node's built-in assert. Operators file the fixture-issues via gh-filings.sh, launch Hydra, and watch the loop run end-to-end.",
+  "main": "src/greet.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test src/greet.test.js",
+    "greet": "node -e \"const {greet} = require('./src/greet'); console.log(greet(process.argv[1] || 'world'))\""
+  },
+  "license": "MIT"
+}

@@ -41,6 +41,14 @@ Four roles, three of them agents. Keep them straight and the rest of the docs cl
 - "Is Worker the same as Subagent?" — Yes. "Worker" is Hydra's name for the role; "subagent" is Claude Code's name for the mechanism. Same thing.
 - "Who does 'Operator' refer to in old docs?" — Historically "Operator" meant You-the-human, but sometimes meant "your Main Agent". We're phasing "Operator" out in favor of the four precise terms above.
 
+## Try it in 10 minutes
+
+Want to see the full Hydra loop end-to-end before wiring it into your own repos? A runnable demo lives at [`examples/hello-hydra-demo/`](examples/hello-hydra-demo/). It's a minimal zero-dep Node package plus three fixture GitHub issues that exercise the three tier outcomes — one T1 auto-merge, one T2 human-merge, one T3 refusal — in about ten minutes of wall-clock.
+
+Walkthrough: **[examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md)**
+
+No `npm install` required. No config beyond adding the forked repo to `state/repos.json`. By the end you'll have two PRs merged, one issue refused, and a `memory/learnings-hello-hydra-demo.md` file showing what the worker captured — the seed of the learning loop.
+
 ## The loop
 
 ```mermaid
