@@ -34,7 +34,9 @@ Assumes `git`, `claude`, and `gh` are installed and `gh auth login` is done. If 
 
 ## Demo
 
-A recorded asciinema cast of Hydra picking up a ticket and opening a PR is tracked in [#37](https://github.com/tonychang04/hydra/issues/37). Until that lands, the 10-minute walkthrough below (`Try it in 10 minutes`) is the nearest thing to a live demo — a runnable dogfood repo with three fixture tickets that exercise the full T1 / T2 / T3 loop.
+A recorded terminal session of the auto-loop end-to-end lives at [`docs/demo/`](docs/demo/). It runs against the [`hello-hydra-demo`](examples/hello-hydra-demo/) fixture (one T1 auto-merge, one T2 human-merge, one T3 refusal) in about 90 seconds.
+
+> **Note:** The cast file in this commit is a placeholder. Regenerate a real recording with [`./scripts/record-demo.sh`](scripts/record-demo.sh) (takes ~2 minutes plus `pip install asciinema`). See [docs/demo/README.md](docs/demo/README.md) for the full procedure. To try the same flow yourself instead of watching, follow [examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md).
 
 ## Who's who (read this first)
 
