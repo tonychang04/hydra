@@ -241,13 +241,71 @@ State survives the rollback (same volume). Your only risk in a rollback is losin
 
 | Item | Monthly |
 |---|---|
-| Fly shared-cpu-1x / 512MB with auto-stop `suspend` | $2-5 (usage-billed; charges only when awake) |
+| Fly shared-cpu-1x / 512MB (always-on, the shipped default) | $5-10 (continuous runtime) |
+| Fly shared-cpu-1x / 512MB with auto-stop `suspend` (opt-in) | $2-5 (usage-billed; charges only when awake) |
 | 1 GB persistent volume | ~$0.15 |
 | Outbound egress (PR creation, `gh` calls, /health probes) | cents |
 | Claude Code LLM usage | $0 extra — your Max subscription covers it |
-| **Total** | **~$3-5/mo** |
+| **Total, always-on (default)** | **~$5-10/mo** |
+| **Total, suspend-mode (opt-in)** | **~$3/mo** |
 
-If you disable auto-stop (set `min_machines_running = 1` in `infra/fly.toml` so the scheduler can tick without inbound traffic), expect ~$5-10/mo — still cheaper than any per-ticket metered alternative.
+The shipped default is always-on (per ticket #126). The extra $2-5/mo buys you 24/7 autopickup ticks without waiting for an inbound wake trigger — see "Always-on vs suspend-on-idle — when to pick which" below for when to opt into suspend-mode instead.
+
+## Always-on vs suspend-on-idle — when to pick which
+
+Hydra ships with `infra/fly.toml` configured for **always-on** (`min_machines_running = 1`, `auto_stop_machines = "off"`). This is the default because autopickup can tick 24/7 without waiting for an external wake trigger — the operator's core "runs while I sleep" guarantee. Spec: [`docs/specs/2026-04-17-managed-agents-migration.md`](specs/2026-04-17-managed-agents-migration.md).
+
+Run `scripts/hydra-doctor.sh --category=config` to see which mode is currently live — the "Commander runtime mode" line reads `always-on`, `suspend`, `mixed`, or `unknown`.
+
+### Pick always-on (the default) if
+
+- Autopickup is your main tick source — no webhook, no cron, no external pokes.
+- You assign tickets at arbitrary hours and expect them picked up within an autopickup interval.
+- You want the scheduled retro (Mondays ≥ 09:00 local) to actually fire. Retros are driven by the autopickup scheduler; a suspended machine skips them.
+- You're OK with ~$5-10/mo in Fly usage.
+
+### Flip to suspend-on-idle if
+
+- You've wired GitHub webhooks (see "Wiring GitHub webhooks" above) and every ticket reaches you via `issues.assigned`. Webhook traffic wakes the Machine; autopickup runs once it's awake.
+- You run Hydra against low-volume repos where ≥12h gaps between tickets are normal and you'd rather pay cents.
+- Your Fly budget is tight.
+- You're a Phase 1 / local-first operator who happens to keep a Fly deploy as a fallback — the cloud copy only needs to be awake when you push work at it.
+
+### How to flip to suspend-mode
+
+1. Edit `infra/fly.toml`. In the primary `[http_service]` block, set:
+   ```toml
+   auto_stop_machines   = "suspend"
+   min_machines_running = 0
+   ```
+   (The secondary `[[services]]` blocks for MCP and the webhook receiver already have these values — they ride on the same Machine, so the primary `[http_service]` is what drives the run state.)
+2. `fly deploy`.
+3. Run `scripts/hydra-doctor.sh --category=config` — the "Commander runtime mode" line should now read `suspend`.
+4. (Optional, documented signal only.) `echo 'export HYDRA_FLY_SUSPEND=1' >> .hydra.env`. The env var is a note for future-you and future agents; it is **not** wired into deploy automation — the `fly.toml` edit is the authoritative flip.
+
+### Reverting to always-on (the default)
+
+Symmetric:
+
+1. Edit `infra/fly.toml`. In the primary `[http_service]` block:
+   ```toml
+   auto_stop_machines   = "off"
+   min_machines_running = 1
+   ```
+2. `fly deploy`.
+3. `scripts/hydra-doctor.sh --category=config` → `always-on`.
+4. Unset `HYDRA_FLY_SUSPEND` in `.hydra.env` if you previously set it.
+
+### What the doctor tells you
+
+- `✓ Commander runtime mode: always-on` — all good; this is the default.
+- `⚠ Commander runtime mode: suspend` — opt-in path. Doctor warns, not fails, because suspend is valid — it just wants you to know the autopickup-tick-while-idle trade-off.
+- `⚠ Commander runtime mode: mixed` — `min_machines_running` and `auto_stop_machines` disagree (e.g. `min=1` + `suspend`). Almost certainly not what you want — pick one.
+- `⚠ Commander runtime mode: unknown` — the primary `[http_service]` block is missing or the values aren't parseable. Restore from git.
+
+### Forward-looking — Managed Agents
+
+When Anthropic's Managed Agents product ships to GA, the fly.toml flip becomes irrelevant — the Managed Agents runtime handles suspend/resume natively and bills per-run, not per-hour. Spec for that migration (phases 1-4): [`docs/specs/2026-04-17-managed-agents-migration.md`](specs/2026-04-17-managed-agents-migration.md). Until then, Fly is the shipped cloud target and this section is the source of truth for which mode to run.
 
 ## Security
 

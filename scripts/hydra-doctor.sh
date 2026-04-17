@@ -467,6 +467,69 @@ check_config() {
     check_fail "budget.json exists" "missing" \
       "run: git checkout budget.json    # restore from the repo's committed default"
   fi
+
+  # Commander runtime mode — parse infra/fly.toml's primary [http_service]
+  # block and report always-on vs suspend vs mixed vs unknown. Ticket #126,
+  # spec docs/specs/2026-04-17-managed-agents-migration.md.
+  # Never FAILS — either explicit mode is valid. Only warns on mixed/unknown
+  # (operator almost certainly didn't intend either).
+  local fly_toml="$ROOT_DIR/infra/fly.toml"
+  if [[ -f "$fly_toml" ]]; then
+    # Extract the primary [http_service] block with an awk FSM. Stops at the
+    # next unindented ^[ line so the secondary [[services]] blocks don't
+    # bleed in. Indented [[http_service.checks]] is allowed to stay inside
+    # the block — it's the sub-table of the primary.
+    local http_block min_mr auto_stop
+    http_block="$(awk '
+      /^\[http_service\]/ {flag=1; print; next}
+      flag && /^\[/ {flag=0}
+      flag
+    ' "$fly_toml" 2>/dev/null || true)"
+
+    if [[ -z "$http_block" ]]; then
+      check_warn "Commander runtime mode" "no [http_service] block found in infra/fly.toml" \
+        "manual: restore infra/fly.toml from git — the primary [http_service] block drives the Machine's run state (ticket #126 / docs/specs/2026-04-17-managed-agents-migration.md)"
+    else
+      # Extract the live values — first match wins if the operator duplicated
+      # the key (malformed but not our problem to fix). Strip trailing `#
+      # comment` before parsing so a line like `min_machines_running = 1  #
+      # blah` extracts cleanly. Uses POSIX char classes ([[:space:]]) for
+      # BSD sed (macOS) compatibility.
+      min_mr="$(grep -E '^[[:space:]]*min_machines_running[[:space:]]*=' <<<"$http_block" \
+        | head -1 | sed -E 's/#.*$//' | sed -E 's/.*=[[:space:]]*([0-9]+).*/\1/' || true)"
+      auto_stop="$(grep -E '^[[:space:]]*auto_stop_machines[[:space:]]*=' <<<"$http_block" \
+        | head -1 | sed -E 's/#.*$//' | sed -E "s/.*=[[:space:]]*['\"]([^'\"]+)['\"].*/\\1/" || true)"
+      # Trim any whitespace on the results.
+      min_mr="$(echo "$min_mr" | tr -d '[:space:]')"
+      auto_stop="$(echo "$auto_stop" | tr -d '[:space:]')"
+
+      case "${min_mr}/${auto_stop}" in
+        "1/off")
+          check_pass "Commander runtime mode: always-on" "infra/fly.toml"
+          ;;
+        "0/suspend")
+          check_warn "Commander runtime mode: suspend" \
+            "autopickup won't tick while idle; needs webhook or manual wake" \
+            "manual: flip to always-on by setting min_machines_running=1 + auto_stop_machines=\"off\" in infra/fly.toml's [http_service] block — see docs/phase2-vps-runbook.md \"Always-on vs suspend-on-idle\""
+          ;;
+        "1/suspend"|"0/off")
+          check_warn "Commander runtime mode: mixed" \
+            "min_machines_running=$min_mr + auto_stop_machines=$auto_stop is inconsistent (expected 1/off or 0/suspend)" \
+            "manual: pick a mode in infra/fly.toml's [http_service] block — docs/phase2-vps-runbook.md \"Always-on vs suspend-on-idle\" walks through the trade-off"
+          ;;
+        *)
+          check_warn "Commander runtime mode: unknown" \
+            "couldn't parse min_machines_running / auto_stop_machines from [http_service] (got '${min_mr}' / '${auto_stop}')" \
+            "manual: inspect infra/fly.toml's [http_service] block — it should contain 'min_machines_running = <int>' and 'auto_stop_machines = \"off\"|\"suspend\"' on single-value lines"
+          ;;
+      esac
+    fi
+  else
+    # fly.toml is a Phase 2 file; not shipping it is fine (local-only
+    # operators never deploy to Fly). Silent skip via verbose_log — no
+    # warning noise on clean local installs.
+    verbose_log "skipping Commander runtime mode check (infra/fly.toml not present)"
+  fi
 }
 
 # -----------------------------------------------------------------------------

@@ -9,10 +9,28 @@
 #     Code holds a websocket; workers spawn short-lived subprocesses. Scale up
 #     by editing [[vm]] if you run many concurrent workers.
 #   - /hydra/data persistent volume — state/memory/logs survive redeploys.
-#   - auto_stop "suspend" + min_machines_running = 0 — costs collapse to ~$0
-#     when idle; webhook traffic (follow-up #40/#41) wakes the machine back up.
-#     Until webhooks land, the operator may prefer `auto_stop_machines = "off"`
-#     and `min_machines_running = 1` so autopickup keeps ticking. Flip as needed.
+#   - Always-on default per ticket #126 (spec:
+#     docs/specs/2026-04-17-managed-agents-migration.md):
+#     `auto_stop_machines = "off"` + `min_machines_running = 1`. Trade-off:
+#     ~$5-10/mo in Fly usage versus ~$3/mo with suspend-mode, but autopickup
+#     ticks 24/7 without waiting for an external wake trigger (webhook,
+#     manual poke). This is the right default for "runs while the operator
+#     sleeps" — commander's directional goal.
+#     Operator override: flip back to suspend-mode by editing the
+#     `[http_service]` block to `auto_stop_machines = "suspend"` +
+#     `min_machines_running = 0` and re-deploying. The env-var
+#     `HYDRA_FLY_SUSPEND=1` in `.hydra.env` is a documented signal to future
+#     you / future agents that this deploy runs suspend-mode — it is NOT
+#     automated (the fly.toml edit is still manual). See
+#     docs/phase2-vps-runbook.md § "Always-on vs suspend-on-idle — when to
+#     pick which" for when to flip.
+#     Note: the secondary `[[services]]` blocks below (MCP :8765, webhook
+#     :8766) keep their `auto_stop_machines = "suspend"` /
+#     `min_machines_running = 0` settings. The primary `[http_service]`
+#     block controls the Machine's run state; the secondary blocks'
+#     settings are overridden by the primary on a single-Machine deploy.
+#     Keeping them as-is means a suspend-mode operator only edits one
+#     block to flip back.
 #   - [[http_service]] on 8080 → /health endpoint served by entrypoint.sh.
 #   - [[services]] on 8765 → /mcp endpoint served by scripts/hydra-mcp-server.py
 #     (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72). Uses the
@@ -75,10 +93,15 @@ kill_timeout = "30s"
 [http_service]
   internal_port        = 8080
   force_https          = true
-  auto_stop_machines   = "suspend"    # Idle cost savings. Suspend preserves RAM/FS.
+  # Always-on by default (ticket #126). See the header comment above for
+  # the trade-off (~$5-10/mo vs ~$3/mo with suspend-mode). To flip to
+  # suspend-on-idle: set `auto_stop_machines = "suspend"` and
+  # `min_machines_running = 0` here, then `fly deploy`. Runbook walkthrough:
+  # docs/phase2-vps-runbook.md § "Always-on vs suspend-on-idle".
+  auto_stop_machines   = "off"
   auto_start_machines  = true
-  min_machines_running = 0            # Operator: set to 1 if you want autopickup to tick
-                                      # continuously without waiting for an inbound request.
+  min_machines_running = 1            # Always-on — autopickup ticks 24/7 without
+                                      # an external wake trigger.
   processes            = ["app"]
 
   [[http_service.checks]]

@@ -484,6 +484,41 @@
       "last_result": null
     },
     {
+      "id": "fly-toml-always-on",
+      "_description": "Asserts the committed infra/fly.toml has the always-on defaults per ticket #126 (min_machines_running = 1, auto_stop_machines = \"off\" on the primary [http_service] block). Spec: docs/specs/2026-04-17-managed-agents-migration.md. Operators running suspend-mode intentionally should expect this case to fail — it pins the shipped default, so a silent revert back to suspend-mode gets caught by CI before it lands. To run in suspend-mode anyway, skip this case or patch your local golden-cases.json. The awk extraction scopes to the primary [http_service] block only — the secondary [[services]] blocks (MCP :8765, webhook :8766) keep suspend defaults and must NOT be asserted on by this case.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "infra/fly.toml exists",
+          "cmd": "test -f infra/fly.toml && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "primary [http_service] has min_machines_running = 1",
+          "cmd": "awk '/^\\[http_service\\]/{flag=1; print; next} flag && /^\\[/{flag=0} flag' infra/fly.toml | grep -E '^[[:space:]]*min_machines_running[[:space:]]*=[[:space:]]*1([[:space:]]|$|#)' && echo ASSERTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ASSERTED"
+        },
+        {
+          "name": "primary [http_service] has auto_stop_machines = \"off\"",
+          "cmd": "awk '/^\\[http_service\\]/{flag=1; print; next} flag && /^\\[/{flag=0} flag' infra/fly.toml | grep -E \"^[[:space:]]*auto_stop_machines[[:space:]]*=[[:space:]]*['\\\"]off['\\\"]\" && echo ASSERTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ASSERTED"
+        },
+        {
+          "name": "primary [http_service] has auto_start_machines = true",
+          "cmd": "awk '/^\\[http_service\\]/{flag=1; print; next} flag && /^\\[/{flag=0} flag' infra/fly.toml | grep -E '^[[:space:]]*auto_start_machines[[:space:]]*=[[:space:]]*true' && echo ASSERTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ASSERTED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "linear-mcp-contract",
       "_description": "Script-only self-test: exercises scripts/linear-poll.sh against the mock Linear MCP response under self-test/fixtures/linear/. Runs locally; no Linear MCP or credentials required. Commander runs this before committing changes to scripts/linear-poll.sh, state/linear.example.json, or docs/linear-tool-contract.md. The fixture pins the assumed Linear MCP response shape — if an operator validates that shape against their real Linear MCP install and it differs, the fixture AND the tool contract doc must be updated together (same PR).",
       "kind": "script",
