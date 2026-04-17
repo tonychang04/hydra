@@ -84,3 +84,20 @@ Design points worth remembering:
 - The 2-strike rate-limit counter is the only new piece of runtime state that didn't already exist. It lives on `state/autopickup.json` itself (not `state/quota-health.json`) so that disabling autopickup doesn't mutate the shared quota-health signal used by regular `pick up N`.
 - We did NOT touch `.claude/settings.local.json*`, `policy.md`, or any worker subagent. Autopickup is purely a commander-side scheduling wrapper over existing primitives.
 - Known soft-conflict: PR #3 on `main` also edits `CLAUDE.md` (adds a `retro` command row). Conflict resolution is a separate concern; this PR simply appends to the commands table and inserts a new section, so the textual overlap is small.
+
+## Extension 2026-04-16 — default-on behavior (#17)
+
+Short follow-up so the operator never has to type `autopickup every N min` to get the default behavior. See the standalone spec `docs/specs/2026-04-16-autopickup-default-on.md` for full rationale.
+
+Summary of the change:
+
+- `state/autopickup.json` gains `auto_enable_on_session_start` (default `true`). Backward-compat: missing field → treat as `true`.
+- `setup.sh` seeds `state/autopickup.json` on first run with `{enabled: false, interval_min: 30, auto_enable_on_session_start: true, ...}` — same defaults as the template.
+- The generated `./hydra` launcher accepts `--no-autopickup`, which exports `HYDRA_NO_AUTOPICKUP=1` before `exec claude`. Commander's session-start check reads that env var to suppress auto-enable for the current session only.
+- `CLAUDE.md` "Session greeting" section gained the default-on check and extended the greeting line to include autopickup status.
+
+What did NOT change:
+
+- The tick procedure, preflight gate, 2-strike rate-limit auto-disable, and quiet-by-default behavior are all unchanged. Default-on only flips `enabled` at session start; everything downstream is the existing code path.
+- `autopickup off` still works the same way. An operator who prefers the old opt-in model can either set `auto_enable_on_session_start: false` in `state/autopickup.json` or launch with `./hydra --no-autopickup` each session.
+- No policy / budget / worker-subagent changes.

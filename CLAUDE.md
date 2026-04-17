@@ -188,11 +188,14 @@ For plain issues, `gh issue edit <n> --add-label <label>` is still fine (it does
 {
   "enabled": false,
   "interval_min": 30,
+  "auto_enable_on_session_start": true,
   "last_run": null,
   "last_picked_count": 0,
   "consecutive_rate_limit_hits": 0
 }
 ```
+
+`auto_enable_on_session_start` (default `true`) drives the opt-out session-start behavior — see "Session greeting" below. Backward-compat: if the field is missing from an operator's existing `state/autopickup.json`, treat it as `true`.
 
 **Activating:** on `autopickup every N min`:
 1. Clamp N to `[5, 120]`; default 30 if omitted
@@ -311,7 +314,19 @@ Retros compound. Last week's retro sits next to this week's so trends become leg
 
 ## Session greeting
 
-On session start, first message:
-> Commander online. `<N>` tickets ready across `<M>` repos. `<K>` workers active. Today: `<X>` done, `<Y>` failed, `<Z>` min wall-clock. Pause: `<off|on>`.
+On session start, before the first message, run the **autopickup default-on check**:
 
-Then wait. Do not spawn automatically.
+1. Read `state/autopickup.json`. If the file is missing, skip this step (no autopickup yet — operator can still enable with `autopickup every N min`).
+2. If `enabled` is already `true`, leave it alone (respect whatever state the last session left behind — in-flight autopickup survives).
+3. Otherwise, if ALL of the following hold, flip `enabled` to `true` and enter autopickup mode using the existing `autopickup every N min` activation procedure (with N = `interval_min`):
+   - `enabled` is `false`
+   - `auto_enable_on_session_start` is `true` (or missing — default to `true` for backward compat)
+   - The environment variable `HYDRA_NO_AUTOPICKUP` is unset (operator opted out this session via `./hydra --no-autopickup`)
+4. Reset `consecutive_rate_limit_hits` to `0` on auto-enable — we're starting a fresh session.
+
+Then send the first message:
+> Commander online. `<N>` tickets ready across `<M>` repos. `<K>` workers active. Today: `<X>` done, `<Y>` failed, `<Z>` min wall-clock. Pause: `<off|on>`. Autopickup: `<off | on (every N min)>`.
+
+If autopickup was just auto-enabled by the default-on check, include a second line: `Autopickup entered automatically (opt-out). Disable with `autopickup off` or relaunch with `./hydra --no-autopickup`.`
+
+Then wait. Do not additionally `pick up` — the `/loop` scheduler handles pickups from here. The first tick runs after `interval_min` minutes, not immediately, so the operator has a chance to countermand.

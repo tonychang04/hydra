@@ -57,7 +57,7 @@ fi
 
 # ---------- Runtime state files ----------
 say "Initializing runtime state files"
-for f in state/active.json state/budget-used.json state/memory-citations.json; do
+for f in state/active.json state/budget-used.json state/memory-citations.json state/autopickup.json; do
   if [[ -f "$f" ]]; then
     ok "$f exists"
   else
@@ -65,6 +65,7 @@ for f in state/active.json state/budget-used.json state/memory-citations.json; d
       */active.json)          echo '{"workers": [], "last_updated": null}' > "$f" ;;
       */budget-used.json)     echo '{"date": null, "tickets_completed_today": 0, "tickets_failed_today": 0, "total_worker_wall_clock_minutes_today": 0, "rate_limit_hits_today": 0, "phase2_spend_usd_today": 0}' > "$f" ;;
       */memory-citations.json) echo '{"_schema": "key = learnings-<repo>.md#<quote>, value = {count, last_cited, tickets, promotion_threshold_reached}", "citations": {}}' > "$f" ;;
+      */autopickup.json)      echo '{"enabled": false, "interval_min": 30, "auto_enable_on_session_start": true, "last_run": null, "last_picked_count": 0, "consecutive_rate_limit_hits": 0}' > "$f" ;;
     esac
     ok "Created $f"
   fi
@@ -91,16 +92,41 @@ else
   cat > hydra <<'EOF'
 #!/usr/bin/env bash
 # Launch the Hydra Commander session. Sources env, sanity-checks, then exec claude.
+#
+# Usage:
+#   ./hydra                  Launch commander. By default, commander's session-start
+#                            logic flips autopickup ON (opt-out model) if
+#                            state/autopickup.json:auto_enable_on_session_start is true.
+#   ./hydra --no-autopickup  Launch with HYDRA_NO_AUTOPICKUP=1 exported so commander
+#                            stays idle at session start (no auto-enable). Useful for
+#                            debugging, read-only sessions, or "just status please".
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Parse launcher flags (only --no-autopickup so far). Unknown flags pass through to claude.
+# Using ${arr[@]+"${arr[@]}"} idiom for bash 3.2 (macOS default) compatibility with set -u.
+HYDRA_NO_AUTOPICKUP_FLAG=""
+PASSTHROUGH_ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --no-autopickup) HYDRA_NO_AUTOPICKUP_FLAG=1 ;;
+    *) PASSTHROUGH_ARGS+=("$arg") ;;
+  esac
+done
+
 [[ -f .hydra.env ]] || { echo "✗ .hydra.env missing. Run ./setup.sh first." >&2; exit 1; }
 # shellcheck disable=SC1091
 source .hydra.env
 [[ -f .claude/settings.local.json ]] || { echo "✗ .claude/settings.local.json missing. Run ./setup.sh." >&2; exit 1; }
 [[ -f state/repos.json ]] || { echo "✗ state/repos.json missing. Run ./setup.sh." >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "✗ gh not authenticated. Run: gh auth login" >&2; exit 1; }
-exec claude
+
+if [[ -n "$HYDRA_NO_AUTOPICKUP_FLAG" ]]; then
+  export HYDRA_NO_AUTOPICKUP=1
+fi
+
+exec claude ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}
 EOF
   chmod +x hydra
   ok "Wrote ./hydra launcher (chmod +x)"
