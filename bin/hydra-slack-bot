@@ -1,0 +1,656 @@
+#!/usr/bin/env python3
+# ruff: noqa: E501
+"""
+hydra-slack-bot — Hydra Commander's Slack DM surface.
+
+Single-operator DM bridge: one allowlisted Slack user can DM the bot to drive
+Commander (status / pickup [N]), and the bot proactively DMs back when a PR is
+ready for human merge (commander-review-clean label applied).
+
+Runs inside or alongside the Commander process. Socket mode (outbound
+WebSocket to Slack) — no public HTTP endpoint on the host.
+
+Refuses to start if:
+  - state/connectors/slack.json is missing
+  - state/connectors/slack.json has enabled=false
+  - either of the named env-var tokens is unset
+
+Phase 1 (pre-#72) this bot reads Commander state directly from the filesystem.
+Every such read is tagged with a PHASE1-FALLBACK comment so the MCP swap is
+mechanical after #72 lands.
+
+Spec: docs/specs/2026-04-17-slack-bot.md
+Ticket: #74
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+from collections import OrderedDict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+# slack-bolt / slack-sdk are required runtime deps; the import is deferred to
+# runtime (not module load) so that refuse-to-start checks can run and emit a
+# clean exit BEFORE any network setup — important because the refusal path
+# should still work on a host where the deps aren't installed (e.g. an
+# operator ran the launcher inside a half-built container).
+
+LOG_FORMAT = "%(asctime)s %(levelname)s hydra-slack-bot %(message)s"
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+log = logging.getLogger("hydra-slack-bot")
+
+
+# -----------------------------------------------------------------------------
+# paths — resolved relative to the worktree root (bin/hydra-slack-bot lives
+# one level down from the root).
+# -----------------------------------------------------------------------------
+BIN_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BIN_DIR.parent
+
+CONFIG_PATH = ROOT_DIR / "state" / "connectors" / "slack.json"
+AUDIT_LOG_PATH = ROOT_DIR / "logs" / "slack-audit.jsonl"
+ACTIVE_STATE_PATH = ROOT_DIR / "state" / "active.json"
+BUDGET_USED_PATH = ROOT_DIR / "state" / "budget-used.json"
+AUTOPICKUP_STATE_PATH = ROOT_DIR / "state" / "autopickup.json"
+PAUSE_PATH = ROOT_DIR / "commander" / "PAUSE"
+PENDING_DISPATCHES_PATH = ROOT_DIR / "state" / "pending-dispatches.json"
+
+
+# -----------------------------------------------------------------------------
+# config loading + refuse-to-start gate
+# -----------------------------------------------------------------------------
+REQUIRED_CONFIG_KEYS = (
+    "enabled",
+    "bot_token_env",
+    "app_token_env",
+    "allowed_user_id",
+    "default_channel",
+    "notification_poll_interval_sec",
+    "repos",
+)
+
+MIN_POLL_INTERVAL_SEC = 30
+SEEN_PRS_MAX = 500
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _sha256_prefix(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def load_config() -> dict[str, Any]:
+    """Read + validate state/connectors/slack.json.
+
+    Exits 1 on missing / malformed config. Exits 0 on enabled=false.
+    Exits 1 on missing env-var tokens. Returns the config dict otherwise.
+    """
+    if not CONFIG_PATH.exists():
+        log.error("config not found at %s — refusing to start", CONFIG_PATH)
+        sys.exit(1)
+
+    try:
+        cfg = json.loads(CONFIG_PATH.read_text())
+    except json.JSONDecodeError as exc:
+        log.error("config at %s is not valid JSON: %s", CONFIG_PATH, exc)
+        sys.exit(1)
+
+    if not isinstance(cfg, dict):
+        log.error("config at %s must be a JSON object", CONFIG_PATH)
+        sys.exit(1)
+
+    missing = [k for k in REQUIRED_CONFIG_KEYS if k not in cfg]
+    if missing:
+        log.error("config missing required keys: %s", ", ".join(missing))
+        sys.exit(1)
+
+    if cfg.get("enabled") is not True:
+        log.info("slack bot disabled in config (enabled=%s); exiting cleanly", cfg.get("enabled"))
+        sys.exit(0)
+
+    bot_env = cfg["bot_token_env"]
+    app_env = cfg["app_token_env"]
+    if not os.environ.get(bot_env):
+        log.error("env var %s unset — refusing to start (bot token missing)", bot_env)
+        sys.exit(1)
+    if not os.environ.get(app_env):
+        log.error("env var %s unset — refusing to start (app token missing)", app_env)
+        sys.exit(1)
+
+    poll = cfg.get("notification_poll_interval_sec", 60)
+    if not isinstance(poll, int) or poll < MIN_POLL_INTERVAL_SEC:
+        log.warning(
+            "notification_poll_interval_sec=%s below floor of %ss — clamping",
+            poll,
+            MIN_POLL_INTERVAL_SEC,
+        )
+        cfg["notification_poll_interval_sec"] = MIN_POLL_INTERVAL_SEC
+
+    repos = cfg.get("repos") or []
+    if not isinstance(repos, list) or not all(
+        isinstance(r, str) and "/" in r for r in repos
+    ):
+        log.error(
+            "repos must be a list of 'owner/name' strings; got %r", repos
+        )
+        sys.exit(1)
+
+    allowed = cfg.get("allowed_user_id")
+    if not isinstance(allowed, str) or not allowed.startswith("U"):
+        log.error(
+            "allowed_user_id must be a Slack user ID (starts with 'U'); got %r",
+            allowed,
+        )
+        sys.exit(1)
+
+    return cfg
+
+
+# -----------------------------------------------------------------------------
+# audit log
+# -----------------------------------------------------------------------------
+_audit_lock = threading.Lock()
+
+
+def audit(event: dict[str, Any]) -> None:
+    """Append one JSONL line to logs/slack-audit.jsonl. No raw text ever."""
+    event.setdefault("ts", _utcnow_iso())
+    line = json.dumps(event, separators=(",", ":"))
+    AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _audit_lock:
+        with AUDIT_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+
+# -----------------------------------------------------------------------------
+# state reads — Phase 1, direct from disk
+# -----------------------------------------------------------------------------
+def _read_json(path: Path, default: Any) -> Any:
+    # PHASE1-FALLBACK: swap to mcp_client.call('hydra.<tool>') after #72 lands
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def get_commander_status() -> dict[str, Any]:
+    """Return a status snapshot equivalent to hydra.get_status.
+
+    Phase 1: reads state files directly. Phase 2: one mcp_client call.
+    """
+    # PHASE1-FALLBACK: swap to mcp_client.call('hydra.get_status') after #72 lands
+    active = _read_json(ACTIVE_STATE_PATH, {"workers": []})
+    budget_used = _read_json(BUDGET_USED_PATH, {})
+    autopickup = _read_json(AUTOPICKUP_STATE_PATH, {"enabled": False})
+    paused = PAUSE_PATH.exists()
+
+    workers = active.get("workers", []) if isinstance(active, dict) else []
+    today = budget_used.get("today", {}) if isinstance(budget_used, dict) else {}
+
+    return {
+        "active_workers": workers,
+        "today": {
+            "done": today.get("done", 0),
+            "failed": today.get("failed", 0),
+            "wall_clock_min": today.get("wall_clock_min", 0),
+        },
+        "paused": paused,
+        "autopickup": {
+            "enabled": bool(autopickup.get("enabled", False)) if isinstance(autopickup, dict) else False,
+            "interval_min": autopickup.get("interval_min") if isinstance(autopickup, dict) else None,
+            "last_run": autopickup.get("last_run") if isinstance(autopickup, dict) else None,
+        },
+    }
+
+
+def request_pickup(count: int) -> dict[str, Any]:
+    """Request Commander to spawn `count` worker-implementation agents.
+
+    Phase 1: writes a dispatch request to state/pending-dispatches.json; the
+    Commander terminal loop picks it up on next tick. If the dispatches file
+    doesn't exist on this Commander version, we reply with a graceful degrade
+    message — the operator has to `fly ssh attach` for pickup until either
+    the dispatches file is introduced or #72 lands.
+    """
+    # PHASE1-FALLBACK: swap to mcp_client.call('hydra.pick_up', {count}) after #72 lands
+    if not PENDING_DISPATCHES_PATH.parent.exists():
+        return {
+            "dispatched": False,
+            "reason": "commander state directory missing; is Commander running?",
+        }
+
+    existing = _read_json(PENDING_DISPATCHES_PATH, {"dispatches": []})
+    if not isinstance(existing, dict) or "dispatches" not in existing:
+        existing = {"dispatches": []}
+
+    request_id = f"slack-{_utcnow_iso()}-{os.urandom(4).hex()}"
+    existing["dispatches"].append(
+        {
+            "id": request_id,
+            "kind": "pick_up",
+            "count": count,
+            "source": "slack-bot",
+            "requested_at": _utcnow_iso(),
+        }
+    )
+
+    PENDING_DISPATCHES_PATH.write_text(
+        json.dumps(existing, indent=2, sort_keys=True) + "\n"
+    )
+    return {"dispatched": True, "request_id": request_id, "count": count}
+
+
+# -----------------------------------------------------------------------------
+# notification loop — polls `gh pr list --label commander-review-clean`
+# -----------------------------------------------------------------------------
+class SeenPRsCache:
+    """LRU-bounded set of (repo, pr_num) we've already notified on.
+
+    Persisted to disk so a bot restart doesn't duplicate notifications.
+    """
+
+    def __init__(self, path: Path, max_entries: int = SEEN_PRS_MAX) -> None:
+        self.path = path
+        self.max_entries = max_entries
+        self._lock = threading.Lock()
+        self._entries: "OrderedDict[str, str]" = OrderedDict()
+        self._load()
+
+    def _load(self) -> None:
+        data = _read_json(self.path, {"entries": []})
+        entries = data.get("entries", []) if isinstance(data, dict) else []
+        for entry in entries:
+            if isinstance(entry, dict) and "key" in entry and "seen_at" in entry:
+                self._entries[entry["key"]] = entry["seen_at"]
+
+    def has(self, repo: str, pr_num: int) -> bool:
+        key = f"{repo}#{pr_num}"
+        with self._lock:
+            if key in self._entries:
+                self._entries.move_to_end(key)
+                return True
+            return False
+
+    def add(self, repo: str, pr_num: int) -> None:
+        key = f"{repo}#{pr_num}"
+        with self._lock:
+            self._entries[key] = _utcnow_iso()
+            while len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+            self._persist_locked()
+
+    def _persist_locked(self) -> None:
+        payload = {
+            "entries": [
+                {"key": k, "seen_at": v} for k, v in self._entries.items()
+            ]
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def poll_review_clean_prs(repo: str) -> list[dict[str, Any]]:
+    """Run `gh pr list --repo <repo> --label commander-review-clean` once.
+
+    Returns a list of {number, title, url, tier} dicts. Tier is inferred from
+    the labels (T1/T2/T3); if none present, tier defaults to 'unknown'.
+    Failures (gh missing, auth expired) are logged and return an empty list —
+    the bot never crashes on a single poll failure.
+    """
+    # PHASE1-FALLBACK: consider swapping to mcp_client.call('hydra.list_ready_tickets')
+    # after #72 lands — but this specific call is ABOUT PRs not tickets, so it may
+    # stay as a direct gh call even in Phase 2.
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--repo",
+                repo,
+                "--label",
+                "commander-review-clean",
+                "--state",
+                "open",
+                "--json",
+                "number,title,labels,url",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError:
+        log.error("gh CLI not on PATH — cannot poll PRs for repo=%s", repo)
+        return []
+    except subprocess.TimeoutExpired:
+        log.warning("gh pr list timed out on repo=%s", repo)
+        return []
+
+    if result.returncode != 0:
+        log.warning(
+            "gh pr list failed on repo=%s: %s",
+            repo,
+            result.stderr.strip()[:200],
+        )
+        return []
+
+    try:
+        prs = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        log.warning("gh pr list returned non-JSON on repo=%s", repo)
+        return []
+
+    out: list[dict[str, Any]] = []
+    for pr in prs:
+        labels = {
+            lbl["name"] for lbl in pr.get("labels", []) if isinstance(lbl, dict)
+        }
+        tier = "unknown"
+        for t in ("T1", "T2", "T3"):
+            if t in labels:
+                tier = t
+                break
+        out.append(
+            {
+                "number": pr.get("number"),
+                "title": pr.get("title", ""),
+                "url": pr.get("url", ""),
+                "tier": tier,
+            }
+        )
+    return out
+
+
+def run_notification_loop(
+    cfg: dict[str, Any],
+    seen: SeenPRsCache,
+    post_dm,
+    stop_event: threading.Event,
+) -> None:
+    """Background loop — every N seconds, check each repo for new review-clean PRs."""
+    interval = int(cfg.get("notification_poll_interval_sec", 60))
+    repos = list(cfg.get("repos", []))
+
+    log.info(
+        "notification loop starting: poll_interval=%ss repos=%s",
+        interval,
+        repos,
+    )
+
+    while not stop_event.is_set():
+        for repo in repos:
+            prs = poll_review_clean_prs(repo)
+            for pr in prs:
+                num = pr["number"]
+                if num is None or seen.has(repo, num):
+                    continue
+                text = (
+                    f"PR #{num} ready for merge ({pr['tier']} — "
+                    f"{repo}) — {pr['url']}\n> {pr['title']}"
+                )
+                try:
+                    post_dm(text)
+                except Exception as exc:  # noqa: BLE001 — defensive, log + continue
+                    log.warning(
+                        "failed to post DM for %s#%s: %s", repo, num, exc
+                    )
+                    continue
+                seen.add(repo, num)
+                audit(
+                    {
+                        "direction": "out",
+                        "user_id": cfg["allowed_user_id"],
+                        "text_sha256": _sha256_prefix(text),
+                        "action": "notify-review-clean",
+                        "pr_num": num,
+                        "repo": repo,
+                    }
+                )
+        # sleep in small increments so SIGTERM shuts down quickly
+        for _ in range(interval):
+            if stop_event.is_set():
+                break
+            time.sleep(1)
+
+
+# -----------------------------------------------------------------------------
+# command handlers — called from the Slack message handler
+# -----------------------------------------------------------------------------
+def handle_status() -> str:
+    status = get_commander_status()
+    worker_count = len(status["active_workers"])
+    today = status["today"]
+    auto = status["autopickup"]
+    auto_str = (
+        f"on (every {auto.get('interval_min')} min)"
+        if auto.get("enabled")
+        else "off"
+    )
+    paused_str = "PAUSED" if status["paused"] else "running"
+    lines = [
+        f"*Commander status:* {paused_str}",
+        f"*Active workers:* {worker_count}",
+        f"*Today:* {today['done']} done · {today['failed']} failed · {today['wall_clock_min']} min wall-clock",
+        f"*Autopickup:* {auto_str}",
+    ]
+    if worker_count > 0:
+        lines.append("\n*Workers:*")
+        for w in status["active_workers"][:5]:
+            lines.append(
+                f"  • {w.get('ticket', '?')} ({w.get('tier', '?')}) — {w.get('state', 'running')}"
+            )
+        if worker_count > 5:
+            lines.append(f"  …and {worker_count - 5} more")
+    return "\n".join(lines)
+
+
+def handle_pickup(count: int) -> str:
+    result = request_pickup(count)
+    if not result.get("dispatched"):
+        return f"pickup not dispatched: {result.get('reason', 'unknown reason')}"
+    return (
+        f"pickup({count}) queued (request_id={result['request_id']}). "
+        "Commander will spawn workers on next tick."
+    )
+
+
+def handle_not_implemented(verb: str) -> str:
+    return (
+        f"`{verb}` is scaffolded but coming in a follow-up. "
+        f"Supported today: `status`, `pickup [N]`."
+    )
+
+
+def parse_command(text: str) -> tuple[str, list[str]]:
+    """Split DM text into (verb, args). Ignores surrounding whitespace and
+    lowercases the verb only — args retain their original casing.
+    """
+    tokens = text.strip().split()
+    if not tokens:
+        return "", []
+    return tokens[0].lower(), tokens[1:]
+
+
+# -----------------------------------------------------------------------------
+# main — wire up slack-bolt, message handler, notification loop
+# -----------------------------------------------------------------------------
+def main() -> None:
+    cfg = load_config()
+
+    # Deferred import: the refuse-to-start gate above must run cleanly even
+    # when slack-bolt isn't installed (e.g. in CI / self-test environments).
+    try:
+        from slack_bolt import App
+        from slack_bolt.adapter.socket_mode import SocketModeHandler
+    except ImportError as exc:
+        log.error(
+            "slack-bolt not installed: %s. Run `pip install -r requirements.txt`.",
+            exc,
+        )
+        sys.exit(1)
+
+    bot_token = os.environ[cfg["bot_token_env"]]
+    app_token = os.environ[cfg["app_token_env"]]
+    allowed_user_id = cfg["allowed_user_id"]
+    default_channel = cfg["default_channel"]
+
+    app = App(token=bot_token)
+
+    def post_dm(text: str) -> None:
+        """Post a DM to the allowlisted user. Falls back to default_channel on failure."""
+        try:
+            app.client.chat_postMessage(channel=allowed_user_id, text=text)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "direct DM to %s failed (%s); falling back to default_channel %s",
+                allowed_user_id,
+                exc,
+                default_channel,
+            )
+            app.client.chat_postMessage(channel=default_channel, text=text)
+
+    @app.event("message")
+    def on_message(event, say):  # pragma: no cover — exercised via live smoke test
+        # Only act on DMs from the allowlisted user. Ignore everything else
+        # with a single audit line.
+        if event.get("channel_type") != "im":
+            return
+        user = event.get("user", "")
+        text = event.get("text", "") or ""
+        if user != allowed_user_id:
+            audit(
+                {
+                    "direction": "in",
+                    "user_id": user,
+                    "text_sha256": _sha256_prefix(text),
+                    "action": "refused-unauthorized-user",
+                }
+            )
+            return
+
+        verb, args = parse_command(text)
+
+        audit(
+            {
+                "direction": "in",
+                "user_id": user,
+                "text_sha256": _sha256_prefix(text),
+                "action": f"command-{verb or 'empty'}",
+                "parsed_cmd": verb,
+            }
+        )
+
+        if verb == "status":
+            reply = handle_status()
+            say(reply)
+            audit(
+                {
+                    "direction": "out",
+                    "user_id": user,
+                    "text_sha256": _sha256_prefix(reply),
+                    "action": "reply-status",
+                }
+            )
+            return
+
+        if verb == "pickup":
+            count = 1
+            if args:
+                try:
+                    count = max(1, min(20, int(args[0])))
+                except ValueError:
+                    say("pickup: N must be a positive integer (1-20)")
+                    return
+            reply = handle_pickup(count)
+            say(reply)
+            audit(
+                {
+                    "direction": "out",
+                    "user_id": user,
+                    "text_sha256": _sha256_prefix(reply),
+                    "action": "reply-pickup",
+                    "count": count,
+                }
+            )
+            return
+
+        if verb in ("merge", "reject", "retry", "pause", "resume", "kill"):
+            reply = handle_not_implemented(verb)
+            say(reply)
+            audit(
+                {
+                    "direction": "out",
+                    "user_id": user,
+                    "text_sha256": _sha256_prefix(reply),
+                    "action": "reply-not-implemented",
+                    "verb": verb,
+                }
+            )
+            return
+
+        reply = (
+            "unrecognized command. supported today: `status`, `pickup [N]`. "
+            "(merge / reject / retry / pause / resume / kill are scaffolded but not yet wired.)"
+        )
+        say(reply)
+        audit(
+            {
+                "direction": "out",
+                "user_id": user,
+                "text_sha256": _sha256_prefix(reply),
+                "action": "reply-unrecognized",
+            }
+        )
+
+    # Seen-set for the notification loop.
+    seen_path = ROOT_DIR / cfg.get("seen_prs_state_path", "state/slack-notified-prs.json")
+    seen = SeenPRsCache(seen_path)
+
+    stop_event = threading.Event()
+
+    def _handle_signal(signum, _frame):
+        log.info("received signal %s — shutting down cleanly", signum)
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    notifier_thread = threading.Thread(
+        target=run_notification_loop,
+        args=(cfg, seen, post_dm, stop_event),
+        name="hydra-slack-notifier",
+        daemon=True,
+    )
+    notifier_thread.start()
+
+    log.info(
+        "hydra-slack-bot online — allowed_user_id=%s default_channel=%s repos=%s",
+        allowed_user_id,
+        default_channel,
+        cfg.get("repos"),
+    )
+
+    handler = SocketModeHandler(app, app_token)
+    try:
+        handler.start()
+    finally:
+        stop_event.set()
+        notifier_thread.join(timeout=5)
+        log.info("hydra-slack-bot exited")
+
+
+if __name__ == "__main__":
+    main()

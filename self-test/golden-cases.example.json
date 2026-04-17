@@ -1168,6 +1168,113 @@
       "last_result": null
     },
     {
+      "id": "slack-config-example-valid",
+      "_description": "Script-only self-test for the Slack bot config template (spec: docs/specs/2026-04-17-slack-bot.md, ticket #74). jq-validates that state/connectors/slack.json.example declares every field bin/hydra-slack-bot reads at startup: enabled (default false), token-env-var pointers, single allowed_user_id, default_channel, poll interval, repos array, seen-PRs cache path. Also smoke-tests the launcher's refuse-to-start paths: missing config, disabled config, and missing env-var tokens — each must exit non-zero (refuse) or zero with a clean log (disabled). No live Slack API test — that would require a real workspace. Runs locally; no worker spawn, no worktree.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "slack.json.example is valid JSON",
+          "cmd": "jq empty state/connectors/slack.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares enabled=false (default)",
+          "cmd": "jq -r .enabled state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "false"
+        },
+        {
+          "name": "slack.json.example declares bot_token_env",
+          "cmd": "jq -r .bot_token_env state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HYDRA_SLACK_BOT_TOKEN"
+        },
+        {
+          "name": "slack.json.example declares app_token_env",
+          "cmd": "jq -r .app_token_env state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HYDRA_SLACK_APP_TOKEN"
+        },
+        {
+          "name": "slack.json.example declares allowed_user_id starting with U",
+          "cmd": "jq -r .allowed_user_id state/connectors/slack.json.example | grep -E '^U'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "U"
+        },
+        {
+          "name": "slack.json.example declares default_channel",
+          "cmd": "jq -r .default_channel state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "D"
+        },
+        {
+          "name": "slack.json.example declares notification_poll_interval_sec >= 30",
+          "cmd": "jq -e '.notification_poll_interval_sec >= 30' state/connectors/slack.json.example >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares repos as an array of owner/name strings",
+          "cmd": "jq -e '.repos | type == \"array\" and (length > 0) and all(test(\"/\"))' state/connectors/slack.json.example >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares seen_prs_state_path",
+          "cmd": "jq -r .seen_prs_state_path state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "state/"
+        },
+        {
+          "name": "bin/hydra-slack-bot is executable",
+          "cmd": "test -x bin/hydra-slack-bot && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "bin/hydra-slack-bot parses as valid Python",
+          "cmd": "python3 -c 'import ast; ast.parse(open(\"bin/hydra-slack-bot\").read())' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "bin/hydra-slack-bot refuses to start on missing config",
+          "cmd": "tmp=$(mktemp -d) && cp bin/hydra-slack-bot \"$tmp/\" && mkdir -p \"$tmp/bin\" && mv \"$tmp/hydra-slack-bot\" \"$tmp/bin/\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REFUSED_NO_CONFIG",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REFUSED_NO_CONFIG"
+        },
+        {
+          "name": "bin/hydra-slack-bot exits 0 when enabled=false",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/bin\" \"$tmp/state/connectors\" && cp bin/hydra-slack-bot \"$tmp/bin/\" && echo '{\"enabled\":false,\"bot_token_env\":\"X\",\"app_token_env\":\"Y\",\"allowed_user_id\":\"U1\",\"default_channel\":\"D1\",\"notification_poll_interval_sec\":60,\"repos\":[\"a/b\"]}' > \"$tmp/state/connectors/slack.json\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 0 ] && echo DISABLED_CLEAN",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DISABLED_CLEAN"
+        },
+        {
+          "name": "bin/hydra-slack-bot refuses to start when env tokens missing",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/bin\" \"$tmp/state/connectors\" && cp bin/hydra-slack-bot \"$tmp/bin/\" && echo '{\"enabled\":true,\"bot_token_env\":\"HYDRA_SELFTEST_MISSING_BOT\",\"app_token_env\":\"HYDRA_SELFTEST_MISSING_APP\",\"allowed_user_id\":\"U1\",\"default_channel\":\"D1\",\"notification_poll_interval_sec\":60,\"repos\":[\"a/b\"]}' > \"$tmp/state/connectors/slack.json\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REFUSED_NO_TOKENS",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REFUSED_NO_TOKENS"
+        },
+        {
+          "name": "requirements.txt pins slack-bolt",
+          "cmd": "grep -E '^slack-bolt' requirements.txt",
+          "expected_exit": 0,
+          "expected_stdout_contains": "slack-bolt"
+        },
+        {
+          "name": "bin/hydra-slack-bot marks PHASE1-FALLBACK swap points for post-#72",
+          "cmd": "grep -c 'PHASE1-FALLBACK' bin/hydra-slack-bot",
+          "expected_exit": 0,
+          "expected_stdout_jq": "tonumber >= 3"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "mcp-server-starts",
       "_description": "Script-only self-test for scripts/hydra-mcp-server.py — the agent-only interface server binary landed in ticket #72. Spins the server up in a subprocess on a random free port against a fixture mcp.json, exercises auth (valid token, bad token, scope mismatch), dispatches to implemented tools (get_status, pause), verifies t3-refused on merge_pr, verifies NotImplemented on a scaffolded tool (resume), and asserts the audit log received one line per call. Smoke-test fixture lives at self-test/fixtures/mcp-server/run.sh — same pattern as linear-mcp-contract and release-script-smoke. Runs locally in <5s; no worker spawn, no network, no external auth. Commander runs this before committing changes to scripts/hydra-mcp-server.py, scripts/hydra-mcp-serve.sh, or the launcher dispatch in setup.sh.",
       "kind": "script",
