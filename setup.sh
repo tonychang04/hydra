@@ -123,6 +123,13 @@ else
 #
 #   ./hydra mcp serve [--transport http|stdio] [--port N] [--bind ADDR]
 #                                              Start the MCP server (blocking).
+#   ./hydra mcp register-agent <agent-id> [--rotate]
+#                                              Generate a bearer token for an
+#                                              MCP client agent, store the
+#                                              SHA-256 hash in mcp.json, and
+#                                              print the raw token once.
+#                                              Spec: docs/specs/2026-04-17-mcp-register-agent.md
+#                                              (ticket #84)
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -156,13 +163,18 @@ case "${1:-}" in
     shift
     case "${1:-}" in
       serve) shift; hydra_exec_helper scripts/hydra-mcp-serve.sh "$@" ;;
+      register-agent) shift; hydra_exec_helper scripts/hydra-mcp-register-agent.sh "$@" ;;
       ""|-h|--help)
         cat <<'MCPUSAGE'
 Usage: ./hydra mcp <subcommand> [options]
 
 Subcommands:
-  serve    Start the MCP server (agent-only interface).
-           Run `./hydra mcp serve --help` for options.
+  serve            Start the MCP server (agent-only interface).
+                   Run `./hydra mcp serve --help` for options.
+  register-agent   Generate a bearer token for an MCP client agent,
+                   store its SHA-256 hash in state/connectors/mcp.json,
+                   and print the raw token once.
+                   Run `./hydra mcp register-agent --help` for options.
 MCPUSAGE
         exit 0
         ;;
