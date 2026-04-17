@@ -4,7 +4,10 @@
   "_requires_legend": {
     "requires_docker": "Skip the case if `docker info` fails (no docker daemon reachable). Used by cases that spin up localstack / test containers.",
     "requires_linear_mcp": "Skip the case if the Linear MCP server isn't installed.",
-    "requires_gh_auth": "Skip the case if `gh auth status` fails."
+    "requires_gh_auth": "Skip the case if `gh auth status` fails.",
+    "requires_claude_cli": "Skip the case if `claude` CLI isn't on PATH (setup.sh hard-fails without it).",
+    "requires_flyctl": "Skip the case if `fly` (flyctl) isn't on PATH. Used by `fly config validate` checks against infra/fly.toml.",
+    "requires_hadolint": "Skip the case if `hadolint` isn't on PATH. Used for Dockerfile linting checks."
   },
   "cases": [
     {
@@ -478,6 +481,143 @@
       "last_result": null
     },
     {
+      "id": "state-schemas",
+      "_description": "Script-only self-test: exercises scripts/validate-state.sh and scripts/validate-state-all.sh against fixtures under self-test/fixtures/state-schemas/. Verifies that the minimal bash+jq path accepts valid fixtures and rejects broken ones (one invalid fixture per schema, each breaks a different required top-level key), that the bulk runner aggregates results, and that --strict fails cleanly when ajv-cli isn't installed. Runs locally; no worker spawn, no worktree, no network. Commander runs this before committing changes to scripts/validate-state*.sh, state/schemas/*, or the fixtures themselves. Spec: docs/specs/2026-04-16-state-schemas.md (ticket #30).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "validate-state.sh bash -n clean",
+          "cmd": "bash -n scripts/validate-state.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state-all.sh bash -n clean",
+          "cmd": "bash -n scripts/validate-state-all.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "all state schemas are valid JSON",
+          "cmd": "jq empty state/schemas/*.schema.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "all valid fixtures are valid JSON",
+          "cmd": "jq empty self-test/fixtures/state-schemas/valid/*.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "all invalid fixtures are structurally valid JSON (only schema rejects them)",
+          "cmd": "jq empty self-test/fixtures/state-schemas/invalid/*.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state.sh passes on valid active fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/active.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh passes on valid budget-used fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/budget-used.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh passes on valid autopickup fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/autopickup.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh passes on valid memory-citations fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/memory-citations.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh passes on valid repos fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/repos.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh rejects active fixture missing 'workers'",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/active.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys: workers"
+        },
+        {
+          "name": "validate-state.sh rejects budget-used fixture missing wall-clock key",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/budget-used.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys"
+        },
+        {
+          "name": "validate-state.sh rejects autopickup fixture missing last_run",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/autopickup.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys"
+        },
+        {
+          "name": "validate-state.sh rejects memory-citations fixture missing citations",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/memory-citations.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys: citations"
+        },
+        {
+          "name": "validate-state.sh rejects repos fixture missing repos",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/repos.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys: repos"
+        },
+        {
+          "name": "validate-state-all.sh exits 0 on valid fixtures dir",
+          "cmd": "scripts/validate-state-all.sh --state-dir self-test/fixtures/state-schemas/valid",
+          "expected_exit": 0,
+          "expected_stdout_contains": "validate-state-all: OK (5 passed"
+        },
+        {
+          "name": "validate-state-all.sh exits 1 on invalid fixtures dir",
+          "cmd": "scripts/validate-state-all.sh --state-dir self-test/fixtures/state-schemas/invalid 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo BULK_FAIL_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BULK_FAIL_OK"
+        },
+        {
+          "name": "validate-state-all.sh failure summary names every failing file",
+          "cmd": "scripts/validate-state-all.sh --state-dir self-test/fixtures/state-schemas/invalid 2>&1 | grep -c '^  ✗ '",
+          "expected_exit": 0,
+          "expected_stdout_contains": "5"
+        },
+        {
+          "name": "validate-state.sh --strict without ajv exits 2 with clear message",
+          "cmd": "if command -v ajv >/dev/null 2>&1; then echo SKIP_HAS_AJV; else scripts/validate-state.sh --strict --schema-dir state/schemas self-test/fixtures/state-schemas/valid/active.json 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo STRICT_NOAJV_OK; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state-all.sh --strict without ajv exits 2 with clear message",
+          "cmd": "if command -v ajv >/dev/null 2>&1; then echo SKIP_HAS_AJV; else scripts/validate-state-all.sh --strict --state-dir self-test/fixtures/state-schemas/valid 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo STRICT_NOAJV_OK; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state-all.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/validate-state-all.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: validate-state-all.sh"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "memory-validators",
       "_description": "Script-only self-test: exercises scripts/parse-citations.sh, scripts/validate-learning-entry.sh, and scripts/validate-citations.sh against fixtures under self-test/fixtures/memory-validator/. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to any of those scripts or the memory schema.",
       "kind": "script",
@@ -577,6 +717,53 @@
           "cmd": "grep -q '^## \\[Unreleased\\]' CHANGELOG.md && echo OK",
           "expected_exit": 0,
           "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "worker-timeout-watchdog-script",
+      "_description": "Script-only self-test for scripts/rescue-worker.sh (spec: docs/specs/2026-04-16-worker-timeout-watchdog.md, ticket #45). Exercises the non-mutating --probe mode against a throwaway git repo that simulates each rescue state (clean / dirty / ahead-of-main), checks --help / missing-args / branch-mismatch error paths, and verifies bash -n cleanliness. The --rescue mutating path (commit + rebase + push) is exercised by commander on real worker worktrees and by the worker-subagent SKIP stub (worker-timeout-watchdog-rescue) — it can't run in pure script-kind because it needs a live remote.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "rescue-worker.sh bash -n clean",
+          "cmd": "bash -n scripts/rescue-worker.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "rescue-worker.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/rescue-worker.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage:"
+        },
+        {
+          "name": "rescue-worker.sh missing mode returns usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/rescue-worker.sh /tmp hydra/commander/45 45 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo USAGE_ERR",
+          "expected_exit": 0,
+          "expected_stdout_contains": "USAGE_ERR"
+        },
+        {
+          "name": "rescue-worker.sh missing positional args returns usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/rescue-worker.sh --probe 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo USAGE_ERR",
+          "expected_exit": 0,
+          "expected_stdout_contains": "USAGE_ERR"
+        },
+        {
+          "name": "rescue-worker.sh --probe on nonexistent worktree exits 1",
+          "cmd": "NO_COLOR=1 scripts/rescue-worker.sh --probe /nonexistent/path/for/fixture-$$ hydra/commander/45 45 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo NOPATH_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NOPATH_OK"
+        },
+        {
+          "name": "rescue-worker.sh fixture roundtrip (probe + branch-mismatch + usage)",
+          "cmd": "self-test/fixtures/rescue-worker/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
         }
       ],
       "last_run": null,
@@ -773,6 +960,41 @@
       "last_result": null
     },
     {
+      "id": "worker-timeout-watchdog-rescue",
+      "_description": "Simulates a worker-implementation whose chat stream dies mid-ticket (18-minute stream-idle timeout — see ticket #45 observed pattern). The fixture would spawn a worker that writes a partial set of files to a worktree, then sleeps past the 12-minute watchdog threshold without ever returning. Commander detects silence + absent completion log, runs scripts/rescue-worker.sh --probe, sees 'rescue-uncommitted' or 'rescue-commits', runs --rescue, then spawns a fresh worker with a resume hint that picks up from the partial work and opens the PR. Ticket #45. Today the runner SKIPs this case — it needs both the worker-subagent executor (same blocker as test-discovery-dormant-to-active, permission-probe, conflict-resolver-additive) AND a timer-mocking primitive so the 12-min wait doesn't actually take 12 minutes on CI.",
+      "kind": "worker-subagent",
+      "_skip_reason": "requires worker-subagent SKIP-path executor + timer mocking; implement when worker-implementation SKIP path lands (ticket #15 follow-up)",
+      "worker_type": "worker-implementation",
+      "tier": "T2",
+      "fixture_dir": "self-test/fixtures/rescue-worker",
+      "ticket_body_summary": "A worker-implementation spawned on a fresh ticket goes silent at the 18-minute stream-idle mark after committing partial work. Commander's watchdog (CLAUDE.md 'Worker timeout watchdog') must detect the silence within 12 minutes, run scripts/rescue-worker.sh --probe, run --rescue if probe returns rescue-commits or rescue-uncommitted, then spawn a follow-up worker that finishes the ticket and opens the PR. A 'nothing-to-rescue' probe labels the ticket commander-stuck for operator retry.",
+      "assertions": {
+        "must_touch_paths": [],
+        "must_not_touch_paths": [
+          ".github/workflows/**",
+          "policy.md",
+          "budget.json",
+          ".claude/settings.local.json",
+          "CLAUDE.md"
+        ],
+        "must_include_patterns": [
+          "rescue: partial work from timed-out worker",
+          "commander-rescued"
+        ],
+        "expected_artifact": "worker opens a draft PR containing both the partial rescued commits and the completion commits; the ticket has a 'commander-rescued' label and a comment listing the rescue commit SHAs",
+        "pr_label_required": "commander-review",
+        "watchdog_fires_within_minutes": 12,
+        "probe_verdicts_exercised": [
+          "rescue-uncommitted",
+          "rescue-commits",
+          "nothing-to-rescue"
+        ],
+        "rescue_conflict_escalates_to_operator": true
+      },
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "hello-hydra-demo-integrity",
       "_description": "Script-only self-test for the runnable 10-minute demo under examples/hello-hydra-demo/ (spec: docs/specs/2026-04-16-demo-repo.md, ticket #29). Runs the demo's node:test suite, checks gh-filings.sh syntax, and verifies the fixture-issue + DEMO.md shape is intact. Guarantees the demo never silently rots — if somebody breaks the tests, the fixture frontmatter, or the DEMO.md cross-links, commander catches it before committing. Zero external deps: node 18+ is the only requirement.",
       "kind": "script",
@@ -832,6 +1054,335 @@
           "cmd": "jq -e '((.dependencies // {}) | length) == 0 and ((.devDependencies // {}) | length) == 0' examples/hello-hydra-demo/package.json >/dev/null && echo OK",
           "expected_exit": 0,
           "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "mcp-tool-contract-valid",
+      "_description": "Script-only self-test for the MCP tool contract landed in ticket #50 (spec: docs/specs/2026-04-16-mcp-agent-interface.md). Validates that mcp/hydra-tools.json is well-formed JSON, declares exactly 13 tools, and that every tool entry has all required fields (name, description, scope, input_schema, output_schema) with scope drawn from the documented set {read, spawn, merge, admin}. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "mcp/hydra-tools.json is valid JSON",
+          "cmd": "jq empty mcp/hydra-tools.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "mcp/hydra-tools.json declares 13 tools",
+          "cmd": "jq -r '.tools | length' mcp/hydra-tools.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "13"
+        },
+        {
+          "name": "every tool has name, description, scope, input_schema, output_schema",
+          "cmd": "jq -e '.tools | all(has(\"name\") and has(\"description\") and has(\"scope\") and has(\"input_schema\") and has(\"output_schema\"))' mcp/hydra-tools.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "every tool.scope is one of {read, spawn, merge, admin}",
+          "cmd": "jq -e '.tools | all(.scope == \"read\" or .scope == \"spawn\" or .scope == \"merge\" or .scope == \"admin\")' mcp/hydra-tools.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "every tool.name starts with 'hydra.'",
+          "cmd": "jq -e '.tools | all(.name | startswith(\"hydra.\"))' mcp/hydra-tools.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "mcp-config-example-valid",
+      "_description": "Script-only self-test for state/connectors/mcp.json.example (landed in ticket #50). Verifies the template is valid JSON and has the three required top-level sections: server, authorized_agents, upstream_supervisor. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "state/connectors/mcp.json.example is valid JSON",
+          "cmd": "jq empty state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "declares .server.enabled as boolean",
+          "cmd": "jq -e '.server.enabled | type == \"boolean\"' state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "declares .authorized_agents as array",
+          "cmd": "jq -e '.authorized_agents | type == \"array\"' state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "declares .upstream_supervisor object",
+          "cmd": "jq -e '.upstream_supervisor | type == \"object\"' state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": ".upstream_supervisor has enabled boolean",
+          "cmd": "jq -e '.upstream_supervisor.enabled | type == \"boolean\"' state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "fly-toml-valid",
+      "_description": "Script-only self-test for infra/fly.toml (landed in ticket #48). Runs `fly config validate` to catch drift from Fly.io's schema before a deploy breaks. Marked requires_flyctl: SKIPs on machines where the flyctl (`fly`) CLI isn't installed — including CI runners. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "requires": [
+        "requires_flyctl"
+      ],
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "fly config validate passes against infra/fly.toml",
+          "cmd": "fly config validate --config infra/fly.toml 2>&1 && echo VALIDATED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "VALIDATED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "dockerfile-lintable",
+      "_description": "Script-only self-test for infra/Dockerfile (landed in ticket #48). Runs hadolint to catch common Dockerfile anti-patterns (bad ordering, missing --no-install-recommends, unpinned tags, etc). Marked requires_hadolint: SKIPs on machines where hadolint isn't installed. `docker build --check` was considered as a fallback but only exists in recent Docker Buildx — hadolint is the portable option. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "requires": [
+        "requires_hadolint"
+      ],
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "hadolint passes on infra/Dockerfile",
+          "cmd": "hadolint infra/Dockerfile && echo LINTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "LINTED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "entrypoint-idempotent",
+      "_description": "Script-only self-test for infra/entrypoint.sh (landed in ticket #48). Verifies (1) syntax clean, (2) --help prints usage, (3) entrypoint fails loudly when neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set. Uses `env -i` to wipe the host's environment so inherited tokens don't mask the guard. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "entrypoint.sh bash -n clean",
+          "cmd": "bash -n infra/entrypoint.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "entrypoint.sh --help prints usage",
+          "cmd": "NO_COLOR=1 infra/entrypoint.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: entrypoint.sh"
+        },
+        {
+          "name": "entrypoint.sh fails loud when no auth env is set",
+          "cmd": "env -i HOME=\"$HOME\" PATH=\"$PATH\" bash infra/entrypoint.sh 2>&1; ec=$?; [ \"$ec\" -ne 0 ] && echo FAILED_LOUD",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FAILED_LOUD"
+        },
+        {
+          "name": "entrypoint.sh no-auth error message names CLAUDE_CODE_OAUTH_TOKEN",
+          "cmd": "env -i HOME=\"$HOME\" PATH=\"$PATH\" bash infra/entrypoint.sh 2>&1 | grep -F 'CLAUDE_CODE_OAUTH_TOKEN'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CLAUDE_CODE_OAUTH_TOKEN"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "slack-config-example-valid",
+      "_description": "Script-only self-test for the Slack bot config template (spec: docs/specs/2026-04-17-slack-bot.md, ticket #74). jq-validates that state/connectors/slack.json.example declares every field bin/hydra-slack-bot reads at startup: enabled (default false), token-env-var pointers, single allowed_user_id, default_channel, poll interval, repos array, seen-PRs cache path. Also smoke-tests the launcher's refuse-to-start paths: missing config, disabled config, and missing env-var tokens — each must exit non-zero (refuse) or zero with a clean log (disabled). No live Slack API test — that would require a real workspace. Runs locally; no worker spawn, no worktree.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "slack.json.example is valid JSON",
+          "cmd": "jq empty state/connectors/slack.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares enabled=false (default)",
+          "cmd": "jq -r .enabled state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "false"
+        },
+        {
+          "name": "slack.json.example declares bot_token_env",
+          "cmd": "jq -r .bot_token_env state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HYDRA_SLACK_BOT_TOKEN"
+        },
+        {
+          "name": "slack.json.example declares app_token_env",
+          "cmd": "jq -r .app_token_env state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HYDRA_SLACK_APP_TOKEN"
+        },
+        {
+          "name": "slack.json.example declares allowed_user_id starting with U",
+          "cmd": "jq -r .allowed_user_id state/connectors/slack.json.example | grep -E '^U'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "U"
+        },
+        {
+          "name": "slack.json.example declares default_channel",
+          "cmd": "jq -r .default_channel state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "D"
+        },
+        {
+          "name": "slack.json.example declares notification_poll_interval_sec >= 30",
+          "cmd": "jq -e '.notification_poll_interval_sec >= 30' state/connectors/slack.json.example >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares repos as an array of owner/name strings",
+          "cmd": "jq -e '.repos | type == \"array\" and (length > 0) and all(test(\"/\"))' state/connectors/slack.json.example >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares seen_prs_state_path",
+          "cmd": "jq -r .seen_prs_state_path state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "state/"
+        },
+        {
+          "name": "bin/hydra-slack-bot is executable",
+          "cmd": "test -x bin/hydra-slack-bot && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "bin/hydra-slack-bot parses as valid Python",
+          "cmd": "python3 -c 'import ast; ast.parse(open(\"bin/hydra-slack-bot\").read())' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "bin/hydra-slack-bot refuses to start on missing config",
+          "cmd": "tmp=$(mktemp -d) && cp bin/hydra-slack-bot \"$tmp/\" && mkdir -p \"$tmp/bin\" && mv \"$tmp/hydra-slack-bot\" \"$tmp/bin/\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REFUSED_NO_CONFIG",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REFUSED_NO_CONFIG"
+        },
+        {
+          "name": "bin/hydra-slack-bot exits 0 when enabled=false",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/bin\" \"$tmp/state/connectors\" && cp bin/hydra-slack-bot \"$tmp/bin/\" && echo '{\"enabled\":false,\"bot_token_env\":\"X\",\"app_token_env\":\"Y\",\"allowed_user_id\":\"U1\",\"default_channel\":\"D1\",\"notification_poll_interval_sec\":60,\"repos\":[\"a/b\"]}' > \"$tmp/state/connectors/slack.json\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 0 ] && echo DISABLED_CLEAN",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DISABLED_CLEAN"
+        },
+        {
+          "name": "bin/hydra-slack-bot refuses to start when env tokens missing",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/bin\" \"$tmp/state/connectors\" && cp bin/hydra-slack-bot \"$tmp/bin/\" && echo '{\"enabled\":true,\"bot_token_env\":\"HYDRA_SELFTEST_MISSING_BOT\",\"app_token_env\":\"HYDRA_SELFTEST_MISSING_APP\",\"allowed_user_id\":\"U1\",\"default_channel\":\"D1\",\"notification_poll_interval_sec\":60,\"repos\":[\"a/b\"]}' > \"$tmp/state/connectors/slack.json\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REFUSED_NO_TOKENS",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REFUSED_NO_TOKENS"
+        },
+        {
+          "name": "requirements.txt pins slack-bolt",
+          "cmd": "grep -E '^slack-bolt' requirements.txt",
+          "expected_exit": 0,
+          "expected_stdout_contains": "slack-bolt"
+        },
+        {
+          "name": "bin/hydra-slack-bot marks PHASE1-FALLBACK swap points for post-#72",
+          "cmd": "grep -c 'PHASE1-FALLBACK' bin/hydra-slack-bot",
+          "expected_exit": 0,
+          "expected_stdout_jq": "tonumber >= 3"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "mcp-server-starts",
+      "_description": "Script-only self-test for scripts/hydra-mcp-server.py — the agent-only interface server binary landed in ticket #72. Spins the server up in a subprocess on a random free port against a fixture mcp.json, exercises auth (valid token, bad token, scope mismatch), dispatches to implemented tools (get_status, pause), verifies t3-refused on merge_pr, verifies NotImplemented on a scaffolded tool (resume), and asserts the audit log received one line per call. Smoke-test fixture lives at self-test/fixtures/mcp-server/run.sh — same pattern as linear-mcp-contract and release-script-smoke. Runs locally in <5s; no worker spawn, no network, no external auth. Commander runs this before committing changes to scripts/hydra-mcp-server.py, scripts/hydra-mcp-serve.sh, or the launcher dispatch in setup.sh.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-mcp-server.py bash syntax-equivalent (python ast parse)",
+          "cmd": "python3 -c 'import ast; ast.parse(open(\"scripts/hydra-mcp-server.py\").read())' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-mcp-serve.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-mcp-serve.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-mcp-serve.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-mcp-serve.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra mcp serve"
+        },
+        {
+          "name": "--check refuses with no config (exit 1)",
+          "cmd": "HYDRA_MCP_CONFIG=/nonexistent/mcp.json python3 scripts/hydra-mcp-server.py --check 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo NOCFG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NOCFG_OK"
+        },
+        {
+          "name": "--check refuses placeholder config (exit 1)",
+          "cmd": "HYDRA_MCP_CONFIG=state/connectors/mcp.json.example python3 scripts/hydra-mcp-server.py --check 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo PLACEHOLDER_REFUSED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PLACEHOLDER_REFUSED"
+        },
+        {
+          "name": "--transport stdio is a Phase 1 non-goal (exit 2)",
+          "cmd": "python3 scripts/hydra-mcp-server.py --transport stdio 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo STDIO_REFUSED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STDIO_REFUSED"
+        },
+        {
+          "name": "integration smoke (start server, run 7 calls, assert audit + shapes)",
+          "cmd": "self-test/fixtures/mcp-server/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "mcp/hydra-tools.json is valid JSON + has 13 tools",
+          "cmd": "jq -e '(.tools | length) == 13' mcp/hydra-tools.json >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "every tool in the contract has a handler registered in the server",
+          "cmd": "jq -r '.tools[].name' mcp/hydra-tools.json | sort > /tmp/contract-tools-$$ && grep -oE 'hydra\\.[a-z_]+' scripts/hydra-mcp-server.py | grep -v 'hydra\\.' | head -0; grep -oE '\"hydra\\.[a-z_]+\"' scripts/hydra-mcp-server.py | tr -d '\"' | sort -u > /tmp/server-tools-$$ && diff /tmp/contract-tools-$$ /tmp/server-tools-$$ && echo HANDLERS_COMPLETE; rm -f /tmp/contract-tools-$$ /tmp/server-tools-$$",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HANDLERS_COMPLETE"
         }
       ],
       "last_run": null,

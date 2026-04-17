@@ -21,6 +21,18 @@ gh auth status   # should confirm you're logged in
 
 Without `gh auth`, Hydra's workers cannot open PRs.
 
+## Three install paths
+
+Pick the one that matches how you want to drive Hydra:
+
+| Option | Mode | Who drives Hydra | When to pick it |
+|---|---|---|---|
+| **A — one-liner local** | Local | You, in a terminal chat with Commander | You want the fastest way to try Hydra on your laptop. **Most operators start here.** |
+| **B — manual local** | Local | You, in a terminal chat with Commander | Same end-state as A, but you prefer reading each step before it runs. |
+| **C — cloud + MCP** | Cloud | Another agent (your Main Agent / a supervisor bot), over MCP | You want Commander headless on a VPS so it keeps ticking while your laptop's closed. Phase 2 direction. |
+
+A and B produce the identical tree — the only difference is whether `install.sh` runs the steps for you or you run them by hand. C is a different deployment shape: Commander runs on Fly.io (or a Debian VPS), exposes an MCP tool surface, and another agent calls `hydra.*` tools to dispatch work.
+
 ## Option A — one-liner install (recommended)
 
 ```bash

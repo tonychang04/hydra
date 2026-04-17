@@ -14,10 +14,18 @@
 #     Until webhooks land, the operator may prefer `auto_stop_machines = "off"`
 #     and `min_machines_running = 1` so autopickup keeps ticking. Flip as needed.
 #   - [[http_service]] on 8080 → /health endpoint served by entrypoint.sh.
+#   - [[services]] on 8765 → /mcp endpoint served by scripts/hydra-mcp-server.py
+#     (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72). Uses the
+#     [[services]] block (not a second [[http_service]]) because Fly permits
+#     multiple [[services]] stanzas on distinct ports; exactly one
+#     [[http_service]] is supported per config. The MCP port is NOT force_https
+#     at the Fly level — clients call it internally from other authorized
+#     agents; public exposure still requires an operator-configured reverse
+#     proxy. See docs/phase2-vps-runbook.md §"Wiring up an external agent".
 #
 # NOT in this file (separate tickets):
-#   - webhook routes (#40/#41) — will add [[http_service]] concentrations on
-#     /webhook/github and /webhook/linear once that handler lands.
+#   - webhook routes (#40/#41) — will add routes on the existing /mcp service
+#     (or a dedicated webhook service) once that handler lands.
 #   - Slack bot (#42) — same story; no socket-mode app config here yet.
 
 app = "hydra-commander"              # Operator: rename to your Fly app before first deploy.
@@ -36,6 +44,13 @@ kill_timeout = "30s"
   HYDRA_DATA_DIR      = "/hydra/data"
   HYDRA_HEALTH_PORT   = "8080"
   HYDRA_TMUX_SESSION  = "commander"
+  HYDRA_MCP_PORT      = "8765"
+  HYDRA_MCP_BIND      = "0.0.0.0"       # Bind inside the VM only; Fly's [[services]]
+                                        # below exposes the port externally. Do NOT
+                                        # change HYDRA_MCP_BIND for local dev —
+                                        # hydra-mcp-server.py defaults to loopback.
+  HYDRA_MCP_ENABLED   = "1"             # Operator rollback: `fly secrets set HYDRA_MCP_ENABLED=0`
+                                        # to skip the MCP server background launch.
   # CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, GITHUB_TOKEN go in `fly secrets`,
   # never here. See docs/phase2-vps-runbook.md.
 
@@ -62,6 +77,35 @@ kill_timeout = "30s"
     method       = "GET"
     timeout      = "5s"
     path         = "/health"
+
+# /mcp on 8765 — Hydra's agent-only interface (JSON-RPC 2.0 over HTTP). Bearer-
+# token auth enforced by the server itself (no Fly-level auth). See
+# docs/specs/2026-04-17-mcp-server-binary.md for the full threat model.
+# This is a [[services]] block (not [[http_service]]) because Fly only allows
+# one [[http_service]] per config; [[services]] is the lower-level primitive
+# that permits multiple external ports. The MCP server speaks HTTP, not raw TCP,
+# but we keep the block minimal: no health check here (the MCP server doesn't
+# expose a GET health endpoint — clients POST JSON-RPC to /mcp and auth first).
+[[services]]
+  internal_port = 8765
+  protocol      = "tcp"
+  processes     = ["app"]
+  auto_stop_machines  = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    port     = 443
+    handlers = ["tls", "http"]
+    # NOTE: plaintext port 8765 was removed per security review — bearer tokens
+    # must not travel over cleartext on the public internet. Fly's edge handles
+    # TLS termination, so internal_port=8765 is reached by clients via
+    # https://<app>.fly.dev/mcp (port 443 → TLS-terminated → internal 8765).
+
+  [[services.tcp_checks]]
+    grace_period  = "30s"
+    interval      = "15s"
+    timeout       = "5s"
 
 [[vm]]
   size        = "shared-cpu-1x"

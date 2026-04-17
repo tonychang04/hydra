@@ -10,8 +10,10 @@ For the decision record / architecture rationale, see the design spec at [`docs/
 
 **Out (separate tickets):**
 - Webhook receiver (GitHub / Linear triggers) — [#40](https://github.com/tonychang04/hydra/issues/40), [#41](https://github.com/tonychang04/hydra/issues/41)
-- Slack bot chat surface — [#42](https://github.com/tonychang04/hydra/issues/42)
 - End-to-end automated test from phone → cloud commander → merged PR — covered by the umbrella `#48` acceptance criteria when those land
+
+**In (covered below):**
+- Slack bot DM surface for the operator — see "Setting up Slack" below. (Ticket [#74](https://github.com/tonychang04/hydra/issues/74); supersedes the old `#42` reference above.)
 
 ## Prerequisites
 
@@ -201,6 +203,133 @@ Public repos clone without `GITHUB_TOKEN`; that's how the self-test case runs in
 - SSH-key-based auth. HTTPS + `GITHUB_TOKEN` only.
 
 These are documented in the spec so future tickets inherit the context.
+
+## Setting up Slack
+
+The Slack bot (`bin/hydra-slack-bot`) gives the operator a phone-friendly DM surface for Commander. It's a thin bridge: the operator DMs `status` or `pickup 2` and gets a reply; Commander DMs the operator when a PR is ready for human merge (label `commander-review-clean`). Spec: [`docs/specs/2026-04-17-slack-bot.md`](specs/2026-04-17-slack-bot.md).
+
+Socket mode (outbound WebSocket to Slack) means **no public HTTP endpoint**. The bot works behind Fly's suspend-capable Machine with no extra port exposure.
+
+**Scope (Phase 1):** single operator, DM only, two commands (`status` / `pickup [N]`), one notification trigger (`commander-review-clean`). Merge / reject / retry verbs are scaffolded as `NotImplemented` stubs.
+
+### Step 1 — Create the Slack app
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**. Name it `hydra-commander` (or whatever you like), pick your workspace.
+2. **Socket Mode** → enable it. Slack prompts you to create an **App-Level Token** with `connections:write` scope. Save the token — it starts with `xapp-`. This is your `HYDRA_SLACK_APP_TOKEN`.
+3. **OAuth & Permissions** → add these **Bot Token Scopes**:
+   - `chat:write` — post DM replies and proactive notifications
+   - `im:history` — read the DM the user sends to the bot
+   - `im:read` — list the bot's DM channels
+   - `im:write` — open a DM conversation if one doesn't exist yet
+   - `users:read` — verify the `allowed_user_id` lookup at boot (optional; the bot works without it, but logs a warning)
+4. **Install App** → **Install to Workspace**. Approve the scopes. Save the resulting **Bot User OAuth Token** — it starts with `xoxb-`. This is your `HYDRA_SLACK_BOT_TOKEN`.
+5. **Event Subscriptions** → **Enable Events** (it should default to on once socket mode is). Under **Subscribe to bot events**, add:
+   - `message.im` — fires on every DM to the bot
+
+No other events needed. No slash commands.
+
+### Step 2 — Find your user ID and DM channel ID
+
+In Slack, open your profile → three-dot menu → **Copy member ID**. Looks like `U0ABC12DEF`. This is `allowed_user_id`.
+
+To find the `default_channel` (the DM conversation ID between you and the bot — used as fallback if direct user-ID DM fails): in Slack, open the DM with the bot; the channel ID shows in the URL (`https://app.slack.com/client/TXX/DXXXXXXXXXX`). Looks like `D0ABC12DEF`.
+
+### Step 3 — Configure Hydra
+
+Copy the template:
+
+```bash
+cp state/connectors/slack.json.example state/connectors/slack.json
+```
+
+Edit `state/connectors/slack.json`:
+
+- Set `enabled: true`
+- Confirm `bot_token_env` and `app_token_env` are the env-var names you'll use (defaults: `HYDRA_SLACK_BOT_TOKEN`, `HYDRA_SLACK_APP_TOKEN`)
+- Set `allowed_user_id` (your `U…`)
+- Set `default_channel` (your `D…`)
+- Set `repos` to the list of `owner/name` repos to poll for the `commander-review-clean` label
+
+The real `state/connectors/slack.json` file is gitignored — only the `.example` mirror is committed.
+
+### Step 4 — Set tokens as Fly secrets
+
+```bash
+fly secrets set \
+  HYDRA_SLACK_BOT_TOKEN=xoxb-… \
+  HYDRA_SLACK_APP_TOKEN=xapp-… \
+  --app <your-fly-app>
+```
+
+Secrets live in Fly's secret store — never committed, never on disk.
+
+### Step 5 — Install the Python deps
+
+The bot uses `slack-bolt` (Slack's official Python SDK). Add to your container build or install into the runtime venv:
+
+```bash
+pip install -r requirements.txt
+```
+
+On Fly: `requirements.txt` gets installed during `fly deploy` if your `infra/Dockerfile` runs `pip install -r requirements.txt`. If it doesn't yet, the deploy will succeed but the bot will refuse to start with "slack-bolt not installed" — update the Dockerfile in a follow-up PR.
+
+### Step 6 — Wire the bot into entrypoint (follow-up)
+
+**Deferred to ticket #72 landing.** Once `infra/entrypoint.sh` settles (that worker is rewriting it), add a stanza just before the `tmux new-session` line:
+
+```bash
+if [ -f state/connectors/slack.json ] && [ "$(jq -r .enabled state/connectors/slack.json 2>/dev/null)" = "true" ]; then
+  ./bin/hydra-slack-bot &
+fi
+```
+
+No changes to `infra/fly.toml` are needed — socket mode is outbound-only, no new port to expose.
+
+Until that stanza lands, launch the bot manually in a second tmux window:
+
+```bash
+fly ssh console --app <app>
+$ cd /hydra
+$ tmux new-window -t commander -n slack-bot './bin/hydra-slack-bot'
+```
+
+### Step 7 — Verify
+
+DM the bot `status`. Expected reply (shape varies with Commander state):
+
+```
+*Commander status:* running
+*Active workers:* 1
+*Today:* 3 done · 0 failed · 42 min wall-clock
+*Autopickup:* on (every 30 min)
+```
+
+To verify proactive notifications, manually apply the `commander-review-clean` label to an open PR in one of your configured `repos`:
+
+```bash
+gh api --method POST /repos/<owner>/<repo>/issues/<pr>/labels -f 'labels[]=commander-review-clean'
+```
+
+Within `notification_poll_interval_sec` (default 60s) the bot should DM:
+
+```
+PR #501 ready for merge (T2 — owner/repo) — https://github.com/…
+> PR title here
+```
+
+### Disabling
+
+Flip `enabled: false` in `state/connectors/slack.json` and restart the process. Bot exits 0 with a clear log line. No migration or state cleanup needed.
+
+### Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Bot logs "env var HYDRA_SLACK_BOT_TOKEN unset" | `fly secrets list --app <app>` — re-run `fly secrets set`. |
+| Bot logs "slack-bolt not installed" | `requirements.txt` not installed in the container — update `infra/Dockerfile`. |
+| DMs from the right user are ignored | Check `logs/slack-audit.jsonl` for `refused-unauthorized-user` entries — if so, `allowed_user_id` is wrong. |
+| Notifications don't fire on `commander-review-clean` | Check `gh` is installed inside the Machine and `GH_TOKEN` is set. Check `repos` in `slack.json` includes the repo. Check `logs/slack-audit.jsonl` shows outbound events. |
+| Bot dies on every `fly deploy` | Normal — `fly deploy` replaces the Machine. The bot restarts from `entrypoint.sh`. `state/slack-notified-prs.json` on the volume preserves the seen-set, so no duplicate notifications. |
 
 ## Non-Fly operators (Hetzner, DO, bare VPS)
 

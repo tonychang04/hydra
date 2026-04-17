@@ -1,0 +1,18 @@
+# Hydra Python runtime dependencies
+#
+# Install with:  pip install -r requirements.txt
+#
+# Pinned ranges keep minor upgrades reviewable without forcing an exact
+# version that may lag security patches. Bump deliberately via a PR that
+# runs the self-test suite. See docs/specs/2026-04-17-slack-bot.md for
+# rationale on the slack-bolt pin.
+
+# Slack bot — bin/hydra-slack-bot uses slack-bolt in socket mode.
+# >=1.18,<2 lets us pick up 1.x patch releases without breaking on a 2.0
+# major. slack-bolt 1.x has been API-stable for ~2 years.
+slack-bolt>=1.18,<2
+
+# slack-bolt transitively requires slack-sdk. Pinning here as well makes
+# the socket-mode transport dependency explicit — bin/hydra-slack-bot
+# imports slack_sdk.socket_mode directly.
+slack-sdk>=3.21,<4
