@@ -1,8 +1,14 @@
+---
+status: proposed
+date: 2026-04-17
+author: hydra worker
+ticket: 20
+tier: T2
+---
+
 # Per-repo merge_policy override
 
 **Ticket:** [#20 — Per-repo T1 auto-merge policy](https://github.com/tonychang04/hydra/issues/20)
-**Tier:** T2
-**Status:** Proposed
 
 ## Problem
 
