@@ -13,6 +13,11 @@ state/linear.json
 state/autopickup.json
 state/commander.lock
 state/pending-dispatches.json
+state/slack-notified-prs.json
+
+# Connector configs — real values live here; only the .example mirror is committed.
+state/connectors/*.json
+!state/connectors/*.example.json
 
 # Live operational artifacts
 logs/*

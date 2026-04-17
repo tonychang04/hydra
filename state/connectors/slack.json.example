@@ -1,0 +1,26 @@
+{
+  "_description": "Copy to state/connectors/slack.json and fill in. Controls the Hydra Slack bot (bin/hydra-slack-bot). Bot runs inside or alongside the Commander process, listens for DMs from exactly one allowlisted Slack user, and posts proactive notifications on state transitions. state/connectors/*.json (except *.example.json) is gitignored — only the .example mirror is committed.",
+  "_canonical_term": "slack bot",
+  "_related_docs": [
+    "docs/specs/2026-04-17-slack-bot.md",
+    "docs/phase2-vps-runbook.md"
+  ],
+  "enabled": false,
+  "_enabled_note": "Set to true to let bin/hydra-slack-bot start. Default false so a missing/incomplete config is inert — bot exits 0 with a clear log line if this is false.",
+  "bot_token_env": "HYDRA_SLACK_BOT_TOKEN",
+  "_bot_token_env_note": "Name of the env var holding the Slack app's bot user OAuth token (starts with xoxb-). Do NOT paste the token into this file. On Fly: `fly secrets set HYDRA_SLACK_BOT_TOKEN=xoxb-...`.",
+  "app_token_env": "HYDRA_SLACK_APP_TOKEN",
+  "_app_token_env_note": "Name of the env var holding the Slack app-level token (starts with xapp-), scoped connections:write. Required for socket mode — no public webhook URL needed. Do NOT paste the token into this file.",
+  "allowed_user_id": "U0000000000",
+  "_allowed_user_id_note": "Exactly ONE Slack user ID (NOT display name / email / handle). DMs from any other user are silently ignored and logged once to logs/slack-audit.jsonl with action=refused-unauthorized-user. Find yours: Slack profile → three-dot menu → Copy member ID. Looks like U0ABC12DEF.",
+  "default_channel": "D0000000000",
+  "_default_channel_note": "Fallback channel ID (usually the DM conversation ID with allowed_user_id) for proactive notifications if DMing the user directly fails (they uninstalled the bot, workspace migrated, etc.). Can usually be found by opening the DM with the bot and copying the channel ID from the URL.",
+  "notification_poll_interval_sec": 60,
+  "_notification_poll_interval_sec_note": "How often to poll for newly-labeled commander-review-clean PRs. Default 60s. Minimum enforced in code is 30s (tighter hits GitHub rate limits).",
+  "repos": [
+    "tonychang04/hydra"
+  ],
+  "_repos_note": "Which repos to poll for the commander-review-clean label. Phase 1: must be listed explicitly here (the bot is a standalone process that doesn't read state/repos.json yet). Phase 2 (after ticket #72 lands): the bot becomes an MCP client and pulls this list from Commander's active repo config via hydra.get_status.",
+  "seen_prs_state_path": "state/slack-notified-prs.json",
+  "_seen_prs_state_path_note": "Where to persist the set of PR IDs the bot has already notified about. Persisting means a bot restart doesn't re-notify. File is capped at 500 entries via LRU eviction."
+}
