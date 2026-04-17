@@ -147,6 +147,61 @@ If you disable auto-stop (set `min_machines_running = 1` in `infra/fly.toml` so 
 | Deploy hangs on "Waiting for healthy status" | `grace_period` in `fly.toml` is 30s — commander takes longer than that on first boot on slow links. Retry `fly deploy`; subsequent boots are faster. |
 | Lost state after deploy | Verify the volume is still attached: `fly volumes list --app <app>`. If the volume is gone, you created a new app without re-attaching — don't `fly apps destroy` without first `fly volumes snapshot`. |
 
+## Repo cloning on Fly
+
+Cloud commander needs the actual source tree of every enabled repo before it can spawn a `worker-implementation`. Unlike a laptop, Fly Machines start empty — there's no `/Users/<you>/projects/<repo>` waiting. `scripts/ensure-repo-cloned.sh` handles this.
+
+Spec: [`docs/specs/2026-04-17-cloud-repo-clone.md`](specs/2026-04-17-cloud-repo-clone.md) · Ticket: [#73](https://github.com/tonychang04/hydra/issues/73).
+
+### Where clones live
+
+Default: `/hydra/data/repos/<owner>/<name>`.
+
+Why that path: `/hydra/data` is the Fly volume mountpoint (`hydra_data`). Anything under it survives `fly deploy`, so repos stay cloned across framework updates — no bandwidth cost on every redeploy.
+
+### How a clone is triggered
+
+1. **At boot (follow-up after #72 lands).** `infra/entrypoint.sh` will iterate `state/repos.json:.repos[]` after rewiring the volume and call `scripts/ensure-repo-cloned.sh <owner>/<name>` for each enabled entry. This PR ships the tool; the entrypoint wiring is a follow-up because ticket #72 is currently editing `entrypoint.sh`.
+2. **Before worker spawn (follow-up, same PR as #1).** Commander's spawn path will re-run `ensure-repo-cloned.sh` right before `git worktree add`, so a ticket pickup after a long idle window still starts from a clean, up-to-date base.
+3. **Manually.** SSH into the commander and run it by hand:
+   ```bash
+   fly ssh console --app <app> -C 'scripts/ensure-repo-cloned.sh owner/name'
+   ```
+   Idempotent — safe to re-run when debugging.
+
+### Override the clone path or git URL
+
+Both fields are optional on each `state/repos.json:.repos[]` entry:
+
+- `git_url` — override the default `https://github.com/<owner>/<name>.git`. Useful for forks, mirrors, or self-hosted GitLab.
+- `cloud_local_path` — override the default `/hydra/data/repos/<owner>/<name>`. Useful when the operator wants a flatter layout or wants different repos on different volumes.
+
+See `state/repos.example.json` for a populated example. Local-mode operators never need to touch these fields — `local_path` continues to work as today.
+
+### Exit codes and failure modes
+
+`scripts/ensure-repo-cloned.sh` exits:
+
+- `0` on success, or on a safe no-op (e.g. it found an active worker worktree and declined to `git reset --hard`).
+- `1` on config errors: missing `GITHUB_TOKEN` on a private-repo clone, repo not in `state/repos.json`, malformed slug, missing `git` / `jq`.
+- `2` on git operation failures: network, auth rejected, corrupted local checkout.
+
+All non-zero exits print a single-line reason to stderr. Tail `fly logs --app <app>` to see which repo failed and why.
+
+### Authentication
+
+The script uses `GITHUB_TOKEN` (already required by `entrypoint.sh`) to synthesize an HTTPS-auth URL at clone and fetch time: `https://x-access-token:${GITHUB_TOKEN}@github.com/<owner>/<name>.git`. The embedded token is never persisted into `.git/config` — the script restores the token-less origin URL immediately after the fetch. So `git remote -v` inside the clone never shows the token.
+
+Public repos clone without `GITHUB_TOKEN`; that's how the self-test case runs in CI.
+
+### What's out of scope (phase 1)
+
+- Submodules (`git submodule update --init`). Tracked as future work.
+- git LFS — pointers clone, blobs don't. Tracked as future work.
+- SSH-key-based auth. HTTPS + `GITHUB_TOKEN` only.
+
+These are documented in the spec so future tickets inherit the context.
+
 ## Non-Fly operators (Hetzner, DO, bare VPS)
 
 Use `infra/systemd/hydra.service` instead of Fly. The install steps are documented in-file at the top of that unit. Same `infra/entrypoint.sh` runs in both paths, so the operational muscle memory (attach, logs, deploy) carries over via `journalctl -u hydra.service -f` and `sudo -iu hydra tmux attach -t commander`.
