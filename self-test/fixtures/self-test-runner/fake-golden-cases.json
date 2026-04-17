@@ -1,0 +1,54 @@
+{
+  "_description": "Meta-fixture for self-test/run.sh. Contains one case that MUST pass and one that MUST fail. Used by the runner-meta case in golden-cases.example.json to regression-test the runner itself.",
+  "cases": [
+    {
+      "id": "fake-pass",
+      "_description": "Deliberately trivial all-green script case. Exercises expected_exit, expected_stdout_jq, and expected_stderr_contains happy paths.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "exit 0 happy path",
+          "cmd": "true",
+          "expected_exit": 0
+        },
+        {
+          "name": "stdout jq check",
+          "cmd": "printf '{\"n\":3}\\n'",
+          "expected_exit": 0,
+          "expected_stdout_jq": ".n == 3"
+        },
+        {
+          "name": "stderr contains check",
+          "cmd": "printf 'boom\\n' >&2; true",
+          "expected_exit": 0,
+          "expected_stderr_contains": "boom"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "fake-fail",
+      "_description": "Deliberately broken — step 2 exits 1 where we expect 0. Exercises the failure-report path so runner-meta can assert nonzero exit + clear error message.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "first step passes",
+          "cmd": "true",
+          "expected_exit": 0
+        },
+        {
+          "name": "second step intentionally fails",
+          "cmd": "exit 1",
+          "expected_exit": 0
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    }
+  ]
+}

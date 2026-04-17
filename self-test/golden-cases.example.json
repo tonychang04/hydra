@@ -244,6 +244,37 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "runner-meta",
+      "_description": "Self-tests the self-test runner. Invokes ./self-test/run.sh against fake-golden-cases.json fixtures (self-test/fixtures/self-test-runner/) — one deliberately passing case, one deliberately failing — and asserts exit codes + error-message shape. Runs before committing changes to self-test/run.sh itself. See docs/specs/2026-04-16-self-test-runner.md.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "runner exits 0 on fake-pass fixture",
+          "cmd": "NO_COLOR=1 ./self-test/run.sh --cases-file self-test/fixtures/self-test-runner/fake-golden-cases.json --case fake-pass",
+          "expected_exit": 0
+        },
+        {
+          "name": "runner exits 1 on fake-fail fixture",
+          "cmd": "NO_COLOR=1 ./self-test/run.sh --cases-file self-test/fixtures/self-test-runner/fake-golden-cases.json --case fake-fail; ec=$?; [ \"$ec\" -eq 1 ]",
+          "expected_exit": 0
+        },
+        {
+          "name": "runner failure output names the failing step",
+          "cmd": "NO_COLOR=1 ./self-test/run.sh --cases-file self-test/fixtures/self-test-runner/fake-golden-cases.json --case fake-fail 2>&1 | grep -F 'second step intentionally fails'",
+          "expected_exit": 0
+        },
+        {
+          "name": "runner skips worker-implementation kind cleanly",
+          "cmd": "NO_COLOR=1 ./self-test/run.sh --kind=worker-implementation 2>&1 | grep -F 'SKIP: requires Claude auth'",
+          "expected_exit": 0
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
