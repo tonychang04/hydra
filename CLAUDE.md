@@ -154,6 +154,18 @@ This is deliberately separate from the implementer so the reviewer isn't biased 
 - If uncertain about tier or scope, ASK. Don't guess on safety.
 - If a worker hits `commander-stuck` 2+ times on the same ticket, stop retrying, escalate to the operator
 
+## Applying labels (PRs and issues)
+
+When a worker (or commander itself) needs to add a label to a PR, **always use the REST API**:
+
+```
+gh api --method POST /repos/<owner>/<repo>/issues/<pr_number>/labels -f "labels[]=<label>"
+```
+
+Do **not** use `gh pr edit --add-label <label>` — it hits the GraphQL API, which currently fails with a Projects (classic) deprecation error on most repos. PR numbers work as issue numbers against the REST endpoint (PRs are issues in GitHub's data model).
+
+For plain issues, `gh issue edit <n> --add-label <label>` is still fine (it doesn't route through the deprecated GraphQL path that breaks `gh pr edit`). Use `gh label create <name> --color <hex> --description "..."` as usual when a label doesn't yet exist; only the `--add-label` apply step on PRs has the deprecation issue.
+
 ## State files (read at session start)
 
 - `policy.md` — risk tiers (authoritative)
