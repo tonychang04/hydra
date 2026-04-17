@@ -139,6 +139,114 @@ If you disable auto-stop (set `min_machines_running = 1` in `infra/fly.toml` so 
 - **Volume.** `/hydra/data` is encrypted at rest by Fly. It contains your memory, learnings, and logs — valuable, but not credentials (tokens live in Fly's secret store, not on disk).
 - **Webhook secret (follow-up #40/#41).** Will ride in `fly secrets` as `HYDRA_WEBHOOK_SECRET`.
 
+## Enabling worker docker support
+
+**Default: off.** The standard commander image has no docker binary. Workers running on cloud commander therefore can't `docker compose up` against a repo's compose file — so any test procedure that needs postgres/redis/any other containerised dep will fail at step 1 of `worker-test-discovery`.
+
+To enable it, rebuild with an opt-in build arg and flip one Fly setting. This is a deliberate per-operator attestation — **read the security caveats below before enabling**.
+
+Spec: [`docs/specs/2026-04-17-cloud-worker-docker.md`](specs/2026-04-17-cloud-worker-docker.md) · Ticket: [#77](https://github.com/tonychang04/hydra/issues/77).
+
+### When to enable
+
+You probably want this if:
+
+- You're running Hydra against repos whose test procedure uses `docker compose` (most InsForge repos — `InsForge/InsForge`, `insforge-cloud-backend`, anything with a `docker-compose.yml` in the root).
+- `worker-test-discovery` has returned "test procedure unclear" on a repo twice in a row with the docker-missing signature in the worker log.
+
+You probably don't want this if:
+
+- Your repos are pure-source (no integration tests, or tests that use in-memory fixtures).
+- You're not comfortable with the security posture of a privileged Fly Machine (see below).
+
+### Step 1 — Rebuild the image with DinD enabled
+
+```bash
+fly deploy --build-arg ENABLE_DOCKER=true --app <your-app>
+```
+
+`fly deploy` passes the build-arg to `docker build`, which triggers the conditional stanza in `infra/Dockerfile`. The layer installs `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, and `docker-compose-plugin` from Docker's own apt repo, then adds the `hydra` user to the `docker` group so workers run `docker` without sudo.
+
+Image size delta: ~+400-600 MB (docker-ce + containerd + plugins). Build time delta: ~+60-90 s on a warm cache.
+
+### Step 2 — Enable privileged mode on the Fly Machine
+
+DinD needs the inner daemon to load kernel modules and access raw devices, which requires the Fly Machine to run privileged. The current flyctl command is:
+
+```bash
+fly machine list --app <your-app>
+fly machine update <machine-id> --vm-privileged=true --app <your-app>
+```
+
+(Fly's syntax for privileged mode has changed twice in the past year — if the flag above is rejected, `fly machine update --help | grep -i priv` surfaces the current form. We keep the runbook as the single source of truth so you update in one place.)
+
+Without this step, the inner daemon can start but will fail to create any container — `docker run` returns `operation not permitted`.
+
+### Step 3 — Verify DinD is live
+
+```bash
+fly ssh console --app <your-app> -C 'docker info'
+```
+
+Expected (shortened):
+
+```
+Server Version: 27.x.y
+Storage Driver: overlay2
+Cgroup Driver: systemd
+...
+```
+
+If you see `Cannot connect to the Docker daemon at unix:///var/run/docker.sock`, the inner daemon didn't start — usually because Step 2 (privileged mode) wasn't applied. Re-check `fly machine list --app <app>` and look for `privileged: true` in the output.
+
+### Step 4 — Size the volume for docker images
+
+DinD builds accumulate under `/var/lib/docker` inside the commander volume. `hydra_data` defaults to 1 GB; bump it to 3-5 GB for DinD operation:
+
+```bash
+fly volumes extend <volume-id> --size 5 --app <your-app>
+```
+
+`docker system prune -af` inside the machine reclaims space between major compose-heavy ticket runs — add to your monthly housekeeping.
+
+### Security caveats (read this before enabling)
+
+**Privileged mode genuinely widens the blast radius.** The Fly Machine gains kernel capabilities a normal container doesn't have: can load kernel modules, access raw block devices, escape the usual namespace isolation. This matters for commander specifically because:
+
+- Commander runs worker subagents that execute **arbitrary code from the repos in `state/repos.json`**. That includes `docker compose up` on repo-supplied compose files — every `image:` tag in every compose file is now something the commander trusts at the kernel level.
+- A malicious or compromised `docker-compose.yml` in one of your repos could mount host paths, join host networks, or load kernel modules via the inner daemon.
+
+Mitigations in rough priority order:
+
+1. **Narrow `state/repos.json`** to repos you fully control. This is the single biggest lever.
+2. **Short-lived Machines.** `auto_stop_machines = "suspend"` in `fly.toml` already limits the always-on surface. Don't set `min_machines_running` above what you actually need.
+3. **Audit the compose files** for every enabled repo before turning DinD on for the first time. Look for `privileged: true` services, `volumes: - /:/host`, and `network_mode: host` — none of these should be in a repo you're testing.
+4. **Plan migration to Option C** (per-worker managed sandboxes via E2B / Daytona / Managed Agents, tracked under [#40](https://github.com/tonychang04/hydra/issues/40)). DinD is Phase 2 only — the long-term fix runs each worker in its own tiny cloud VM so one compromised compose file can't affect any other worker or the commander itself.
+
+### Rollback
+
+Two steps, in either order:
+
+```bash
+# Rebuild without the build-arg (default FALSE).
+fly deploy --app <your-app>
+
+# Turn privileged mode off on the Machine.
+fly machine update <machine-id> --vm-privileged=false --app <your-app>
+```
+
+Nothing on the `hydra_data` volume is touched by the flip. Workers that relied on `docker` inside the cloud commander will now fail with a clear `command not found`, and `worker-test-discovery` can annotate the procedure as "container-required, not executable on this commander."
+
+### Self-test
+
+An opt-in self-test case `cloud-worker-docker-available` exists in [`self-test/golden-cases.example.json`](../self-test/golden-cases.example.json). It SKIPs by default; run with:
+
+```bash
+HYDRA_TEST_CLOUD_DOCKER=1 ./self-test/run.sh --case cloud-worker-docker-available
+```
+
+Requires a local `docker` + `--privileged` to execute. Not run in CI; this is an on-demand verification for operators who've just enabled DinD on their own image.
+
 ## Troubleshooting
 
 | Symptom | Check |

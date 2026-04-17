@@ -1436,6 +1436,146 @@
       "last_result": null
     },
     {
+      "id": "scheduled-retro-trigger",
+      "_description": "Fixture case for CLAUDE.md's Scheduled autopickup tick step 1.5 (retro due check). Spec: docs/specs/2026-04-17-scheduled-retro.md / ticket #85. Exercises four clock scenarios against a fresh state/autopickup.json fixture: (1) last_retro_run=null + Monday 09:05 local fires the retro, (2) last_retro_run=today T09:00:00 + Monday 10:00 local stays silent (idempotent intra-window), (3) last_retro_run=7 days ago + Monday 09:05 local fires (weekly cadence), (4) Monday 08:59 local or Sunday 23:59 local stays silent (time gate). The scheduled-retro logic lives as an inline commander procedure, not as a spawnable helper, so this case needs both a commander-side tick executor AND a clock-mocking primitive (HYDRA_FAKE_NOW=<ISO8601> override) before it can run live. Today it SKIPs under the 'commander-self' kind (matches autopickup-tick-behavior's pattern) but documents the expected behavior for the next executor pass — same pattern as retro-golden-stub, autopickup-tick-behavior, and worker-timeout-watchdog-rescue.",
+      "kind": "commander-self",
+      "_skip_reason": "requires commander orchestration + HYDRA_FAKE_NOW clock-mocking primitive; implement when the inline tick executor lands (ticket #85 follow-up)",
+      "worker_type": "commander-self",
+      "tier": "T2",
+      "fixture_dir": "self-test/fixtures/scheduled-retro",
+      "ticket_body_summary": "Each autopickup tick runs a retro-due check: Monday >= 09:00 local AND last_retro_run < today T09:00 -> fire retro, write last_retro_run = now, surface one chat line. Otherwise no-op. Four clock scenarios exercise all branches; the fifth asserts a manual retro in the same Monday window correctly suppresses the scheduled fire.",
+      "scenarios": [
+        {
+          "name": "never-run-before-fires",
+          "initial_state": {
+            "enabled": true,
+            "interval_min": 30,
+            "last_retro_run": null
+          },
+          "fake_now_local": "2026-04-20T09:05:00",
+          "fake_now_weekday": "Monday",
+          "expected_retro_fires": true,
+          "expected_state_after": {
+            "last_retro_run_gte": "2026-04-20T09:00:00"
+          },
+          "expected_chat_includes": "Auto-retro for week 2026-17"
+        },
+        {
+          "name": "already-ran-this-monday-skips",
+          "initial_state": {
+            "enabled": true,
+            "interval_min": 30,
+            "last_retro_run": "2026-04-20T09:00:00"
+          },
+          "fake_now_local": "2026-04-20T10:00:00",
+          "fake_now_weekday": "Monday",
+          "expected_retro_fires": false,
+          "expected_state_after": {
+            "last_retro_run": "2026-04-20T09:00:00"
+          }
+        },
+        {
+          "name": "ran-last-monday-fires-again",
+          "initial_state": {
+            "enabled": true,
+            "interval_min": 30,
+            "last_retro_run": "2026-04-13T09:00:00"
+          },
+          "fake_now_local": "2026-04-20T09:05:00",
+          "fake_now_weekday": "Monday",
+          "expected_retro_fires": true,
+          "expected_state_after": {
+            "last_retro_run_gte": "2026-04-20T09:00:00"
+          }
+        },
+        {
+          "name": "monday-before-09-skips",
+          "initial_state": {
+            "enabled": true,
+            "interval_min": 30,
+            "last_retro_run": "2026-04-13T09:00:00"
+          },
+          "fake_now_local": "2026-04-20T08:59:00",
+          "fake_now_weekday": "Monday",
+          "expected_retro_fires": false
+        },
+        {
+          "name": "sunday-skips",
+          "initial_state": {
+            "enabled": true,
+            "interval_min": 30,
+            "last_retro_run": "2026-04-13T09:00:00"
+          },
+          "fake_now_local": "2026-04-19T23:59:00",
+          "fake_now_weekday": "Sunday",
+          "expected_retro_fires": false
+        },
+        {
+          "name": "manual-retro-earlier-suppresses-scheduled-fire",
+          "_comment": "Simulates the manual + scheduled interplay. Operator typed `retro` at 08:30 local (before the 09:00 gate). Manual path wrote last_retro_run = 2026-04-20T08:30:00. When the 09:05 scheduled tick arrives, the idempotency guard reads last_retro_run >= 2026-04-20T09:00:00? No — 08:30 is LESS than 09:00. The fixture therefore MUST still fire, because an early-morning manual run doesn't satisfy the Monday-09:00 semantic. This intentionally captures that the guard is 'after 09:00 today,' not 'any time today.'",
+          "initial_state": {
+            "enabled": true,
+            "interval_min": 30,
+            "last_retro_run": "2026-04-20T08:30:00"
+          },
+          "fake_now_local": "2026-04-20T09:05:00",
+          "fake_now_weekday": "Monday",
+          "expected_retro_fires": true
+        }
+      ],
+      "assertions": {
+        "must_not_touch_paths": [
+          ".github/workflows/**",
+          "policy.md",
+          "budget.json",
+          ".claude/settings.local.json"
+        ],
+        "local_time_used_not_utc": true,
+        "idempotency_via_last_retro_run": true,
+        "expected_artifact_per_fire": "memory/retros/YYYY-WW.md written AND state/autopickup.json:last_retro_run updated to the fake_now_local ISO-8601 string"
+      },
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "cloud-worker-docker-available",
+      "_description": "Opt-in self-test for the cloud-worker DinD image variant (ticket #77). SKIPs by default. To run: set HYDRA_TEST_CLOUD_DOCKER=1 on a machine with docker + --privileged support (local laptop with docker desktop works; CI runners generally do NOT). When active, the test (1) builds the image with --build-arg ENABLE_DOCKER=true, (2) confirms docker binary is present + hydra user is in the docker group, (3) runs `docker info` inside the built image under --privileged to verify the inner daemon starts and talks to its socket. Each build is ~400-600 MB + ~60-90s wall-clock, so gating this behind an env var keeps the default CI run fast and prevents false-greens on hosts that can't meaningfully run it. Spec: docs/specs/2026-04-17-cloud-worker-docker.md.",
+      "kind": "script",
+      "requires": [
+        "requires_cloud_docker_opt_in"
+      ],
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "build the DinD image variant",
+          "cmd": "docker build --build-arg ENABLE_DOCKER=true -t hydra-dind-selftest:ci -f infra/Dockerfile . >/tmp/hydra-dind-build-$$.log 2>&1 && echo BUILT_OK || (tail -60 /tmp/hydra-dind-build-$$.log >&2; rm -f /tmp/hydra-dind-build-$$.log; exit 1)",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BUILT_OK"
+        },
+        {
+          "name": "docker CLI present in DinD image",
+          "cmd": "docker run --rm hydra-dind-selftest:ci docker --version | grep -qE 'Docker version' && echo DOCKER_CLI_PRESENT",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DOCKER_CLI_PRESENT"
+        },
+        {
+          "name": "hydra user is in docker group",
+          "cmd": "docker run --rm hydra-dind-selftest:ci id hydra | grep -qE '\\b(docker)\\b' && echo HYDRA_IN_DOCKER_GROUP",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HYDRA_IN_DOCKER_GROUP"
+        },
+        {
+          "name": "inner dockerd reports a live Server Version under --privileged",
+          "cmd": "docker run --privileged --rm hydra-dind-selftest:ci sh -c 'dockerd >/tmp/dind.log 2>&1 & for i in $(seq 1 20); do docker info >/tmp/info.log 2>&1 && break; sleep 1; done; grep -qE \"^\\s*Server Version:\\s+[0-9]+\\.\" /tmp/info.log && echo DIND_SERVER_UP || (tail -40 /tmp/dind.log /tmp/info.log >&2; exit 1)'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DIND_SERVER_UP"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "mcp-register-agent",
       "_description": "Script-only self-test for scripts/hydra-mcp-register-agent.sh — the CLI that generates MCP bearer tokens, stores their SHA-256 hash in state/connectors/mcp.json, and prints the raw token once (spec: docs/specs/2026-04-17-mcp-register-agent.md, ticket #84). Security-adjacent: asserts (a) exit 0 on first-use, (b) stdout token is 43+ chars base64, (c) SHA-256 of the printed token matches the hash in the written config, (d) --rotate produces a different token, preserves scope, keeps a single entry, (e) a non-rotate duplicate call exits 1 with NO config writes (atomicity invariant), plus config-missing auto-bootstrap from mcp.json.example. Fixture lives at self-test/fixtures/mcp-register-agent/run.sh — pattern matches mcp-server-starts. Runs locally in <1s; tmpdir-isolated (HYDRA_MCP_REGISTER_CONFIG points at the tmp path; the real state/connectors/mcp.json is never touched). Commander runs this before committing changes to scripts/hydra-mcp-register-agent.sh or the launcher dispatch in setup.sh.",
       "kind": "script",

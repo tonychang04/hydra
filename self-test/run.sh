@@ -468,6 +468,25 @@ check_requires() {
           return 1
         fi
         ;;
+      requires_cloud_docker_opt_in)
+        # Opt-in gate for the cloud-worker DinD self-test (ticket #77).
+        # Requires HYDRA_TEST_CLOUD_DOCKER=1 AND docker + --privileged
+        # on the host. SKIPs cleanly everywhere else — the test builds
+        # a ~600MB image and can only succeed on machines that can run
+        # privileged containers.
+        if [[ "${HYDRA_TEST_CLOUD_DOCKER:-0}" != "1" ]]; then
+          echo "requires_cloud_docker_opt_in: HYDRA_TEST_CLOUD_DOCKER=1 not set (opt-in; expensive)"
+          return 1
+        fi
+        if ! command -v docker >/dev/null 2>&1; then
+          echo "requires_cloud_docker_opt_in: docker not on PATH"
+          return 1
+        fi
+        if ! docker info >/dev/null 2>&1; then
+          echo "requires_cloud_docker_opt_in: docker daemon not reachable"
+          return 1
+        fi
+        ;;
       *)
         # Unknown token — assume satisfied (forward-compat).
         ;;
