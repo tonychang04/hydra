@@ -38,14 +38,15 @@ Four roles, three of them agents. Keep them straight and the rest of the docs cl
 - "Is Commander the same as Main Agent?" — **No.** Main Agent is yours (Claude Code on your laptop). Commander is Hydra's. They talk to each other over MCP.
 - "Is Worker the same as Subagent?" — Yes. "Worker" is Hydra's name for the role; "subagent" is Claude Code's name for the mechanism. Same thing.
 - "Who does 'Operator' refer to in old docs?" — Historically "Operator" meant You-the-human, but sometimes meant "your Main Agent". We're phasing "Operator" out in favor of the four precise terms above.
-- "In local mode I just run `./hydra` and chat — where's the Main Agent then?" — In local legacy mode, you ARE the Main Agent: you chat directly with Commander. In cloud/agent-only mode, your Main Agent (Claude Code, etc.) stands between you and Commander.
 
 ## The loop
 
 ```mermaid
 flowchart LR
-    You([👤 You]) -->|file issue| GH[(GitHub)]
-    GH --> C{{🧠 Commander<br/>polls every 30m}}
+    You([👤 You]) -->|chat| MA[[🤖 Main Agent<br/>Claude Code on your machine]]
+    You -.->|or directly file issue| GH[(GitHub)]
+    MA -->|MCP: hydra.pick_up| C{{🧠 Commander<br/>headless, persistent}}
+    GH --> C
     C -->|spawn N| W[⚙️ Workers<br/>parallel worktrees]
     W --> PR[📝 Draft PR]
     PR --> R{{🔍 Review worker<br/>/review + /codex}}
@@ -53,9 +54,11 @@ flowchart LR
     R -->|blockers| W
     M -.->|feeds| Mem[(💾 Memory)]
     Mem -.->|smarter next loop| C
-    C -.->|novel question<br/>or security flag| You
+    C -.->|MCP: supervisor.resolve_question<br/>when memory can't answer| MA
+    MA -.->|rare — escalates<br/>only if itself stuck| You
 
     style You fill:#fef3c7,stroke:#d97706,color:#000
+    style MA fill:#fed7aa,stroke:#ea580c,color:#000
     style GH fill:#e5e7eb,stroke:#374151,color:#000
     style C fill:#dbeafe,stroke:#2563eb,color:#000
     style W fill:#dcfce7,stroke:#16a34a,color:#000
