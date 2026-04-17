@@ -1,5 +1,13 @@
 # Hydra
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#)
+[![Built with Claude Code](https://img.shields.io/badge/built_with-Claude_Code-8a63d2.svg)](https://claude.com/claude-code)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](DEVELOPING.md)
+[![GitHub issues](https://img.shields.io/github/issues/tonychang04/hydra.svg)](https://github.com/tonychang04/hydra/issues)
+[![Last commit](https://img.shields.io/github/last-commit/tonychang04/hydra.svg)](https://github.com/tonychang04/hydra/commits/main)
+[![Stars](https://img.shields.io/github/stars/tonychang04/hydra.svg?style=social)](https://github.com/tonychang04/hydra/stargazers)
+
 **An auto-machine that clears your ticket queue while you sleep.**
 
 You file a GitHub issue and assign it to yourself. Hydra picks it up, reads the repo, writes the code, runs the tests, reviews its own PR, and merges it. You wake up to a queue of merged PRs. Every loop makes Hydra smarter: patterns become memory, recurring memory becomes repo-native skills, answered questions become auto-answers.
