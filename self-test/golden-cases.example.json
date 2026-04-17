@@ -412,6 +412,53 @@
       "last_result": null
     },
     {
+      "id": "hydra-operator-skill-valid",
+      "_description": "Script-only self-test for the hydra-operator Main Agent skill (spec: docs/specs/2026-04-16-hydra-operator-skill.md, ticket #53). Verifies that skills/hydra-operator/SKILL.md exists with the required YAML frontmatter fields (name, description, mcpServers) that Claude Code's skill loader needs, that the install README is present and contains the operator-facing `cp -r` install command, and that copying the skill directory into a fake user-scoped skills dir produces a readable SKILL.md. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to skills/hydra-operator/.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "SKILL.md frontmatter declares name",
+          "cmd": "head -20 skills/hydra-operator/SKILL.md | grep -E '^name:'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "hydra-operator"
+        },
+        {
+          "name": "SKILL.md frontmatter declares description",
+          "cmd": "head -20 skills/hydra-operator/SKILL.md | grep -E '^description:'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Hydra"
+        },
+        {
+          "name": "SKILL.md frontmatter declares mcpServers",
+          "cmd": "head -20 skills/hydra-operator/SKILL.md | grep -E '^mcpServers:'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "mcpServers"
+        },
+        {
+          "name": "install-target SKILL.md exists at the expected path",
+          "cmd": "ls skills/hydra-operator/SKILL.md && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "install README exists and documents the cp -r install command",
+          "cmd": "grep -F 'cp -r skills/hydra-operator ~/.claude/skills/' skills/hydra-operator/README.md && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "install smoke — copying into a fake skills dir yields a readable SKILL.md",
+          "cmd": "tmp=$(mktemp -d) && cp -r skills/hydra-operator \"$tmp/\" && ls \"$tmp/hydra-operator/SKILL.md\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "s3-backend-roundtrip",
       "_description": "Script-only self-test for scripts/state-get.sh + scripts/state-put.sh against a localstack-backed DynamoDB (Phase 2 adapter — see docs/specs/2026-04-16-s3-knowledge-store.md and ticket #13). Spins up localstack via docker compose, creates the bucket + commander-* tables, puts a JSON blob via state-put.sh (dynamodb backend, localstack endpoint), reads it back via state-get.sh, compares bit-for-bit, tears down. Marked requires_docker: skipped on machines where `docker info` fails.",
       "kind": "script",

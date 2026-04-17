@@ -190,6 +190,8 @@ cd hydra
 
 Full install reference (prereqs, troubleshooting, updating, uninstall): **[INSTALL.md](INSTALL.md)**
 
+After install, also install the Main Agent skill: `cp -r skills/hydra-operator ~/.claude/skills/` — teaches your Claude Code when to invoke Hydra's MCP tools. See [`skills/hydra-operator/README.md`](skills/hydra-operator/README.md).
+
 ### Verify install
 
 After install, run `./hydra doctor` to verify your setup. All ✓'s means you're ready to pick up tickets. It runs a battery of non-destructive checks across environment, config, runtime state, memory, and scripts, prints per-check pass/fail, and exits non-zero if any check fails. Pass `--verbose` for raw command output or `--fix-safe` to attempt safe auto-remediations (chmod +x, mkdir -p).
