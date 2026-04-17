@@ -209,6 +209,38 @@ else
   log "HYDRA_MCP_ENABLED=0 — skipping MCP server launch (operator opt-out)"
 fi
 
+# ---------- 5b. Clone all enabled repos on boot ----------
+# Cloud commander needs every enabled repo cloned to its cloud_local_path
+# BEFORE the first worker-implementation spawns, otherwise `git worktree add`
+# fails and the ticket bounces. scripts/ensure-repo-cloned.sh is idempotent:
+# first boot clones, subsequent boots re-fetch + reset. Failures for a single
+# repo are logged and skipped — we never let one broken repo brick the whole
+# commander (other repos may still be pickable).
+#
+# Spec: docs/specs/2026-04-17-entrypoint-integration.md (#80)
+REPOS_JSON_PATH="${HYDRA_ROOT}/state/repos.json"
+if [[ -f "${REPOS_JSON_PATH}" ]]; then
+  log "Cloning enabled repos from state/repos.json"
+  enabled_slugs="$(jq -r '.repos[]? | select(.enabled == true) | "\(.owner)/\(.name)"' "${REPOS_JSON_PATH}" 2>/dev/null || true)"
+  if [[ -z "${enabled_slugs}" ]]; then
+    log "No enabled repos — skipping clone loop"
+  else
+    while IFS= read -r slug; do
+      [[ -z "${slug}" ]] && continue
+      if [[ "${HYDRA_DRY_RUN:-0}" == "1" ]]; then
+        log "DRY RUN: would clone ${slug}"
+      else
+        log "ensure-repo-cloned: ${slug}"
+        if ! "${HYDRA_ROOT}/scripts/ensure-repo-cloned.sh" "${slug}" >>"${HYDRA_ROOT}/logs/ensure-repo-cloned.log" 2>&1; then
+          log "ensure-repo-cloned: ${slug} FAILED — continuing (worker will retry on spawn)"
+        fi
+      fi
+    done <<<"${enabled_slugs}"
+  fi
+else
+  log "state/repos.json absent — skipping repo-clone loop"
+fi
+
 # ---------- 6. Launch claude under tmux ----------
 COMMANDER_LOG="${HYDRA_ROOT}/logs/commander.log"
 : > "${COMMANDER_LOG}" || true
