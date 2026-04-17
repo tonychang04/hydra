@@ -1,0 +1,9 @@
+{
+  "_description": "Fixture state/autopickup.json with autopickup enabled for the json-output-schema-valid self-test busy-state branch.",
+  "enabled": true,
+  "interval_min": 30,
+  "auto_enable_on_session_start": true,
+  "last_run": "2026-04-17T11:30:00Z",
+  "last_picked_count": 2,
+  "consecutive_rate_limit_hits": 0
+}

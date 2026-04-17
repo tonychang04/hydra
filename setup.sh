@@ -327,10 +327,16 @@ else
 #   ./hydra add-repo <owner>/<name> [args]   Interactive wizard: add a repo.
 #   ./hydra remove-repo <owner>/<name>       Remove a repo entry.
 #   ./hydra list-repos                       Table view of state/repos.json.
-#   ./hydra status [--with-tickets]          Read-only Hydra state snapshot.
+#   ./hydra status [--with-tickets] [--json] Read-only Hydra state snapshot.
+#   ./hydra ps [--json]                      Per-worker detail from state/active.json.
 #   ./hydra pause [--reason <text>]          Toggle PAUSE on.
 #   ./hydra resume                           Toggle PAUSE off.
 #   ./hydra issue <url-or-owner/repo/num>    Queue a specific issue for next tick.
+#   ./hydra activity [--json]                Text-based observability: last 24h
+#                                            of log activity + live worker
+#                                            snapshot + top memory citations
+#                                            (spec: docs/specs/2026-04-17-hydra-activity.md,
+#                                            ticket #19).
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -370,9 +376,11 @@ case "${1:-}" in
   remove-repo)  shift; hydra_exec_helper scripts/hydra-remove-repo.sh "$@" ;;
   list-repos)   shift; hydra_exec_helper scripts/hydra-list-repos.sh "$@" ;;
   status)       shift; hydra_exec_helper scripts/hydra-status.sh "$@" ;;
+  ps)           shift; hydra_exec_helper scripts/hydra-ps.sh "$@" ;;
   pause)        shift; hydra_exec_helper scripts/hydra-pause.sh "$@" ;;
   resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
+  activity)     shift; hydra_exec_helper scripts/hydra-activity.sh "$@" ;;
   mcp)
     shift
     case "${1:-}" in
@@ -441,6 +449,28 @@ gh auth status >/dev/null 2>&1 || { echo "✗ gh not authenticated. Run: gh auth
 if [[ -n "$HYDRA_NO_AUTOPICKUP_FLAG" ]]; then
   export HYDRA_NO_AUTOPICKUP=1
 fi
+
+# --- Dual-mode memory: S3 pull at session start ----------------------------
+# If the operator has flipped HYDRA_MEMORY_BACKEND to s3 or s3-strict
+# (via .hydra.env or their shell), pull the memory dir from S3 BEFORE
+# launching Claude so this session starts with the freshest shared state.
+# - s3          → warn on failure, continue (fail-soft)
+# - s3-strict   → exit 1 on failure (cloud commander must not boot stale)
+# Spec: docs/specs/2026-04-17-dual-mode-memory.md
+case "${HYDRA_MEMORY_BACKEND:-local}" in
+  s3|s3-strict)
+    if [[ -x scripts/hydra-memory-sync.sh ]]; then
+      echo "▸ Dual-mode memory: pulling ${HYDRA_MEMORY_BACKEND} memory from S3..."
+      if ! scripts/hydra-memory-sync.sh --pull; then
+        if [[ "$HYDRA_MEMORY_BACKEND" == "s3-strict" ]]; then
+          echo "✗ s3-strict: memory pull failed; refusing to launch" >&2
+          exit 1
+        fi
+        echo "⚠ memory pull failed; continuing with local copy (backend=s3)" >&2
+      fi
+    fi
+    ;;
+esac
 
 exec claude ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}
 EOF

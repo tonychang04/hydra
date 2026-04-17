@@ -126,6 +126,45 @@ rewire_to_volume state
 rewire_to_volume memory
 rewire_to_volume logs
 
+# ---------- 2b. Dual-mode memory: pull from S3 at boot ----------
+# If the operator has HYDRA_MEMORY_BACKEND=s3 or s3-strict, pull the memory
+# dir from S3 onto the (just-rewired) volume so this commander boots with
+# whatever the laptop commander most recently pushed. This is the "shared
+# memory across commanders" half of dual-mode memory.
+#
+# - s3          → warn on failure, continue (fail-soft; volume copy is
+#                 still authoritative for this session)
+# - s3-strict   → fail the boot (cloud commander must never run on stale
+#                 memory; orchestrator will restart + alert)
+#
+# Spec: docs/specs/2026-04-17-dual-mode-memory.md (ticket #103)
+case "${HYDRA_MEMORY_BACKEND:-local}" in
+  s3|s3-strict)
+    if [[ "${HYDRA_DRY_RUN:-0}" == "1" ]]; then
+      log "DRY RUN: would pull memory from S3 (backend=${HYDRA_MEMORY_BACKEND})"
+    elif [[ -x "${HYDRA_ROOT}/scripts/hydra-memory-sync.sh" ]]; then
+      log "dual-mode memory: pulling memory from S3 (backend=${HYDRA_MEMORY_BACKEND})"
+      if ! (cd "${HYDRA_ROOT}" && ./scripts/hydra-memory-sync.sh --pull) \
+              >>"${HYDRA_ROOT}/logs/memory-sync-boot.log" 2>&1; then
+        if [[ "${HYDRA_MEMORY_BACKEND}" == "s3-strict" ]]; then
+          fail "memory pull failed and backend=s3-strict; refusing to boot (see logs/memory-sync-boot.log)"
+        fi
+        log "memory pull FAILED — continuing with volume copy (backend=s3, fail-soft)"
+      else
+        log "memory pull OK"
+      fi
+    else
+      log "dual-mode memory: scripts/hydra-memory-sync.sh missing or not executable; skipping pull"
+    fi
+    ;;
+  local|"")
+    : # default — no dual-mode action
+    ;;
+  *)
+    log "dual-mode memory: unknown HYDRA_MEMORY_BACKEND='${HYDRA_MEMORY_BACKEND}' (expected: local|s3|s3-strict) — skipping"
+    ;;
+esac
+
 # ---------- 3. Optional non-interactive setup ----------
 if [[ "${HYDRA_SKIP_SETUP:-0}" != "1" ]]; then
   if [[ ! -f "${HYDRA_ROOT}/state/repos.json" ]]; then

@@ -34,9 +34,15 @@ Assumes `git`, `claude`, and `gh` are installed and `gh auth login` is done. If 
 
 ## Demo
 
-A recorded terminal session of the auto-loop end-to-end lives at [`docs/demo/`](docs/demo/). It runs against the [`hello-hydra-demo`](examples/hello-hydra-demo/) fixture (one T1 auto-merge, one T2 human-merge, one T3 refusal) in about 90 seconds.
+**Run the demo yourself in ~10 minutes** — no video required. The [`hello-hydra-demo`](examples/hello-hydra-demo/) fixture is a tiny Node repo with three pre-written issues that exercise all three Hydra outcomes (T1 auto-merge, T2 human-merge, T3 refusal). Follow **[examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md)** — it's the fastest honest proof that Hydra works end-to-end.
 
-> **Note:** The cast file in this commit is a placeholder. Regenerate a real recording with [`./scripts/record-demo.sh`](scripts/record-demo.sh) (takes ~2 minutes plus `pip install asciinema`). See [docs/demo/README.md](docs/demo/README.md) for the full procedure. To try the same flow yourself instead of watching, follow [examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md).
+What you'll have when it's done:
+
+- 2 PRs merged (1 auto, 1 with your one-click approval after Commander's review gate clears it)
+- 1 ticket refused with a clear reason (policy working as designed — the T3 path)
+- 1 populated `memory/learnings-hello-hydra-demo.md` — the learning loop in motion
+
+> A recorded asciinema cast lives at [`docs/demo/`](docs/demo/) for readers who just want to watch. It's currently a placeholder — regenerate a real one with [`./scripts/record-demo.sh`](scripts/record-demo.sh). The hands-on walkthrough above is what this README recommends; the cast is a bonus for passive viewers.
 
 ## Who's who (read this first)
 
@@ -289,21 +295,76 @@ Daily operations and repo management are exposed as `./hydra <subcommand>` calls
 | Command | What it does |
 |---|---|
 | `./hydra doctor [--verbose]` | Install sanity check. Non-destructive. |
-| `./hydra status [--with-tickets]` | Read-only snapshot: active workers, today's throughput, autopickup state, PAUSE, pending queue. |
+| `./hydra status [--with-tickets] [--json]` | Read-only snapshot: active workers, today's throughput, autopickup state, PAUSE, pending queue. `--json` emits the stable shape at `state/schemas/hydra-status-output.schema.json`. |
+| `./hydra ps [--json]` | Per-worker detail from `state/active.json` (id, ticket, tier, minutes_running, status). `--json` shares the status schema's `ps_output` definition. |
 | `./hydra add-repo <owner>/<name>` | Interactive wizard to add a repo to `state/repos.json`. Auto-suggests `local_path`, validates, atomic-writes. `--force` to overwrite an existing entry. |
 | `./hydra remove-repo <owner>/<name>` | Remove a repo entry from `state/repos.json`. |
 | `./hydra list-repos` | Table view of configured repos. |
 | `./hydra pause [--reason <text>]` | Create the `PAUSE` file. Commander refuses to spawn new workers while present. |
 | `./hydra resume` | Remove the `PAUSE` file. |
 | `./hydra issue <url-or-owner/repo/num>` | Queue a specific GitHub issue for the next autopickup tick. Does NOT spawn a worker — adds to `state/pending-dispatches.json` (gitignored). |
+| `./hydra activity [--json]` | Text-based observability — last 24h of ticket completions, active + stuck workers, top memory citations, retro counts. `--json` for agent parsing. See **What Hydra is doing** below. |
 
 All subcommands work from any terminal without Commander chat.
+
+#### Driving Hydra from an agent
+
+Any orchestrating agent (OpenClaw, the MCP server binary from #72, an external script) can drive Hydra using `--json` on `status` / `ps`. The output follows [`state/schemas/hydra-status-output.schema.json`](state/schemas/hydra-status-output.schema.json) — stable, additive-only, top-level `version` field. Spec: [`docs/specs/2026-04-17-json-output-mode.md`](docs/specs/2026-04-17-json-output-mode.md).
+
+```bash
+./hydra status --json | jq -r '.active_workers | length'       # how many workers running?
+./hydra status --json | jq -r '.autopickup.enabled, .paused'   # autopickup + pause flags
+./hydra ps --json | jq -r '.workers[] | "\(.id)\t\(.ticket)\t\(.minutes_running)m"'
+```
+
+Operators upgrading from an earlier install need to regenerate the launcher once to pick up the new `ps` subcommand (helpers work directly regardless): `rm hydra && ./setup.sh`.
 
 **Two paths from here:**
 - You want to **use Hydra on your own repos** → **[USING.md](USING.md)**
 - You want to **contribute to Hydra itself** → **[DEVELOPING.md](DEVELOPING.md)**
 
 No labels required up-front. Commander creates the handful of state labels it uses (`commander-working`, `commander-review`, `commander-stuck`, etc.) lazily on first use.
+
+## What Hydra is doing
+
+`./hydra activity` is the text-based observability layer. It answers "what has Hydra been doing?" without launching a Claude session and without a web UI. Runs read-only over `logs/*.json`, `state/active.json`, `state/memory-citations.json`, and `memory/retros/`. Spec: [`docs/specs/2026-04-17-hydra-activity.md`](docs/specs/2026-04-17-hydra-activity.md).
+
+```
+$ ./hydra activity
+▸ Hydra activity — last 24h
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Completed (last 24h): 3
+  TICKET               REPO      TIER  RESULT  PR          MIN
+  owner/repo#103       repoB     T2    stuck   —           8
+  owner/repo#102       repoA     T2    merged  repoA#502   23
+  owner/repo#101       repoA     T1    merged  repoA#501   12
+
+Active right now: 1
+  ID            TICKET            TIER  STATUS    AGE
+  w-7f3a        owner/repo#120    T1    running   4m
+
+Stuck (paused-on-question or failed): 1
+  TICKET           REPO      STATUS              REASON
+  owner/repo#121   repoB     paused-on-question  —
+
+Memory citations: top 5 of last 7d
+  COUNT  ENTRY
+  7      learnings-repoA.md#npm install strips peer markers
+  3      learnings-repoA.md#baseline typecheck trick
+
+Retros on disk: 2 (latest: memory/retros/2026-16.md)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+For agent parsing, `./hydra activity --json` emits `{generated_at, window_hours, completed[], active[], stuck[], citations_top[], retros}`. Safe to chain into `jq` pipelines, Slack posts, or Commander auto-surfacing.
+
+Three observability layers, picked based on question:
+
+| Question | Command |
+|---|---|
+| "What's happening right now?" | `./hydra status` — scalar snapshot (counts + pause + autopickup) |
+| "What has Hydra been doing recently?" | `./hydra activity` — 24h history + live snapshot |
+| "How did the week go?" | `retro` (Commander chat) — weekly synthesis into `memory/retros/` |
 
 ## How tickets reach the commander
 

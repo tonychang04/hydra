@@ -338,6 +338,41 @@
       "last_result": null
     },
     {
+      "id": "activity-command-smoke",
+      "_description": "Script-only self-test for scripts/hydra-activity.sh (spec: docs/specs/2026-04-17-hydra-activity.md, ticket #19). Text-based observability layer. Exercises --help, runs the smoke fixture under self-test/fixtures/hydra-activity/ (which stages deterministic mtimes on 3 in-window logs + 1 out-of-window log, seeds state/active.json with 1 running + 1 paused-on-question worker, state/memory-citations.json with 3 entries, and memory/retros/ with 2 retro markdown files), and asserts both human-mode grep substrings and --json-mode jq shape. Corrupt-JSON path is also exercised (truncated active.json must not crash the script). No network, no gh, no Claude auth — runs anywhere bash + jq is installed.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "bash -n passes on hydra-activity.sh",
+          "cmd": "bash -n scripts/hydra-activity.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-activity.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-activity.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra activity"
+        },
+        {
+          "name": "hydra-activity.sh rejects an unknown flag",
+          "cmd": "NO_COLOR=1 scripts/hydra-activity.sh --bogus 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BADFLAG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADFLAG_OK"
+        },
+        {
+          "name": "activity smoke harness (human + --json + corrupt-JSON)",
+          "cmd": "self-test/fixtures/hydra-activity/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "ensure-repo-cloned-idempotent",
       "_description": "Script-only self-test for scripts/ensure-repo-cloned.sh (spec: docs/specs/2026-04-17-cloud-repo-clone.md, ticket #73). Uses the public octocat/Hello-World repo so no GITHUB_TOKEN is required in CI; the unauthenticated HTTPS clone path is the same code path the cloud commander takes for public repos. Each step builds a fresh tmpdir fixture, runs the script, and asserts behavior via exit code + shell grep. Guardrails: bad-slug + missing-repo arguments both exit non-zero; first clone produces a .git dir; second run re-fetches without re-cloning (same SHA and same .git/config inode).",
       "kind": "script",
@@ -843,6 +878,51 @@
           "cmd": "self-test/fixtures/s3-backend/run-e2e.sh",
           "expected_exit": 0,
           "expected_stdout_contains": "PASS"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "memory-sync-roundtrip",
+      "_description": "Round-trip scripts/hydra-memory-sync.sh (dual-mode memory, ticket #103, spec docs/specs/2026-04-17-dual-mode-memory.md) through a localstack-backed S3 bucket. Builds a fake memory tree in a tmpdir, --push'es it to s3://<bucket>/<prefix>/memory/, verifies both files appear remotely, --pull's into a clean dir, diffs bit-for-bit, and exercises the strict-mode negative path (unreachable endpoint must exit !=0). Re-uses self-test/fixtures/s3-backend/docker-compose.yml + setup-fixture.sh so there's exactly one localstack container per test run. Marked requires_docker + requires_aws: skipped when either is absent.",
+      "kind": "script",
+      "requires": [
+        "requires_docker",
+        "requires_aws"
+      ],
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-memory-sync.sh --help renders usage + exits 0",
+          "cmd": "scripts/hydra-memory-sync.sh --help | grep -q 'Usage: hydra-memory-sync.sh'",
+          "expected_exit": 0
+        },
+        {
+          "name": "missing required env exits 2 (usage error) with clear message",
+          "cmd": "env -u HYDRA_S3_BUCKET -u HYDRA_S3_PREFIX -u HYDRA_AWS_REGION scripts/hydra-memory-sync.sh --push 2>&1 | grep -q 'missing required config' && env -u HYDRA_S3_BUCKET -u HYDRA_S3_PREFIX -u HYDRA_AWS_REGION scripts/hydra-memory-sync.sh --push; [ $? -eq 2 ]",
+          "expected_exit": 0
+        },
+        {
+          "name": "--push and --pull are mutually exclusive",
+          "cmd": "scripts/hydra-memory-sync.sh --push --pull 2>&1 | grep -q 'mutually exclusive'",
+          "expected_exit": 0
+        },
+        {
+          "name": "HYDRA_MEMORY_BACKEND unset → memory-layer scripts unchanged (no S3 attempt)",
+          "cmd": "out=$(scripts/validate-learning-entry.sh self-test/fixtures/memory-validator/learnings-sample.md 2>&1); ec=$?; if [ $ec -ne 0 ]; then echo \"FAIL: ec=$ec\"; exit 1; fi; if echo \"$out\" | grep -q 'hydra-memory-sync'; then echo 'FAIL: sync hook fired with backend unset'; exit 1; fi; echo OK",
+          "expected_exit": 0
+        },
+        {
+          "name": "HYDRA_MEMORY_BACKEND=s3-strict + no creds → script exits 1 with clear error",
+          "cmd": "out=$(HYDRA_MEMORY_BACKEND=s3-strict scripts/validate-learning-entry.sh self-test/fixtures/memory-validator/learnings-sample.md 2>&1); ec=$?; if [ $ec -ne 1 ]; then echo \"FAIL: expected ec=1 got $ec\"; exit 1; fi; echo \"$out\" | grep -q 'backend=s3-strict' || { echo 'FAIL: missing strict-mode error msg'; exit 1; }; echo OK",
+          "expected_exit": 0
+        },
+        {
+          "name": "localstack e2e roundtrip (push, verify remote, pull, diff, strict-negative)",
+          "cmd": "self-test/fixtures/memory-sync/run-e2e.sh | tee /dev/stderr | grep -q '^PASS$'",
+          "expected_exit": 0
         }
       ],
       "last_run": null,
@@ -1805,6 +1885,106 @@
           "cmd": "if head -1 docs/demo/demo.cast | jq -e '.title // \"\" | test(\"placeholder\"; \"i\")' > /dev/null; then echo 'PLACEHOLDER_SKIP (ok — skipping event-count floor)'; else events=$(($(wc -l < docs/demo/demo.cast) - 1)); [ \"$events\" -ge 20 ] && echo 'REAL_CAST_OK' || { echo \"FAIL: real cast has only $events events, need >= 20\" >&2; exit 1; }; fi",
           "expected_exit": 0,
           "expected_stdout_contains": "PLACEHOLDER_SKIP"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "codex-worker-fixture",
+      "_description": "Script-only self-test for scripts/hydra-codex-exec.sh (spec: docs/specs/2026-04-17-codex-worker-backend.md, ticket #96). Runs the wrapper against a battery of stubbed `codex` binaries prepended to $PATH, verifying every documented exit code (0 success / 1 bad-args or no-codex / 2 codex-exec-failed / 4 codex-unavailable) and the security invariant that the task prompt never leaks to captured stdout/stderr. The stub approach keeps the test deterministic and free (no real Codex quota burn). Operators with a working local codex env can set HYDRA_TEST_CODEX_E2E=1 to additionally smoke --check against the real binary; the wrapper's full control flow is still exercised by the stubs regardless.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-codex-exec.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-codex-exec.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "codex-worker fixture roundtrip (13 stubbed assertions + prompt-leak guard)",
+          "cmd": "self-test/fixtures/codex-worker/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "--help prints usage",
+          "cmd": "scripts/hydra-codex-exec.sh --help | grep -q 'Exit codes:' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "json-output-schema-valid",
+      "_description": "Exercises the --json output paths on ./hydra status and ./hydra ps against deterministic fixtures and the canonical schema at state/schemas/hydra-status-output.schema.json. Hard-fails if either subcommand emits malformed JSON, drifts from the required top-level shape, or breaks the stable `version` contract. Spec: docs/specs/2026-04-17-json-output-mode.md (ticket #105). Runs locally; no network, no worker spawn, no Claude auth.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "bash -n clean on hydra-status.sh and hydra-ps.sh",
+          "cmd": "bash -n scripts/hydra-status.sh && bash -n scripts/hydra-ps.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "schema file is valid JSON and advertises version 1.0",
+          "cmd": "jq -e '.definitions.status_output.properties.version.enum | index(\"1.0\") != null' state/schemas/hydra-status-output.schema.json >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "status --json against empty-state fixture emits parseable JSON with required top-level keys",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-empty.json \"$tmp/active.json\" && cp self-test/fixtures/json-output/autopickup-off.json \"$tmp/autopickup.json\" && cp self-test/fixtures/json-output/budget-used.json \"$tmp/budget-used.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-status.sh --json | jq -e '.version == \"1.0\" and (.active_workers | type == \"array\") and (.active_workers | length == 0) and .paused == false and .autopickup.enabled == false and (.today.done | type == \"number\")' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "status --json against busy-state fixture passes active_workers through with active.schema.json shape",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-busy.json \"$tmp/active.json\" && cp self-test/fixtures/json-output/autopickup-on.json \"$tmp/autopickup.json\" && cp self-test/fixtures/json-output/budget-used.json \"$tmp/budget-used.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-status.sh --json | jq -e '.active_workers | length == 3 and (.[0] | has(\"id\") and has(\"ticket\") and has(\"tier\") and has(\"started_at\") and has(\"status\"))' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "status --json autopickup block reflects fixture values",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-busy.json \"$tmp/active.json\" && cp self-test/fixtures/json-output/autopickup-on.json \"$tmp/autopickup.json\" && cp self-test/fixtures/json-output/budget-used.json \"$tmp/budget-used.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-status.sh --json | jq -e '.autopickup.enabled == true and .autopickup.interval_min == 30 and .autopickup.last_run == \"2026-04-17T11:30:00Z\"' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "ps --json against empty fixture emits empty workers array + version 1.0",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-empty.json \"$tmp/active.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-ps.sh --json | jq -e '.version == \"1.0\" and (.workers | type == \"array\") and (.workers | length == 0)' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "ps --json against busy fixture adds minutes_running to each worker",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-busy.json \"$tmp/active.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-ps.sh --json | jq -e '(.workers | length == 3) and (.workers[] | has(\"minutes_running\") and (.minutes_running | type == \"number\"))' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "status --json includes stable generated_at ISO-8601 Z timestamp",
+          "cmd": "scripts/hydra-status.sh --json | jq -e '.generated_at | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$\")' >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "prose output path still works (regression: --json is opt-in, not default)",
+          "cmd": "NO_COLOR=1 scripts/hydra-status.sh 2>&1 | grep -q '▸ Hydra status' && NO_COLOR=1 scripts/hydra-ps.sh 2>&1 | grep -q '▸ Hydra ps' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "ajv validates status --json against schema (optional: skipped when ajv unavailable)",
+          "cmd": "if command -v ajv >/dev/null 2>&1; then tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-busy.json \"$tmp/active.json\" && cp self-test/fixtures/json-output/autopickup-on.json \"$tmp/autopickup.json\" && cp self-test/fixtures/json-output/budget-used.json \"$tmp/budget-used.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-status.sh --json > \"$tmp/out.json\" && ajv validate -s state/schemas/hydra-status-output.schema.json -d \"$tmp/out.json\" >/dev/null 2>&1 && rm -rf \"$tmp\" && echo OK; else echo 'OK (ajv unavailable, skipped)'; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
         }
       ],
       "last_run": null,
