@@ -1,6 +1,32 @@
 ---
 name: worker-test-discovery
-description: When a repo has no documented test procedure or the documented one is broken, this worker figures out how to test it (docker-compose, .env.example, Makefile, scripts). Produces a TESTING.md or CLAUDE.md update via a small PR. Commander spawns this when another worker asks "how do I test this repo?".
+description: |
+  When a repo has no documented test procedure or the documented one is broken, this worker figures out how to test it (docker-compose, .env.example, Makefile, scripts). Produces a TESTING.md or CLAUDE.md update via a small PR. Commander spawns this when another worker asks "how do I test this repo?" — or automatically after `worker-implementation` returns `QUESTION:` with "test procedure unclear" twice in a row on the same repo (see CLAUDE.md "Operating loop").
+
+  Example output (for a Redis-backed service with a docker-compose.yml and no TESTING.md):
+
+      # PR title: docs(agent): document test procedure
+      # Single file added: TESTING.md
+      # Body (excerpt):
+      #
+      # ## Prerequisites
+      # - Docker Desktop running (`docker info` succeeds)
+      # - Port 6379 free (`lsof -i :6379` returns nothing)
+      #
+      # ## Setup
+      # 1. `cp .env.example .env` (defaults are fine for local dev)
+      # 2. `docker compose up -d`
+      #
+      # ## Verify
+      # - `docker compose ps` shows redis healthy
+      # - `redis-cli -h localhost -p 6379 ping` returns PONG
+      #   (or `curl -v telnet://localhost:6379` connects)
+      #
+      # ## Teardown
+      # `docker compose down`
+      #
+      # ## Known failures
+      # - Port 6379 already bound → stop local redis or remap in compose file
 isolation: worktree
 memory: project
 maxTurns: 50

@@ -55,7 +55,8 @@ present, else self-test/golden-cases.example.json.
 
 Options:
   --kind <k>          Filter by kind: script | commander-inline |
-                      commander-self | worker-implementation | all (default: all)
+                      commander-self | worker-implementation |
+                      worker-subagent | all (default: all)
   --case <id>         Run a single case by id (bypasses --kind filter)
   --cases-file <f>    Override cases JSON path (useful for meta-tests)
   --parallel          Run cases concurrently via xargs -P, bounded by
@@ -123,7 +124,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$kind_filter" in
-  all|script|commander-inline|commander-self|worker-implementation) ;;
+  all|script|commander-inline|commander-self|worker-implementation|worker-subagent) ;;
   *)
     echo "run.sh: invalid --kind: $kind_filter" >&2
     usage >&2
@@ -448,6 +449,10 @@ for id in "${all_ids[@]}"; do
       ;;
     worker-implementation)
       run_skip_case "$id" "$case_kind" "requires Claude auth, not implemented in shell runner"
+      skipped=$((skipped + 1))
+      ;;
+    worker-subagent)
+      run_skip_case "$id" "$case_kind" "requires worker-test-discovery spawn; implement when worker-implementation SKIP path lands"
       skipped=$((skipped + 1))
       ;;
     commander-inline)
