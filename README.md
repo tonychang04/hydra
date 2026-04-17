@@ -14,52 +14,59 @@ You file a GitHub issue and assign it to yourself. Hydra picks it up, reads the 
 
 Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) + [superpowers skills](https://github.com/anthropics/superpowers). MIT licensed. Self-hosted (your laptop today, cloud tomorrow).
 
-## The auto-loop (what makes Hydra, Hydra)
+## The loop
+
+```mermaid
+flowchart LR
+    You([👤 You]) -->|file issue| GH[(GitHub)]
+    GH --> C{{🧠 Commander<br/>polls every 30m}}
+    C -->|spawn N| W[⚙️ Workers<br/>parallel worktrees]
+    W --> PR[📝 Draft PR]
+    PR --> R{{🔍 Review worker<br/>/review + /codex}}
+    R -->|clean| M([✅ Auto-merge])
+    R -->|blockers| W
+    M -.->|feeds| Mem[(💾 Memory)]
+    Mem -.->|smarter next loop| C
+    C -.->|novel question<br/>or security flag| You
+
+    style You fill:#fef3c7,stroke:#d97706,color:#000
+    style GH fill:#e5e7eb,stroke:#374151,color:#000
+    style C fill:#dbeafe,stroke:#2563eb,color:#000
+    style W fill:#dcfce7,stroke:#16a34a,color:#000
+    style PR fill:#f3e8ff,stroke:#9333ea,color:#000
+    style R fill:#dcfce7,stroke:#16a34a,color:#000
+    style M fill:#86efac,stroke:#16a34a,color:#000
+    style Mem fill:#fce7f3,stroke:#db2777,color:#000
+```
+
+Read it left-to-right. **Solid line = happy path** (no human). **Dashed = learning or escalation.** The only time the loop touches you is when memory genuinely can't answer — and that answer is then captured so it won't touch you next time for the same thing.
+
+## Inside one iteration
 
 ```mermaid
 flowchart TB
-    classDef operator fill:#fef3c7,stroke:#d97706,color:#000
-    classDef commander fill:#dbeafe,stroke:#2563eb,color:#000
-    classDef worker fill:#dcfce7,stroke:#16a34a,color:#000
-    classDef pr fill:#f3e8ff,stroke:#9333ea,color:#000
-    classDef mem fill:#fce7f3,stroke:#db2777,color:#000
-    classDef gate fill:#fee2e2,stroke:#dc2626,color:#000
+    I[Issue assigned to you] --> T{Tier?}
+    T -->|T1 typo/dep/doc| S1[Spawn worker]
+    T -->|T2 feature/fix| S1
+    T -->|T3 auth/migration/infra| REJ([❌ Refused — never spawned])
+    S1 --> W[Worker in isolated worktree<br/>reads repo's CLAUDE.md / skills<br/>writes spec · implements · runs tests]
+    W --> Q{Worker certain?}
+    Q -->|yes| P[Open draft PR]
+    Q -->|no| ASK[Return QUESTION: block]
+    ASK --> FAQ{In memory?}
+    FAQ -->|yes| S1
+    FAQ -->|no| YOU2([Ping you<br/>remember answer])
+    YOU2 --> FAQ
+    P --> RV[Review worker]
+    RV -->|clean| MG([Commander merges])
+    RV -->|blockers| S1
 
-    O[Operator<br/>files GitHub issue<br/>assigns to self]:::operator
-    C[Commander<br/>persistent AI session<br/>polls every N min]:::commander
-    PRE{preflight OK?<br/>PAUSE · budget<br/>· rate-limit}:::gate
-    W1[worker 1<br/>isolated worktree]:::worker
-    W2[worker 2<br/>isolated worktree]:::worker
-    W3[worker N<br/>isolated worktree]:::worker
-    PR1[draft PR]:::pr
-    PR2[draft PR]:::pr
-    PR3[draft PR]:::pr
-    RV[review worker<br/>/review + /codex<br/>+ /cso if auth]:::worker
-    CLEAN{review clean?}:::gate
-    MERGE[Commander auto-merges]:::commander
-    MEM[(memory<br/>learnings · citations<br/>escalation-faq)]:::mem
-    SK[skill promotion PR<br/>into target repo]:::pr
-
-    O -->|new issue assigned| C
-    C --> PRE
-    PRE -->|yes| W1 & W2 & W3
-    PRE -->|no| C
-    W1 --> PR1
-    W2 --> PR2
-    W3 --> PR3
-    PR1 & PR2 & PR3 --> RV
-    RV --> CLEAN
-    CLEAN -->|yes| MERGE
-    CLEAN -->|blockers| W1
-    MERGE --> MEM
-    MEM -->|3+ citations across 3+ tickets| SK
-
-    C -. novel QUESTION .-> O
-    C -. SECURITY blocker .-> O
-    C -. weekly retro .-> O
+    style REJ fill:#fee2e2,stroke:#dc2626,color:#000
+    style YOU2 fill:#fef3c7,stroke:#d97706,color:#000
+    style MG fill:#86efac,stroke:#16a34a,color:#000
 ```
 
-The whole thing is supposed to run without you. When it can't, Commander tells you exactly why and remembers your answer so it doesn't ask again.
+Every box that ends an arrow is a terminal state: **refused**, **ping operator** (rare), or **merged**. The `FAQ` loop is the learning heart — if Commander has seen a similar question before, it answers itself.
 
 ## What Hydra IS
 
