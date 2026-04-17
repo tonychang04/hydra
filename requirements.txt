@@ -16,3 +16,10 @@ slack-bolt>=1.18,<2
 # the socket-mode transport dependency explicit — bin/hydra-slack-bot
 # imports slack_sdk.socket_mode directly.
 slack-sdk>=3.21,<4
+
+# Discord bot — bin/hydra-discord-bot uses discord.py in gateway mode.
+# Mirror of the Slack bot (ticket #74) for the Discord platform; see
+# docs/specs/2026-04-17-discord-bot.md.
+# 2.x supports Python 3.8+ and has been API-stable since the library's
+# return from hiatus in 2022. Upper-bound at <3 to avoid a 3.0 major break.
+discord.py>=2.3,<3

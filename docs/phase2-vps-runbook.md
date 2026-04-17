@@ -14,6 +14,7 @@ For the decision record / architecture rationale, see the design spec at [`docs/
 
 **In (covered below):**
 - Slack bot DM surface for the operator — see "Setting up Slack" below. (Ticket [#74](https://github.com/tonychang04/hydra/issues/74); supersedes the old `#42` reference above.)
+- Discord bot DM surface for the operator — see "Setting up Discord" below. (Ticket [#125](https://github.com/tonychang04/hydra/issues/125); mirror of #74 on Discord.)
 
 ## Prerequisites
 
@@ -841,6 +842,134 @@ Flip `enabled: false` in `state/connectors/slack.json` and restart the process. 
 | DMs from the right user are ignored | Check `logs/slack-audit.jsonl` for `refused-unauthorized-user` entries — if so, `allowed_user_id` is wrong. |
 | Notifications don't fire on `commander-review-clean` | Check `gh` is installed inside the Machine and `GH_TOKEN` is set. Check `repos` in `slack.json` includes the repo. Check `logs/slack-audit.jsonl` shows outbound events. |
 | Bot dies on every `fly deploy` | Normal — `fly deploy` replaces the Machine. The bot restarts from `entrypoint.sh`. `state/slack-notified-prs.json` on the volume preserves the seen-set, so no duplicate notifications. |
+
+## Setting up Discord
+
+The Discord bot (`bin/hydra-discord-bot`) is the Discord counterpart to the Slack bot above — same shape (single-operator DMs, two commands, one proactive notification trigger) on a different chat surface. Spec: [`docs/specs/2026-04-17-discord-bot.md`](specs/2026-04-17-discord-bot.md). Ticket: [#125](https://github.com/tonychang04/hydra/issues/125).
+
+Discord's gateway WebSocket (outbound-only) is the equivalent of Slack socket mode — **no public HTTP endpoint**. The bot works behind Fly's suspend-capable Machine with no extra port exposure.
+
+**Scope (Phase 1):** single operator, DM only, two commands (`status` / `pickup [N]`), one notification trigger (`commander-review-clean`). Merge / reject / retry verbs are scaffolded as `NotImplemented` stubs. Slash commands, role-based ACLs, and multi-server broadcast are explicitly out of scope.
+
+### Step 1 — Create the Discord application + bot
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications) → **New Application**. Name it `hydra-commander` (or whatever you like).
+2. **Bot** tab → **Add Bot** → **Reset Token**. Copy the token somewhere safe — you'll paste it into a `fly secrets set` command in Step 4. This is your `HYDRA_DISCORD_BOT_TOKEN`.
+3. **Bot** tab → under **Privileged Gateway Intents**, toggle **Message Content Intent** to ON. This is required — without it, DMs arrive with empty `content` fields and the bot can't parse commands. (The bot will log a warning on every empty-content DM if you forget this.)
+4. You do **not** need to invite the bot to any guild for DM-only operation. Skip the OAuth2 URL generator step entirely. The bot becomes DM-reachable to you (and only you) once it comes online.
+
+Note: if you later decide to add slash commands or guild-level features (both out of scope for this ticket), you'll need to generate an OAuth2 invite URL at that time.
+
+### Step 2 — Find your user ID and DM channel ID
+
+You need two snowflakes: your own user ID (the `allowed_user_id`) and the DM channel ID between you and the bot (the `default_channel` fallback).
+
+First, enable Developer Mode in Discord:
+
+- Desktop / web: User Settings (gear icon) → **Advanced** → toggle **Developer Mode** ON.
+
+With Developer Mode on:
+
+- **Your user ID:** right-click your own name in any channel → **Copy User ID**. Looks like `100000000000000000` (17-20 digits).
+- **The DM channel ID:** you need the bot to DM you once first — the easiest way is to wait until Step 7, send the bot a `status` message, then right-click the DM conversation in your sidebar → **Copy Channel ID**. Put it in `default_channel` and restart the bot. (Until then you can seed it with the same ID as `allowed_user_id` — `bin/hydra-discord-bot` also falls back via `client.fetch_user()`, so the default_channel only matters in the rare case where the DM fallback itself fails.)
+
+### Step 3 — Configure Hydra
+
+Copy the template:
+
+```bash
+cp state/connectors/discord.json.example state/connectors/discord.json
+```
+
+Edit `state/connectors/discord.json`:
+
+- Set `enabled: true`
+- Confirm `bot_token_env` is the env-var name you'll use (default: `HYDRA_DISCORD_BOT_TOKEN`)
+- Set `allowed_user_id` (your snowflake from Step 2 — numeric string)
+- Set `default_channel` (the DM channel snowflake — numeric string)
+- Set `repos` to the list of `owner/name` repos to poll for the `commander-review-clean` label
+
+The real `state/connectors/discord.json` file is gitignored — only the `.example` mirror is committed.
+
+### Step 4 — Set the token as a Fly secret
+
+```bash
+fly secrets set \
+  HYDRA_DISCORD_BOT_TOKEN=your-bot-token-here \
+  --app <your-fly-app>
+```
+
+Secrets live in Fly's secret store — never committed, never on disk.
+
+### Step 5 — Install the Python deps
+
+The bot uses `discord.py` (the long-standing Python SDK for Discord). Add to your container build or install into the runtime venv:
+
+```bash
+pip install -r requirements.txt
+```
+
+On Fly: `requirements.txt` gets installed during `fly deploy` if your `infra/Dockerfile` runs `pip install -r requirements.txt`. If it doesn't yet, the deploy will succeed but the bot will refuse to start with "discord.py not installed" — update the Dockerfile in a follow-up PR.
+
+### Step 6 — Wire the bot into entrypoint (follow-up)
+
+**Deferred to ticket #72 landing** (same gate as the Slack bot). Once `infra/entrypoint.sh` settles, add a stanza mirroring the Slack one, just before the `tmux new-session` line:
+
+```bash
+if [ -f state/connectors/discord.json ] && [ "$(jq -r .enabled state/connectors/discord.json 2>/dev/null)" = "true" ]; then
+  ./bin/hydra-discord-bot &
+fi
+```
+
+No changes to `infra/fly.toml` are needed — gateway mode is outbound-only, no new port to expose.
+
+Until that stanza lands, launch the bot manually in a second tmux window:
+
+```bash
+fly ssh console --app <app>
+$ cd /hydra
+$ tmux new-window -t commander -n discord-bot './bin/hydra-discord-bot'
+```
+
+### Step 7 — Verify
+
+DM the bot `status`. Expected reply (shape varies with Commander state):
+
+```
+**Commander status:** running
+**Active workers:** 1
+**Today:** 3 done · 0 failed · 42 min wall-clock
+**Autopickup:** on (every 30 min)
+```
+
+To verify proactive notifications, manually apply the `commander-review-clean` label to an open PR in one of your configured `repos`:
+
+```bash
+gh api --method POST /repos/<owner>/<repo>/issues/<pr>/labels -f 'labels[]=commander-review-clean'
+```
+
+Within `notification_poll_interval_sec` (default 60s) the bot should DM:
+
+```
+PR #501 ready for merge (T2 — owner/repo) — https://github.com/…
+> PR title here
+```
+
+### Disabling
+
+Flip `enabled: false` in `state/connectors/discord.json` and restart the process. Bot exits 0 with a clear log line. No migration or state cleanup needed.
+
+### Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Bot logs "env var HYDRA_DISCORD_BOT_TOKEN unset" | `fly secrets list --app <app>` — re-run `fly secrets set`. |
+| Bot logs "discord.py not installed" | `requirements.txt` not installed in the container — update `infra/Dockerfile`. |
+| Bot logs "received empty-content DM from allowed user" | Message Content intent is disabled in the Developer Portal. Go back to Step 1.3 and toggle it ON, then restart the bot. |
+| DMs from the right user are ignored | Check `logs/discord-audit.jsonl` for `refused-unauthorized-user` entries — if so, `allowed_user_id` is wrong (probably the bot's ID instead of yours, or a display name instead of the snowflake). |
+| Bot logs `allowed_user_id must be a numeric Discord snowflake` | The value in `discord.json` isn't a 17+ digit numeric string — you probably pasted the username#tag or display name. Re-copy via right-click → Copy User ID with Developer Mode on. |
+| Notifications don't fire on `commander-review-clean` | Check `gh` is installed inside the Machine and `GH_TOKEN` is set. Check `repos` in `discord.json` includes the repo. Check `logs/discord-audit.jsonl` shows outbound events. |
+| Bot dies on every `fly deploy` | Normal — `fly deploy` replaces the Machine. The bot restarts from `entrypoint.sh`. `state/discord-notified-prs.json` on the volume preserves the seen-set, so no duplicate notifications. |
 
 ## Configuring the Codex backend
 
