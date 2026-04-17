@@ -338,6 +338,27 @@
       "last_result": null
     },
     {
+      "id": "launcher-dispatch-smoke",
+      "_description": "End-to-end smoke test for the ./hydra launcher's subcommand dispatch (ticket #117, spec docs/specs/2026-04-17-launcher-dispatch-fix.md). hydra-cli-subcommands-valid covers each helper directly via scripts/hydra-*.sh --help; this case covers the complementary path — that `./hydra <cmd>` routes to those helpers instead of falling through to `claude`. The fixture stages a fresh worktree into a tmpdir, regenerates ./hydra via setup.sh --non-interactive, and asserts every documented subcommand's --help is served by the Hydra helper (not claude). Also asserts the ./hydra top-level --help/-h/help path, --version, and the generated launcher's case block. Requires claude + gh just like setup.sh itself; SKIPs cleanly when either is absent (same pattern as setup-interactive-ci-mode).",
+      "kind": "script",
+      "requires": [
+        "requires_claude_cli",
+        "requires_gh_auth"
+      ],
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "launcher-dispatch fixture passes end-to-end (setup + 13 dispatch assertions + toplevel + version + case block)",
+          "cmd": "self-test/fixtures/launcher-dispatch/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "activity-command-smoke",
       "_description": "Script-only self-test for scripts/hydra-activity.sh (spec: docs/specs/2026-04-17-hydra-activity.md, ticket #19). Text-based observability layer. Exercises --help, runs the smoke fixture under self-test/fixtures/hydra-activity/ (which stages deterministic mtimes on 3 in-window logs + 1 out-of-window log, seeds state/active.json with 1 running + 1 paused-on-question worker, state/memory-citations.json with 3 entries, and memory/retros/ with 2 retro markdown files), and asserts both human-mode grep substrings and --json-mode jq shape. Corrupt-JSON path is also exercised (truncated active.json must not crash the script). No network, no gh, no Claude auth — runs anywhere bash + jq is installed.",
       "kind": "script",
