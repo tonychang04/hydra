@@ -145,6 +145,15 @@ Commander uses this to answer worker `QUESTION:` blocks without pinging the oper
 - **Answer:** OAuth token expired. The worker cannot re-auth itself. Escalate to the operator: "Linear MCP auth expired — please re-run `claude mcp add linear` and reply when done." Until the operator re-auths, skip Linear-triggered tickets (GitHub-triggered tickets still work).
 - **Source:** `docs/linear-tool-contract.md` error handling, 2026-04-16
 
+## Issue close semantics
+
+### Do I need to close the issue after merging the PR?
+
+- **Answer:** NO, GitHub does it automatically. Every worker's PR body contains a `Closes #N` line referencing the ticket. On merge, GitHub auto-closes the issue with a back-link to the PR. Don't manually `gh issue close` — that'd add a duplicate close event and look off in the issue timeline.
+- **Exception:** if a PR is merged that DOESN'T fully resolve the ticket (e.g. it splits the work and only closes part of it), manually close with `gh issue close <N> --comment "split into follow-ups #X and #Y"`.
+- **Exception:** if a duplicate or "won't fix" issue is filed that no PR will address, close manually with `--reason "not planned"` + a comment explaining why.
+- **Source:** operational convention, 2026-04-17
+
 ## When the operator must be looped in (no heuristic works)
 
 - Genuinely ambiguous acceptance criteria that memory can't resolve
