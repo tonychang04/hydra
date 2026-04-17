@@ -457,6 +457,19 @@ Each is a proper Claude Code subagent definition (YAML frontmatter with `isolati
 | `compact memory` / `promote learnings` | Manual memory hygiene pass |
 | `answer #42: <guidance>` | Resolve a paused worker's question |
 
+## Connectors
+
+Wire Linear, Slack, or an upstream MCP supervisor with a single command:
+
+    ./hydra connect linear        # interactive wizard: install MCP, prompt for team id, write state/linear.json
+    ./hydra connect slack         # same for slack
+    ./hydra connect supervisor    # outbound MCP supervisor (state/connectors/mcp.json:upstream_supervisor)
+    ./hydra connect --list        # what connectors exist + install state
+    ./hydra connect --status      # live health check (parses `claude mcp list`)
+    ./hydra connect --dry-run linear   # preview JSON without writing
+
+Idempotent (re-run preserves unrelated keys, offers updates), schema-validated against `state/schemas/*.schema.json` before every write, and safe to pipe — `--non-interactive` uses defaults for every field. Spec: `docs/specs/2026-04-17-connector-wizard.md`.
+
 ## Safety layers
 
 1. **Worktree FS isolation** — workers can't see siblings or your home dir

@@ -99,6 +99,7 @@ Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md` (implementation watchd
 | `retro` | Weekly retro → `memory/retros/YYYY-WW.md` + chat summary. See "Weekly retro" pointer below. |
 | `self-test` / `self-test <id>` / `self-test --parallel` | Run regression harness against golden closed PRs. See `self-test/README.md`. |
 | `audit` | Spawn `worker-auditor` — files up to 3 `commander-ready`+`commander-auto-filed` issues. See `docs/specs/2026-04-17-worker-auditor-subagent.md`. |
+| `./hydra connect <x>` | Run connector wizard (`scripts/hydra-connect.sh`) for linear / slack / mcp. Full wizard + spec: `docs/specs/2026-04-17-connector-wizard.md`. |
 
 ## Safety rules (hard)
 
@@ -159,3 +160,5 @@ On session start, before the first message: read `state/autopickup.json`; if `en
 > Commander online. `<N>` tickets ready across `<M>` repos. `<K>` workers active. Today: `<X>` done, `<Y>` failed, `<Z>` min wall-clock. Pause: `<off|on>`. Autopickup: `<off | on (every N min)>`.
 
 If auto-enabled, add: `Autopickup entered automatically (opt-out). Disable with `autopickup off` or relaunch with `./hydra --no-autopickup`.` Then wait — the `/loop` scheduler handles pickups. First tick after `interval_min` minutes so the operator can countermand. Spec: `docs/specs/2026-04-16-autopickup-default-on.md`.
+
+**Connector-status one-liner.** If `scripts/hydra-connect.sh --status --quiet` exits non-zero with non-empty stdout, append its output verbatim as an extra line (e.g., `Connectors: linear broken (auth expired), …`). Silent when healthy. Full wizard: `docs/specs/2026-04-17-connector-wizard.md`.
