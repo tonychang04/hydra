@@ -338,6 +338,27 @@
       "last_result": null
     },
     {
+      "id": "launcher-dispatch-smoke",
+      "_description": "End-to-end smoke test for the ./hydra launcher's subcommand dispatch (ticket #117, spec docs/specs/2026-04-17-launcher-dispatch-fix.md). hydra-cli-subcommands-valid covers each helper directly via scripts/hydra-*.sh --help; this case covers the complementary path — that `./hydra <cmd>` routes to those helpers instead of falling through to `claude`. The fixture stages a fresh worktree into a tmpdir, regenerates ./hydra via setup.sh --non-interactive, and asserts every documented subcommand's --help is served by the Hydra helper (not claude). Also asserts the ./hydra top-level --help/-h/help path, --version, and the generated launcher's case block. Requires claude + gh just like setup.sh itself; SKIPs cleanly when either is absent (same pattern as setup-interactive-ci-mode).",
+      "kind": "script",
+      "requires": [
+        "requires_claude_cli",
+        "requires_gh_auth"
+      ],
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "launcher-dispatch fixture passes end-to-end (setup + 13 dispatch assertions + toplevel + version + case block)",
+          "cmd": "self-test/fixtures/launcher-dispatch/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "activity-command-smoke",
       "_description": "Script-only self-test for scripts/hydra-activity.sh (spec: docs/specs/2026-04-17-hydra-activity.md, ticket #19). Text-based observability layer. Exercises --help, runs the smoke fixture under self-test/fixtures/hydra-activity/ (which stages deterministic mtimes on 3 in-window logs + 1 out-of-window log, seeds state/active.json with 1 running + 1 paused-on-question worker, state/memory-citations.json with 3 entries, and memory/retros/ with 2 retro markdown files), and asserts both human-mode grep substrings and --json-mode jq shape. Corrupt-JSON path is also exercised (truncated active.json must not crash the script). No network, no gh, no Claude auth — runs anywhere bash + jq is installed.",
       "kind": "script",
@@ -1943,6 +1964,47 @@
       "last_result": null
     },
     {
+      "id": "pair-agent-dry-run",
+      "_description": "Script-only self-test for scripts/hydra-pair-agent.sh — the one-command agent-pairing wrapper around the #92 register-agent primitive (spec: docs/specs/2026-04-17-pair-agent.md, ticket #124). Exercises the --dry-run path end-to-end: no bearer generated, no state mutation, no network. Asserts (a) --dry-run exits 0, (b) all four recipe block headers present (Claude Code / Cursor / OpenClaw / raw curl), (c) placeholder <token-would-go-here> is present, (d) no 43+ char base64-shaped string leaks to stdout (real-token-leak detector), (e) --editor filters to a single block, (f) invalid --scope exits 2, (g) no-arg exits 2 with missing-agent-id marker, (h) --dry-run does not create the mcp.json config. Also verifies bash -n syntax clean, --help exit 0, and dispatch wiring in setup.sh. Fixture lives at self-test/fixtures/pair-agent/run.sh — tmpdir-isolated, safe to re-run, CI-safe. Commander runs this before committing changes to scripts/hydra-pair-agent.sh or its launcher dispatch.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-pair-agent.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-pair-agent.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-pair-agent.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-pair-agent.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra pair-agent"
+        },
+        {
+          "name": "missing <agent-id> is a usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/hydra-pair-agent.sh 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo MISSING_ID_EXIT_2",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MISSING_ID_EXIT_2"
+        },
+        {
+          "name": "integration smoke (--dry-run, all 4 recipes, no token leak, no mutation, --editor filter, error paths)",
+          "cmd": "self-test/fixtures/pair-agent/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "dispatch wired: setup.sh launcher heredoc routes `./hydra pair-agent` to the new script",
+          "cmd": "grep -Eq 'pair-agent\\)[[:space:]]+shift;[[:space:]]+hydra_exec_helper scripts/hydra-pair-agent\\.sh' setup.sh && echo DISPATCH_WIRED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DISPATCH_WIRED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "supervisor-escalate-disabled-path",
       "_description": "Script-only self-test for scripts/hydra-supervisor-escalate.py — the outbound MCP client landed in ticket #87. Verifies the 'not-configured' fall-through branch: when state/connectors/mcp.json.example is read (upstream_supervisor.enabled=false by default) OR when the config file is missing entirely, the script exits 2 with a 'not-configured' marker on stdout. Commander reads exit 2 as 'keep legacy commander-stuck behavior, no upstream call made'. Also validates Python syntax, --help output, and that the exit-2 branch never touches the network (no token env var needed to trigger it). Runs locally in <1s; no network, no fixture supervisor required. Spec: docs/specs/2026-04-17-supervisor-escalate-client.md.",
       "kind": "script",
@@ -2208,37 +2270,37 @@
         },
         {
           "name": "setup.sh --non-interactive in a tmp HYDRA_ROOT exits 0 and writes .hydra.env",
-          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /tmp/hydra-102-ni.out 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo NI_EXIT0_ENV_WRITTEN || { echo \"FAIL rc=$rc\" >&2; cat /tmp/hydra-102-ni.out >&2; exit 1; }",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\" \"$TMP/scripts\"; cp setup.sh \"$TMP/\"; cp scripts/launcher-marker.sh \"$TMP/scripts/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\" \"$TMP/scripts/launcher-marker.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /tmp/hydra-102-ni.out 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo NI_EXIT0_ENV_WRITTEN || { echo \"FAIL rc=$rc\" >&2; cat /tmp/hydra-102-ni.out >&2; exit 1; }",
           "expected_exit": 0,
           "expected_stdout_contains": "NI_EXIT0_ENV_WRITTEN"
         },
         {
           "name": "setup.sh --ci is accepted as alias",
-          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --ci > /dev/null 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo CI_ALIAS_OK || { echo \"FAIL rc=$rc\" >&2; exit 1; }",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\" \"$TMP/scripts\"; cp setup.sh \"$TMP/\"; cp scripts/launcher-marker.sh \"$TMP/scripts/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\" \"$TMP/scripts/launcher-marker.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --ci > /dev/null 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo CI_ALIAS_OK || { echo \"FAIL rc=$rc\" >&2; exit 1; }",
           "expected_exit": 0,
           "expected_stdout_contains": "CI_ALIAS_OK"
         },
         {
           "name": "setup.sh with closed stdin (</dev/null) auto-triggers non-interactive path (no read hang, no set -e trip)",
-          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh </dev/null > /tmp/hydra-102-devnull.out 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo CLOSED_STDIN_OK || { echo \"FAIL rc=$rc\" >&2; cat /tmp/hydra-102-devnull.out >&2; exit 1; }",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\" \"$TMP/scripts\"; cp setup.sh \"$TMP/\"; cp scripts/launcher-marker.sh \"$TMP/scripts/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\" \"$TMP/scripts/launcher-marker.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh </dev/null > /tmp/hydra-102-devnull.out 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo CLOSED_STDIN_OK || { echo \"FAIL rc=$rc\" >&2; cat /tmp/hydra-102-devnull.out >&2; exit 1; }",
           "expected_exit": 0,
           "expected_stdout_contains": "CLOSED_STDIN_OK"
         },
         {
           "name": "non-interactive .hydra.env has all three exports in the contracted order",
-          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); grep -q '^export HYDRA_ROOT=' \"$TMP/.hydra.env\" && grep -q '^export HYDRA_EXTERNAL_MEMORY_DIR=' \"$TMP/.hydra.env\" && grep -q '^export COMMANDER_ROOT=' \"$TMP/.hydra.env\" && awk 'NR==3{if($0 ~ /^export HYDRA_ROOT=/) a=1} NR==4{if($0 ~ /^export HYDRA_EXTERNAL_MEMORY_DIR=/) b=1} NR==5{if($0 ~ /^export COMMANDER_ROOT=/) c=1} END{exit !(a && b && c)}' \"$TMP/.hydra.env\" && echo ENV_FORMAT_OK || { echo FAIL >&2; cat \"$TMP/.hydra.env\" >&2; exit 1; }",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\" \"$TMP/scripts\"; cp setup.sh \"$TMP/\"; cp scripts/launcher-marker.sh \"$TMP/scripts/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\" \"$TMP/scripts/launcher-marker.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); grep -q '^export HYDRA_ROOT=' \"$TMP/.hydra.env\" && grep -q '^export HYDRA_EXTERNAL_MEMORY_DIR=' \"$TMP/.hydra.env\" && grep -q '^export COMMANDER_ROOT=' \"$TMP/.hydra.env\" && awk 'NR==3{if($0 ~ /^export HYDRA_ROOT=/) a=1} NR==4{if($0 ~ /^export HYDRA_EXTERNAL_MEMORY_DIR=/) b=1} NR==5{if($0 ~ /^export COMMANDER_ROOT=/) c=1} END{exit !(a && b && c)}' \"$TMP/.hydra.env\" && echo ENV_FORMAT_OK || { echo FAIL >&2; cat \"$TMP/.hydra.env\" >&2; exit 1; }",
           "expected_exit": 0,
           "expected_stdout_contains": "ENV_FORMAT_OK"
         },
         {
           "name": "non-interactive mode does NOT leak prompt text ('Press Enter') to stdout",
-          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /tmp/hydra-102-noleak.out 2>&1 ); ! grep -q 'Press Enter' /tmp/hydra-102-noleak.out && echo NO_PROMPT_LEAK || { echo \"FAIL: prompt text leaked\" >&2; grep 'Press Enter' /tmp/hydra-102-noleak.out >&2; exit 1; }",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\" \"$TMP/scripts\"; cp setup.sh \"$TMP/\"; cp scripts/launcher-marker.sh \"$TMP/scripts/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\" \"$TMP/scripts/launcher-marker.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /tmp/hydra-102-noleak.out 2>&1 ); ! grep -q 'Press Enter' /tmp/hydra-102-noleak.out && echo NO_PROMPT_LEAK || { echo \"FAIL: prompt text leaked\" >&2; grep 'Press Enter' /tmp/hydra-102-noleak.out >&2; exit 1; }",
           "expected_exit": 0,
           "expected_stdout_contains": "NO_PROMPT_LEAK"
         },
         {
           "name": "second run on a populated tree is a no-op byte-identical to the first",
-          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); cp \"$TMP/.hydra.env\" \"$TMP/.env.first\"; cp \"$TMP/hydra\" \"$TMP/hydra.first\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); diff -q \"$TMP/.env.first\" \"$TMP/.hydra.env\" > /dev/null && diff -q \"$TMP/hydra.first\" \"$TMP/hydra\" > /dev/null && echo IDEMPOTENT_OK || { echo FAIL >&2; exit 1; }",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\" \"$TMP/scripts\"; cp setup.sh \"$TMP/\"; cp scripts/launcher-marker.sh \"$TMP/scripts/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\" \"$TMP/scripts/launcher-marker.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); cp \"$TMP/.hydra.env\" \"$TMP/.env.first\"; cp \"$TMP/hydra\" \"$TMP/hydra.first\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); diff -q \"$TMP/.env.first\" \"$TMP/.hydra.env\" > /dev/null && diff -q \"$TMP/hydra.first\" \"$TMP/hydra\" > /dev/null && echo IDEMPOTENT_OK || { echo FAIL >&2; exit 1; }",
           "expected_exit": 0,
           "expected_stdout_contains": "IDEMPOTENT_OK"
         }
@@ -2454,6 +2516,69 @@
           "cmd": "bash -c 'unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY CODEX_SESSION_TOKEN; export HYDRA_CODEX_AUTH_ENV=MY_CODEX_VAR MY_CODEX_VAR=cs_fake GITHUB_TOKEN=ghp_fake; HYDRA_DRY_RUN=1 HYDRA_ROOT=$(mktemp -d) HYDRA_DATA_DIR=$(mktemp -d) infra/entrypoint.sh 2>&1 | grep -q \"Codex provider only\" && echo OVERRIDE_OK'",
           "expected_exit": 0,
           "expected_stdout_contains": "OVERRIDE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "launcher-upgrade-regen",
+      "_description": "Script-only self-test for the launcher auto-regen feature added in ticket #123 (spec: docs/specs/2026-04-17-launcher-auto-regen.md). Drives self-test/fixtures/launcher-upgrade-regen/run.sh, which stages a fresh worktree into a tmpdir, writes a pre-#123 (marker-less) launcher, runs ./setup.sh --non-interactive three times, and asserts: (a) the first run backs up the stale launcher as ./hydra.bak-<ts> byte-identical to what we placed, (b) the regenerated ./hydra contains a '# hydra-launcher-version: <8hex>' comment line, (c) setup.sh stdout logged the migration, (d) the second run is a byte-identical no-op with 'already up to date' logged and no new .bak, (e) a tampered marker on a third run produces a new .bak matching the tampered launcher and the 'Launcher version mismatch (had ..., expected ...)' log line. Depends on the launcher-marker.sh helper + the hydra-doctor.sh launcher-version check introduced in the same PR. Requires claude + gh (same as setup.sh itself); SKIPs cleanly on CI runners without them (pattern matches setup-interactive-ci-mode).",
+      "kind": "script",
+      "requires": [
+        "requires_claude_cli",
+        "requires_gh_auth"
+      ],
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "bash -n passes on launcher-marker.sh",
+          "cmd": "bash -n scripts/launcher-marker.sh && echo SYNTAX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SYNTAX_OK"
+        },
+        {
+          "name": "launcher-marker.sh --self-test passes",
+          "cmd": "scripts/launcher-marker.sh --self-test",
+          "expected_exit": 0,
+          "expected_stdout_contains": "launcher-marker self-test: OK"
+        },
+        {
+          "name": "bash -n passes on the fixture",
+          "cmd": "bash -n self-test/fixtures/launcher-upgrade-regen/run.sh && echo FIXTURE_SYNTAX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FIXTURE_SYNTAX_OK"
+        },
+        {
+          "name": "upgrade-regen fixture end-to-end",
+          "cmd": "env -u HYDRA_ROOT -u COMMANDER_ROOT self-test/fixtures/launcher-upgrade-regen/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        },
+        {
+          "name": "compute returns 8 hex for a known body",
+          "cmd": "TMP=$(mktemp); printf '#!/usr/bin/env bash\\n# hydra-launcher-version: 00000000\\necho x\\n' > \"$TMP\"; m=$(scripts/launcher-marker.sh compute \"$TMP\"); rm -f \"$TMP\"; [ \"${#m}\" = 8 ] && echo \"LEN_OK $m\" || { echo \"FAIL len=${#m} m=$m\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "LEN_OK "
+        },
+        {
+          "name": "extract returns exit 4 on missing marker",
+          "cmd": "TMP=$(mktemp); printf '#!/usr/bin/env bash\\necho no marker\\n' > \"$TMP\"; scripts/launcher-marker.sh extract \"$TMP\" > /dev/null; rc=$?; rm -f \"$TMP\"; [ \"$rc\" = 4 ] && echo MISSING_EXIT4 || { echo \"FAIL rc=$rc\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MISSING_EXIT4"
+        },
+        {
+          "name": "extract returns exit 5 on malformed marker",
+          "cmd": "TMP=$(mktemp); printf '#!/usr/bin/env bash\\n# hydra-launcher-version: not-hex\\necho x\\n' > \"$TMP\"; scripts/launcher-marker.sh extract \"$TMP\" > /dev/null; rc=$?; rm -f \"$TMP\"; [ \"$rc\" = 5 ] && echo MALFORMED_EXIT5 || { echo \"FAIL rc=$rc\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MALFORMED_EXIT5"
+        },
+        {
+          "name": "compare returns exit 6 on mismatch and prints old+new markers",
+          "cmd": "OLD=$(mktemp); NEW=$(mktemp); printf '#!/usr/bin/env bash\\n# hydra-launcher-version: deadbeef\\necho x\\n' > \"$OLD\"; printf '#!/usr/bin/env bash\\n# hydra-launcher-version: 00000000\\necho x\\nextra\\n' > \"$NEW\"; out=$(scripts/launcher-marker.sh compare \"$OLD\" \"$NEW\"); rc=$?; rm -f \"$OLD\" \"$NEW\"; case \"$out\" in \"mismatch deadbeef \"*) [ \"$rc\" = 6 ] && echo MISMATCH_OK_EXIT6 || { echo \"FAIL rc=$rc\" >&2; exit 1; } ;; *) echo \"FAIL unexpected out=$out\" >&2; exit 1 ;; esac",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MISMATCH_OK_EXIT6"
         }
       ],
       "last_run": null,

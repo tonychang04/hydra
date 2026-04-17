@@ -299,12 +299,28 @@ fi
 # memory/learnings-hydra.md 2026-04-17 #84: ./hydra is NOT committed, it's
 # generated here. Editing this block is how you add new ./hydra subcommands,
 # but reflowing or restructuring breaks the launcher contract.
+#
+# Auto-regen on version mismatch (ticket #123, spec:
+# docs/specs/2026-04-17-launcher-auto-regen.md):
+#   1. Always write the heredoc to a tmpfile with a "# hydra-launcher-version:"
+#      placeholder and substitute an 8-hex SHA-256 marker computed from the
+#      normalized body.
+#   2. If ./hydra already exists, compare its marker to the fresh marker. On
+#      match, say "already up to date" and throw away the tmpfile — preserves
+#      byte-identical idempotency for second-run CI cases.
+#   3. On mismatch (or missing / malformed marker — the pre-#123 migration
+#      moment), back up the stale ./hydra as ./hydra.bak-<UTC-timestamp>, move
+#      the fresh launcher into place, log the old and new markers.
+#   4. If sha256 tooling is missing, fail soft: leave the on-disk launcher
+#      untouched, warn the operator, skip regen.
 # ----------------------------------------------------------------------------
-if [[ -f hydra ]]; then
-  warn "./hydra launcher already exists — leaving as-is"
-else
-  cat > hydra <<'EOF'
+LAUNCHER_TMP="$(mktemp "${TMPDIR:-/tmp}/hydra-launcher.XXXXXX")"
+# shellcheck disable=SC2064  # intentional early expansion so the trap captures the value
+trap "rm -f '$LAUNCHER_TMP'" EXIT
+
+cat > "$LAUNCHER_TMP" <<'EOF'
 #!/usr/bin/env bash
+# hydra-launcher-version: __HYDRA_LAUNCHER_VERSION__
 # Launch the Hydra Commander session. Sources env, sanity-checks, then exec claude.
 #
 # Usage:
@@ -346,6 +362,14 @@ else
 #                                            deps; works over SSH). Spec:
 #                                            docs/specs/2026-04-17-hydra-watch.md,
 #                                            ticket #130.
+#   ./hydra pair-agent <agent-id> [opts]     One-command setup for a new
+#                                            MCP-speaking agent: generates a
+#                                            bearer, prints paste-ready config
+#                                            recipes for Claude Code, Cursor,
+#                                            OpenClaw / Codex-CLI, and raw curl,
+#                                            then runs a live sanity check.
+#                                            (spec: docs/specs/2026-04-17-pair-agent.md,
+#                                            ticket #124).
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -405,6 +429,9 @@ Subcommands:
   watch [--once] [--interval N]
                                Live auto-refreshing dashboard (3 panes).
                                --once for scripts, default refresh 2s.
+  pair-agent <agent-id> [opts] One-command setup for an MCP-speaking agent:
+                               generates a bearer, prints paste-ready recipes,
+                               runs a live sanity check.
   doctor [--fix|--fix-safe]    Install sanity check. --fix walks the operator
                                through each fixable issue interactively.
   mcp <serve|register-agent>   MCP server subcommands (agent-only interface).
@@ -435,6 +462,7 @@ HYDRAHELP
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
   activity)     shift; hydra_exec_helper scripts/hydra-activity.sh "$@" ;;
   watch)        shift; hydra_exec_helper scripts/hydra-watch.sh "$@" ;;
+  pair-agent)   shift; hydra_exec_helper scripts/hydra-pair-agent.sh "$@" ;;
   mcp)
     shift
     case "${1:-}" in
@@ -528,9 +556,72 @@ esac
 
 exec claude ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}
 EOF
-  chmod +x hydra
-  ok "./hydra launcher (chmod +x)"
+
+# Compute + substitute the version marker. Helper lives at
+# scripts/launcher-marker.sh; see spec 2026-04-17-launcher-auto-regen.md.
+LAUNCHER_MARKER_HELPER="$HYDRA_ROOT/scripts/launcher-marker.sh"
+if [[ ! -x "$LAUNCHER_MARKER_HELPER" ]]; then
+  fail "scripts/launcher-marker.sh missing or not executable — cannot compute launcher version"
 fi
+
+if ! LAUNCHER_MARKER="$("$LAUNCHER_MARKER_HELPER" compute "$LAUNCHER_TMP" 2>/dev/null)"; then
+  # Fail-soft: sha256 tool unavailable. Preserve whatever launcher is on disk.
+  # This is rare enough (no coreutils) that operator action is warranted, but
+  # we must not destroy their working install.
+  if [[ -f hydra ]]; then
+    warn "Cannot compute launcher version (sha256 unavailable) — leaving existing ./hydra as-is"
+  else
+    fail "Cannot compute launcher version (sha256 unavailable) — install coreutils and re-run"
+  fi
+else
+  # Substitute the marker placeholder with the computed hash. Portable sed
+  # (GNU vs BSD differ on -i semantics, so use a temp move instead).
+  sed "s|__HYDRA_LAUNCHER_VERSION__|$LAUNCHER_MARKER|" "$LAUNCHER_TMP" > "$LAUNCHER_TMP.final"
+  mv "$LAUNCHER_TMP.final" "$LAUNCHER_TMP"
+
+  if [[ -f hydra ]]; then
+    # Compare existing marker with the fresh one. compare exits 0 on match,
+    # 6 on mismatch. Any other nonzero is a real error (propagated to caller).
+    set +e
+    cmp_out="$("$LAUNCHER_MARKER_HELPER" compare hydra "$LAUNCHER_TMP" 2>/dev/null)"
+    cmp_rc=$?
+    set -e
+    case "$cmp_rc" in
+      0)
+        ok "./hydra launcher already up to date (version $LAUNCHER_MARKER)"
+        ;;
+      6)
+        # Mismatch → backup + regen. cmp_out is "mismatch <old> <new>".
+        old_marker="$(printf '%s\n' "$cmp_out" | awk '{print $2}')"
+        bak_name="hydra.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+        mv hydra "$bak_name"
+        mv "$LAUNCHER_TMP" hydra
+        chmod +x hydra
+        if [[ "$old_marker" == "none" ]]; then
+          warn "Launcher has no version marker (pre-#123 install) — regenerating; previous saved as ./$bak_name"
+        elif [[ "$old_marker" == "malformed" ]]; then
+          warn "Launcher version marker malformed — regenerating; previous saved as ./$bak_name"
+        else
+          warn "Launcher version mismatch (had $old_marker, expected $LAUNCHER_MARKER) — regenerating; previous saved as ./$bak_name"
+        fi
+        ok "./hydra launcher regenerated (version $LAUNCHER_MARKER)"
+        ;;
+      *)
+        # Unexpected error from the helper. Preserve existing launcher and
+        # surface the problem — don't silently corrupt a working install.
+        warn "./hydra launcher version comparison failed (exit $cmp_rc) — leaving on-disk launcher untouched"
+        ;;
+    esac
+  else
+    # Fresh install — no launcher to compare against. Write directly.
+    mv "$LAUNCHER_TMP" hydra
+    chmod +x hydra
+    ok "./hydra launcher (chmod +x, version $LAUNCHER_MARKER)"
+  fi
+fi
+
+# Clear the EXIT trap — LAUNCHER_TMP has been consumed (moved or deleted).
+trap - EXIT
 
 # ----------------------------------------------------------------------------
 # Summary

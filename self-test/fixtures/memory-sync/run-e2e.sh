@@ -62,7 +62,8 @@ export HYDRA_AWS_REGION="us-east-1"
 export HYDRA_S3_BUCKET="hydra-fixture-knowledge"
 # Use a prefix DIFFERENT from the s3-backend fixture's prefix so the
 # .hydra-mount-marker seed files that setup-fixture.sh touches don't
-# pollute this memory tree.
+# pollute this memory tree. Unique per-run via $$ so parallel CI runs
+# don't collide.
 export HYDRA_S3_PREFIX="memory-sync-e2e-$$"
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
 export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"
@@ -75,7 +76,15 @@ fi
 echo "memory-sync-e2e: bringing up localstack (and creating bucket + dummy tables)"
 # The s3-backend fixture's setup also creates dynamodb tables we don't use —
 # harmless, and reusing it means we don't duplicate bucket-creation logic.
-"$S3_FIXTURE_DIR/setup-fixture.sh"
+#
+# CRITICAL: setup-fixture.sh reads HYDRA_S3_PREFIX from env to decide where
+# to write its .hydra-mount-marker seed files. Our exported prefix above
+# (memory-sync-e2e-$$) is the round-trip target — if setup-fixture.sh uses
+# it, the marker lands inside our tree and the --pull diff fails. Override
+# to the s3-backend fixture's own default prefix so the marker stays in its
+# own namespace (localstack-fixture/memory/.hydra-mount-marker) and our
+# memory-sync-e2e-$$ prefix only contains what --push wrote. Fixes #115.
+HYDRA_S3_PREFIX="localstack-fixture" "$S3_FIXTURE_DIR/setup-fixture.sh"
 
 # Build a fake memory tree.
 WORK_DIR="$(mktemp -d)"
