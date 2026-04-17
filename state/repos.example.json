@@ -38,6 +38,16 @@
       "local_path": "/absolute/path/to/infra",
       "enabled": false,
       "disabled_reason": "Tier 3 always — infra changes refused"
+    },
+    {
+      "_comment": "Cloud-commander example — on a Fly.io commander the repo is cloned to cloud_local_path by scripts/ensure-repo-cloned.sh before workers spawn. local_path stays set for parity with local-mode operators. git_url and cloud_local_path are both OPTIONAL — the defaults (https://github.com/<owner>/<name>.git and /hydra/data/repos/<owner>/<name>) are what most operators want. See docs/specs/2026-04-17-cloud-repo-clone.md.",
+      "owner": "your-org",
+      "name": "cloud-served-repo",
+      "local_path": "/absolute/path/for/local-dev/only",
+      "git_url": "https://github.com/your-org/cloud-served-repo.git",
+      "cloud_local_path": "/hydra/data/repos/your-org/cloud-served-repo",
+      "enabled": true,
+      "ticket_trigger": "assignee"
     }
   ],
   "notes": "Flip enabled:false to exclude a repo temporarily. State labels (commander-working, commander-review, commander-stuck, commander-rejected, commander-reviewed, commander-skill-promotion) are created lazily by Hydra on first use — you do not need to create them up-front."
