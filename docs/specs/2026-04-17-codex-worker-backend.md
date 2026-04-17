@@ -1,3 +1,9 @@
+---
+status: draft
+date: 2026-04-17
+author: hydra worker (issue #96)
+---
+
 # Codex as a Hydra worker backend (dual-backend implementation)
 
 **Ticket:** [#96](https://github.com/tonychang04/hydra/issues/96)
