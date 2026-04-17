@@ -1,0 +1,58 @@
+{
+  "generated_at": "fixture",
+  "proposals": [
+    {
+      "pattern_hash": "f0a89fde885904742a99a50a2a3e0ec821cda93a",
+      "source": "logs-stuck",
+      "repo": "fixture-owner/fixture-repo",
+      "title": "[auto-proposed] Fix root cause of \"docker-compose startup timeout\" in fixture-owner/fixture-repo",
+      "body": "## Summary\n\nCommander detected the same stuck pattern on `fixture-owner/fixture-repo` 3 times across 3 distinct tickets. Workers keep hitting the same wall; fix the root cause so the next worker doesn't.\n\n## Evidence\n\n- Pattern: `docker-compose startup timeout`\n- Occurrences: 3 (threshold: 3)\n- Distinct tickets: 3 (threshold: 2)\n- Source logs: see `evidence_refs` in the proposal JSON\n\n## Suggested tier\n\nT2 — new change addressing a repo-specific repeat failure. Commander review gate applies.\n\n## Notes for the worker head\n\n- Read the evidence logs before planning. The pattern string is the literal signal; the fix should address whatever the workers actually hit.\n- If the fix is a new skill or doc rather than code, that's fine — the bar is \"next worker doesn't hit this,\" not \"code must change.\"\n- If in doubt, escalate.",
+      "labels": [
+        "commander-proposed"
+      ],
+      "confidence": "high",
+      "evidence_refs": [
+        "100.json",
+        "101.json",
+        "102.json"
+      ]
+    },
+    {
+      "pattern_hash": "be4ef72b55851bf9c82b7c7cb038fd0cf0e2a9cd",
+      "source": "citations-hot",
+      "repo": "tonychang04/hydra",
+      "title": "[auto-proposed] Promote memory entry \"learnings-CLI.md#npm install strips peer markers\" to repo skill",
+      "body": "## Summary\n\nMemory entry `learnings-CLI.md#npm install strips peer markers` has been cited 6 times (threshold: 5). It is a promotion candidate — move it from commander memory to the target repo's `.claude/skills/` so every agent inherits it, not just commander workers.\n\n## Evidence\n\n- Key: `learnings-CLI.md#npm install strips peer markers`\n- Cited count: 6\n- Last cited: 2026-04-16\n- Tickets: see `evidence_refs` in the proposal JSON\n- Source file: `learnings-CLI.md`\n\n## Suggested tier\n\nT1 — documentation / skill promotion. Clean flow once the target repo is known.\n\n## Notes for the worker head\n\nSee `memory/memory-lifecycle.md` \"Promotion flow (memory → repo skill)\" for the mechanics. The skill file goes in the target repo's `.claude/skills/`; once that PR merges, commander removes the entry from `learnings-<repo>.md` with a trailing back-link.",
+      "labels": [
+        "commander-proposed"
+      ],
+      "confidence": "high",
+      "evidence_refs": [
+        "#50",
+        "#61",
+        "#63",
+        "#64",
+        "#70",
+        "#71"
+      ]
+    },
+    {
+      "pattern_hash": "78b336b6b10d84fd4603c46a53cda85a0f0464a1",
+      "source": "citations-hot",
+      "repo": "tonychang04/hydra",
+      "title": "[auto-proposed] Promote memory entry \"learnings-CLI.md#vitest needs postcss stub\" to repo skill",
+      "body": "## Summary\n\nMemory entry `learnings-CLI.md#vitest needs postcss stub` has been cited 5 times (threshold: 5). It is a promotion candidate — move it from commander memory to the target repo's `.claude/skills/` so every agent inherits it, not just commander workers.\n\n## Evidence\n\n- Key: `learnings-CLI.md#vitest needs postcss stub`\n- Cited count: 5\n- Last cited: 2026-04-15\n- Tickets: see `evidence_refs` in the proposal JSON\n- Source file: `learnings-CLI.md`\n\n## Suggested tier\n\nT1 — documentation / skill promotion. Clean flow once the target repo is known.\n\n## Notes for the worker head\n\nSee `memory/memory-lifecycle.md` \"Promotion flow (memory → repo skill)\" for the mechanics. The skill file goes in the target repo's `.claude/skills/`; once that PR merges, commander removes the entry from `learnings-<repo>.md` with a trailing back-link.",
+      "labels": [
+        "commander-proposed"
+      ],
+      "confidence": "high",
+      "evidence_refs": [
+        "#55",
+        "#56",
+        "#57",
+        "#58",
+        "#60"
+      ]
+    }
+  ]
+}

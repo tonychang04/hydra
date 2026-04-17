@@ -1,0 +1,10 @@
+{
+  "ticket": "fixture-repo/owner#103",
+  "repo": "fixture-owner/fixture-repo",
+  "result": "shipped",
+  "pr_url": "https://github.com/fixture-owner/fixture-repo/pull/200",
+  "tier": "T1",
+  "started_at": "2026-04-13T10:00:00Z",
+  "completed_at": "2026-04-13T10:15:00Z",
+  "subagent_type": "worker-implementation"
+}

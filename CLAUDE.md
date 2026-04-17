@@ -177,6 +177,7 @@ This is deliberately separate from the implementer so the reviewer isn't biased 
 | `answer #42: <guidance>` | the operator resolving a paused worker — `SendMessage(worker_id, guidance)` + append to `escalation-faq.md` |
 | `compact memory` / `promote learnings` / `archive stale` | Run memory hygiene on demand |
 | `retro` | Produce a weekly retro from `logs/*.json`, `state/memory-citations.json`, and recent additions to `memory/escalation-faq.md`. Write output to `memory/retros/YYYY-WW.md`; surface a one-paragraph summary in chat. See the "Weekly retro" section below. |
+| `propose improvements` | Scan logs/retros/citations/FAQ for patterns above threshold; emit proposal JSON. On operator approval, run `scripts/file-proposed-issues.sh` to actually file them (rate-limited to 3/week). See the "Self-improvement proposals" section below. |
 | `self-test` / `self-test <case-id>` / `self-test --parallel` | Run regression harness against golden closed PRs in `self-test/golden-cases.json`. Use before committing changes to your own CLAUDE.md, worker subagents, or policy. See `self-test/README.md`. |
 
 ## Safety rules (hard)
@@ -285,6 +286,32 @@ Memory is short-term. Consistent patterns graduate into repo-local skills so eve
 Silent by default. Only notify the operator when promoting a skill (needs his review).
 
 **Canonical tooling for the memory layer** — don't roll your own. Use `scripts/parse-citations.sh` to turn a worker report into a citation delta (then merge into `state/memory-citations.json`), `scripts/validate-learning-entry.sh` to schema-check a `learnings-<repo>.md` before or after writing it, and `scripts/validate-citations.sh` during `compact memory` / `promote learnings` passes to catch stale references whose quoted text no longer exists in the referenced file. All three take an optional `--memory-dir <path>` and default to `$HYDRA_EXTERNAL_MEMORY_DIR` falling back to `./memory/`, so they keep working once the external-memory-split refactor (`docs/specs/2026-04-16-external-memory-split.md`) lands. See `scripts/README.md`.
+
+## Self-improvement proposals (runs weekly, on demand, or after retro)
+
+Commander watches its own operation and proposes new issues based on detected patterns. Runs when:
+- `retro` finishes (automatic, end of weekly summary)
+- Operator says `propose improvements`
+- Scheduled (when autopickup tick also detects "no tickets in queue" AND "≥7 days since last proposal scan")
+
+Triggers that warrant an auto-proposed issue (each requires ≥3 occurrences + ≥2 distinct tickets — matches memory promotion threshold):
+- Same worker-stuck pattern on same repo 3+ times → propose "fix root cause of X in repo Y"
+- Same QUESTION: theme escalated 3+ times → propose "add repo-native skill for X pattern"
+- Average worker wall-clock growing >40% over rolling 30d window → propose "investigate worker performance regression"
+- Same memory entry cited 5+ times but not yet promoted → propose "promote <entry> to skill"
+
+Commander respects:
+- Max 3 auto-proposed issues per week across all repos (rate limit)
+- `state/declined-proposals.json` — operator can label any auto-proposal `commander-declined`, pattern gets suppressed for 90 days
+- Per-repo opt-in: `state/repos.json:auto_propose: true` (default false for external repos; true for tonychang04/hydra since it's the dogfood target)
+
+Auto-proposed issue shape:
+- Title prefix: `[auto-proposed]`
+- Label: `commander-proposed` (and optionally `commander-ready` if confidence is high and it's T1-tier)
+- Body has a `## Evidence` section citing the specific logs/retros/memory entries that triggered it
+- Assignee: @me (so the operator sees it in their GitHub inbox)
+
+**Tooling:** `scripts/propose-improvements.sh` detects patterns and emits structured proposal JSON to stdout. `scripts/file-proposed-issues.sh` consumes that JSON and actually calls `gh issue create` — it enforces the 3/week rate limit, writes to `state/proposed-issues.json` to avoid duplicates, and refuses on pattern-hash collisions with `state/declined-proposals.json`. Split is deliberate: detection is safe to run automatically and often; filing is the side-effectful step the operator (or scheduled autopickup) decides to invoke. Spec: `docs/specs/2026-04-16-self-improvement-cycle.md`.
 
 ## Weekly retro (runs on demand)
 

@@ -11,6 +11,8 @@ These are **helper scripts invoked by Commander during memory lifecycle operatio
 | `validate-citations.sh` | Commander, during `compact memory` / `promote learnings` hygiene passes | Walk `state/memory-citations.json`, check every citation quote still exists in its referenced file. Flags stale references that need cleanup. |
 | `state-get.sh` / `state-put.sh` | Commander + any adapter call site | Read / write a logical state blob. Defaults to `state/<key>.json` (Phase 1). Flips to DynamoDB when `HYDRA_STATE_BACKEND=dynamodb` (Phase 2). Awscli + jq. |
 | `memory-mount.sh` | Operator, once per host | Mount an S3 bucket at `$HYDRA_EXTERNAL_MEMORY_DIR` via `mount-s3`. Prints clear install instructions if mount-s3 isn't on PATH. `--dry-run` previews the invocation. |
+| `propose-improvements.sh` | Commander, after a retro or on `propose improvements` | Scan logs / citations / escalation-faq / retros for patterns above threshold; emit structured proposal JSON to stdout. Stateless, side-effect-free. |
+| `file-proposed-issues.sh` | Commander (explicit `--execute`) consuming `propose-improvements.sh` output | File `gh issue create` for each proposal; enforce 3/week rate limit + decline-TTL dedup via `state/proposed-issues.json` + `state/declined-proposals.json`. Dry-run by default. |
 
 Each script is self-contained bash with a `usage()` block. `jq` is the only non-standard dependency — it's already required by Hydra at install time (`INSTALL.md`).
 

@@ -1,0 +1,10 @@
+{
+  "ticket": "fixture-repo/owner#102",
+  "repo": "fixture-owner/fixture-repo",
+  "result": "stuck",
+  "stuck_pattern": "docker-compose startup timeout",
+  "tier": "T2",
+  "started_at": "2026-04-12T10:00:00Z",
+  "completed_at": "2026-04-12T10:35:00Z",
+  "subagent_type": "worker-implementation"
+}

@@ -1,0 +1,28 @@
+{
+  "citations": {
+    "learnings-CLI.md#npm install strips peer markers": {
+      "count": 6,
+      "last_cited": "2026-04-16",
+      "tickets": ["#50", "#61", "#63", "#64", "#70", "#71"],
+      "promotion_threshold_reached": true
+    },
+    "learnings-CLI.md#vitest needs postcss stub": {
+      "count": 5,
+      "last_cited": "2026-04-15",
+      "tickets": ["#55", "#56", "#57", "#58", "#60"],
+      "promotion_threshold_reached": true
+    },
+    "learnings-CLI.md#docker compose wait for redis ping": {
+      "count": 4,
+      "last_cited": "2026-04-14",
+      "tickets": ["#48", "#49", "#52", "#59"],
+      "promotion_threshold_reached": true
+    },
+    "learnings-CLI.md#typecheck baseline is 154 errors": {
+      "count": 2,
+      "last_cited": "2026-04-16",
+      "tickets": ["#72", "#73"],
+      "promotion_threshold_reached": false
+    }
+  }
+}

@@ -186,6 +186,45 @@ These rules govern `worker-conflict-resolver` (and any future automation that me
 - **Answer:** STOP immediately. Do NOT `git add` the conflict markers. Do NOT commit. Emit a `QUESTION:` block with: which PRs, which file and line range, both versions verbatim (short excerpts), your best guess + why, and three options (take A / take B / needs human). Commander either answers from memory or escalates to the supervisor agent. Under no circumstances pick silently — that's how data gets lost.
 - **Source:** ticket #7, spec `docs/specs/2026-04-16-worker-conflict-resolver.md`
 
+## Self-improvement proposals
+
+Commander files its own tickets by running `scripts/propose-improvements.sh` against `logs/`, `state/memory-citations.json`, `memory/escalation-faq.md`, and `memory/retros/`. See `docs/specs/2026-04-16-self-improvement-cycle.md` for full details; the Q+As below are what gets asked in practice.
+
+### What triggers an auto-proposed issue vs what just gets noted in a retro?
+
+- **Context:** worker or operator wonders why commander filed (or didn't file) an issue from a pattern they saw.
+- **Answer:** the triggers are explicit and threshold-gated. Each requires ≥3 occurrences and ≥2 distinct tickets (matches memory promotion). Current rules:
+  1. Same worker-stuck pattern on same repo 3+ times → "[auto-proposed] Fix root cause of X in repo Y"
+  2. Memory entry cited 5+ times → "[auto-proposed] Promote <entry> to skill"
+  3. Escalation-FAQ theme surfaces 3+ times → "[auto-proposed] Add repo-native skill for X pattern"
+  4. Pattern recurring across 2+ retros → "[auto-proposed] Investigate recurring retro pattern: X"
+  Anything below threshold gets noted in the next retro's `## Stuck` / `## Proposed edits` but does NOT become an issue.
+- **Source:** ticket #9 spec, 2026-04-16
+
+### How does the 3/week rate limit work?
+
+- **Context:** operator wonders why commander stopped filing after a few issues, or wants to dial the throttle.
+- **Answer:** `scripts/file-proposed-issues.sh` counts filings in `state/proposed-issues.json` where `filed_at` falls inside the last 7 days (rolling window). If that count is ≥3, the script refuses to file anything this run and returns `status: "rate-limited"`. Reset happens naturally as filings age out. The limit is global across all repos. Override for testing: `--max-per-week <N>` (not for production use).
+- **Source:** ticket #9 spec, 2026-04-16
+
+### How does the operator decline an auto-proposed issue?
+
+- **Context:** commander filed an issue the operator doesn't want to act on AND doesn't want commander to re-propose the same pattern next week.
+- **Answer:** add the `commander-declined` label to the issue. Commander's next propose-improvements pass reads open issues with that label, computes their pattern hash from the body, and appends an entry to `state/declined-proposals.json`. Subsequent runs of `file-proposed-issues.sh` skip that pattern for 90 days. Closing the issue is optional — the label is the signal. (Declining the same pattern repeatedly is a hint: commander's detection rules may be too loose. File a separate ticket to tighten them.)
+- **Source:** ticket #9 spec, 2026-04-16
+
+### Why does `scripts/file-proposed-issues.sh` not do anything when I run it?
+
+- **Context:** operator pipes proposer output into the filer and nothing gets filed.
+- **Answer:** the filer defaults to `--dry-run`. This matches `scripts/memory-mount.sh` — destructive operations are opt-in. Pass `--execute` to actually call `gh issue create`. The dry-run output shows what WOULD be filed, plus the final JSON summary with `status: "dry-run"`. If you pass `--execute` and still see nothing filed, either (a) all proposals are rate-limited, (b) all pattern hashes are in `state/declined-proposals.json` within the 90-day TTL, or (c) all pattern hashes are already in `state/proposed-issues.json` from a prior run.
+- **Source:** ticket #9 spec, 2026-04-16
+
+### How does pattern_hash stay stable across runs?
+
+- **Context:** "If the pattern hash changes between runs, dedup breaks and the same pattern gets re-filed."
+- **Answer:** `pattern_hash = sha1(source + "|" + repo + "|" + normalized_title)`. Normalization lowercases, strips digits, collapses whitespace. So "3 stuck runs on repo/42" and "5 stuck runs on repo/53" hash to the same value as long as source + repo are identical. The self-test case `self-improvement-proposes-from-fixtures` asserts hash stability. If you see a pattern re-file that shouldn't, that's a bug — open an issue rather than silencing with a manual decline.
+- **Source:** ticket #9 spec, 2026-04-16
+
 ## When supervisor must be looped in (no heuristic works)
 
 Commander escalates to `supervisor.resolve_question` (see `docs/mcp-tool-contract.md`) whenever the heuristics above don't match. In the legacy direct-drive path (`./hydra` in a terminal, no `upstream_supervisor` configured), the same escalation surfaces as the chat-prompt surfacing in `CLAUDE.md` and the operator answers live. The supervisor agent decides from there whether to answer autonomously or loop its own human — Hydra does not dictate that decision.

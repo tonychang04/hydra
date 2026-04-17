@@ -1,0 +1,19 @@
+{
+  "_description": "Template for state/declined-proposals.json (real file is gitignored — operator-specific). Populated when the operator labels any commander-proposed issue with commander-declined. The next run of scripts/file-proposed-issues.sh reads this file and suppresses any matching pattern_hash for DECLINE_TTL_DAYS (default 90).",
+  "_how_to_decline": "Operator adds the 'commander-declined' label to a commander-proposed issue. A follow-up commander pass (or a manual sync) reads open issues with that label, computes pattern_hash from their body, and appends an entry here. Closing the issue is optional — the label is the signal.",
+  "_schema": {
+    "declined": "array of {pattern_hash, declined_at, reason?, issue_url?}",
+    "pattern_hash": "stable sha1(source|repo|normalized_title) — same value scripts/propose-improvements.sh emits",
+    "declined_at": "ISO 8601 UTC timestamp — used to compute TTL expiry",
+    "reason": "optional free-text from the operator (useful in retros)",
+    "issue_url": "optional link back to the issue the operator labeled"
+  },
+  "declined": [
+    {
+      "pattern_hash": "0000000000000000000000000000000000000000",
+      "declined_at": "2026-04-16T00:00:00Z",
+      "reason": "example entry — not a real declined pattern",
+      "issue_url": "https://github.com/tonychang04/hydra/issues/0"
+    }
+  ]
+}

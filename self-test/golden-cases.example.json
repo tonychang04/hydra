@@ -345,6 +345,95 @@
       "last_result": null
     },
     {
+      "id": "self-improvement-proposes-from-fixtures",
+      "_description": "Script-only self-test for scripts/propose-improvements.sh + scripts/file-proposed-issues.sh (spec: docs/specs/2026-04-16-self-improvement-cycle.md, ticket #9). Verifies: (1) both scripts are bash -n clean, (2) threshold logic — logs-3-stuck fixture produces a stuck-pattern proposal, logs-2-stuck produces none, (3) citation hotspots in memory-citations-hot.json produce promotion proposals for entries with count>=5, (4) pattern_hash is stable across runs (dedup works), (5) file-proposed-issues.sh rate-limit kicks in when proposed-issues.json already has 3 filings in the last 7 days, (6) file-proposed-issues.sh skips patterns that appear in declined-proposals.json. Runs locally; no gh calls (dry-run mode).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "propose-improvements.sh bash -n clean",
+          "cmd": "bash -n scripts/propose-improvements.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "file-proposed-issues.sh bash -n clean",
+          "cmd": "bash -n scripts/file-proposed-issues.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "declined-proposals.json.example is valid JSON",
+          "cmd": "jq empty state/declined-proposals.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "proposed-issues.json.example is valid JSON",
+          "cmd": "jq empty state/proposed-issues.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "expected-proposals.json fixture is valid JSON",
+          "cmd": "jq empty self-test/fixtures/self-improvement/expected-proposals.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "logs-3-stuck fixture produces a stuck-pattern proposal (threshold met)",
+          "cmd": "scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-3-stuck --citations /dev/null --faq /dev/null --retros self-test/fixtures/self-improvement/empty",
+          "expected_exit": 0,
+          "expected_stdout_jq": "[.proposals[] | select(.source == \"logs-stuck\")] | length == 1"
+        },
+        {
+          "name": "logs-2-stuck fixture produces NO stuck-pattern proposals (below threshold)",
+          "cmd": "scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-2-stuck --citations /dev/null --faq /dev/null --retros self-test/fixtures/self-improvement/empty",
+          "expected_exit": 0,
+          "expected_stdout_jq": "[.proposals[] | select(.source == \"logs-stuck\")] | length == 0"
+        },
+        {
+          "name": "memory-citations-hot fixture produces 2 promotion proposals (count>=5 only)",
+          "cmd": "scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/empty --citations self-test/fixtures/self-improvement/memory-citations-hot.json --faq /dev/null --retros self-test/fixtures/self-improvement/empty",
+          "expected_exit": 0,
+          "expected_stdout_jq": "[.proposals[] | select(.source == \"citations-hot\")] | length == 2"
+        },
+        {
+          "name": "pattern_hash is stable across runs (dedup works)",
+          "cmd": "h1=$(scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-3-stuck --citations /dev/null --faq /dev/null --retros self-test/fixtures/self-improvement/empty | jq -r '.proposals[0].pattern_hash'); h2=$(scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-3-stuck --citations /dev/null --faq /dev/null --retros self-test/fixtures/self-improvement/empty | jq -r '.proposals[0].pattern_hash'); [ \"$h1\" = \"$h2\" ] && echo STABLE",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STABLE"
+        },
+        {
+          "name": "combined-fixtures run matches committed expected-proposals.json",
+          "cmd": "diff <(scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-3-stuck --citations self-test/fixtures/self-improvement/memory-citations-hot.json --faq /dev/null --retros self-test/fixtures/self-improvement/empty) self-test/fixtures/self-improvement/expected-proposals.json && echo MATCH",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MATCH"
+        },
+        {
+          "name": "file-proposed-issues dry-run files 3 proposals when nothing blocks",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/state\" && scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-3-stuck --citations self-test/fixtures/self-improvement/memory-citations-hot.json --faq /dev/null --retros self-test/fixtures/self-improvement/empty | scripts/file-proposed-issues.sh --state-dir \"$tmp/state\" --now '2026-04-16T00:00:00Z' 2>/dev/null | jq -r '.filed_this_run | length'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "3"
+        },
+        {
+          "name": "file-proposed-issues rate-limits when 3 already filed this week",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/state\" && printf '%s' '{\"filed\":[{\"pattern_hash\":\"a\",\"filed_at\":\"2026-04-14T00:00:00Z\",\"issue_url\":\"x\",\"repo\":\"r\",\"title\":\"t\"},{\"pattern_hash\":\"b\",\"filed_at\":\"2026-04-15T00:00:00Z\",\"issue_url\":\"x\",\"repo\":\"r\",\"title\":\"t\"},{\"pattern_hash\":\"c\",\"filed_at\":\"2026-04-15T12:00:00Z\",\"issue_url\":\"x\",\"repo\":\"r\",\"title\":\"t\"}]}' > \"$tmp/state/proposed-issues.json\" && scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-3-stuck --citations /dev/null --faq /dev/null --retros self-test/fixtures/self-improvement/empty | scripts/file-proposed-issues.sh --state-dir \"$tmp/state\" --now '2026-04-16T00:00:00Z' 2>/dev/null | jq -r '.status'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "rate-limited"
+        },
+        {
+          "name": "file-proposed-issues skips a pattern that is in declined-proposals.json",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/state\" && phash=$(scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-3-stuck --citations /dev/null --faq /dev/null --retros self-test/fixtures/self-improvement/empty | jq -r '.proposals[0].pattern_hash') && jq -n --arg p \"$phash\" '{declined:[{pattern_hash:$p, declined_at:\"2026-04-15T00:00:00Z\", reason:\"test\"}]}' > \"$tmp/state/declined-proposals.json\" && scripts/propose-improvements.sh --fixture --logs-dir self-test/fixtures/self-improvement/logs-3-stuck --citations /dev/null --faq /dev/null --retros self-test/fixtures/self-improvement/empty | scripts/file-proposed-issues.sh --state-dir \"$tmp/state\" --now '2026-04-16T00:00:00Z' 2>/dev/null | jq -r '.filed_this_run | length'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "0"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "runner-meta",
       "_description": "Self-tests the self-test runner. Invokes ./self-test/run.sh against fake-golden-cases.json fixtures (self-test/fixtures/self-test-runner/) — one deliberately passing case, one deliberately failing — and asserts exit codes + error-message shape. Runs before committing changes to self-test/run.sh itself. See docs/specs/2026-04-16-self-test-runner.md.",
       "kind": "script",

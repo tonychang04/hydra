@@ -1,0 +1,20 @@
+{
+  "_description": "Template for state/proposed-issues.json (real file is gitignored — operator-specific). Written by scripts/file-proposed-issues.sh after each successful `gh issue create`. Used for rate-limit accounting (3/week) and pattern_hash dedup (don't refile a pattern already filed).",
+  "_schema": {
+    "filed": "array of {pattern_hash, issue_url, filed_at, repo, title}",
+    "pattern_hash": "stable sha1(source|repo|normalized_title) — same value scripts/propose-improvements.sh emits",
+    "filed_at": "ISO 8601 UTC timestamp — used for rate-limit window arithmetic",
+    "issue_url": "output of `gh issue create` (full URL)",
+    "repo": "owner/name format (matches proposal.repo)",
+    "title": "snapshot of the filed title (for readability; dedup is on pattern_hash)"
+  },
+  "filed": [
+    {
+      "pattern_hash": "0000000000000000000000000000000000000000",
+      "issue_url": "https://github.com/tonychang04/hydra/issues/0",
+      "filed_at": "2026-04-16T00:00:00Z",
+      "repo": "tonychang04/hydra",
+      "title": "[auto-proposed] example entry — not a real filed proposal"
+    }
+  ]
+}
