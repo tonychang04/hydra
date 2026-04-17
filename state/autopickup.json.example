@@ -1,9 +1,10 @@
 {
-  "_description": "Runtime state for scheduled autopickup. Copy to state/autopickup.json (gitignored) — setup.sh seeds it on first run, or commander writes it on first 'autopickup every N min'. See CLAUDE.md 'Scheduled autopickup' / 'Session greeting' and docs/specs/2026-04-16-scheduled-autopickup.md (+ 'default-on' extension).",
+  "_description": "Runtime state for scheduled autopickup. Copy to state/autopickup.json (gitignored) — setup.sh seeds it on first run, or commander writes it on first 'autopickup every N min'. See CLAUDE.md 'Scheduled autopickup' / 'Session greeting' and docs/specs/2026-04-16-scheduled-autopickup.md (+ 'default-on' extension + 'scheduled retro' 2026-04-17).",
   "enabled": false,
   "interval_min": 30,
   "auto_enable_on_session_start": true,
   "last_run": null,
   "last_picked_count": 0,
-  "consecutive_rate_limit_hits": 0
+  "consecutive_rate_limit_hits": 0,
+  "last_retro_run": null
 }

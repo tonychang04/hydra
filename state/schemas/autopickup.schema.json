@@ -39,6 +39,10 @@
       "type": "integer",
       "minimum": 0,
       "description": "Strike counter for the 2-strike rate-limit auto-disable rule."
+    },
+    "last_retro_run": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 local timestamp of the last scheduled or manual retro, or null if never run. Drives the Monday-09:00-local idempotency guard in the autopickup tick. See docs/specs/2026-04-17-scheduled-retro.md."
     }
   }
 }

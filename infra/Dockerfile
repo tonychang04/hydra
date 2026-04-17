@@ -101,6 +101,47 @@ RUN set -eux; \
     mkdir -p /hydra/data /hydra/state /hydra/memory /hydra/logs; \
     chown -R hydra:hydra /hydra
 
+# ---------- Optional docker-in-docker layer (opt-in) ----------
+# When built with `--build-arg ENABLE_DOCKER=true`, install Docker CE + CLI +
+# containerd + buildx + compose plugins from Docker's own apt repo (NOT the
+# Debian `docker.io` package, which lags upstream and has different daemon
+# semantics). The `hydra` user is added to the `docker` group so `docker` runs
+# without sudo.
+#
+# Default is FALSE. The default image stays smaller and privileged-mode-free.
+# Flipping this ON for cloud commander ALSO requires enabling privileged mode
+# on the Fly Machine — see `docs/phase2-vps-runbook.md` section "Enabling
+# worker docker support" for the full walkthrough + security caveats.
+#
+# Spec: docs/specs/2026-04-17-cloud-worker-docker.md (ticket #77).
+#
+# Long-term this is a bridge. The proper fix is per-worker managed sandboxes
+# (E2B / Daytona / Managed Agents) tracked under #40. DinD is Phase 2 only.
+#
+# The block is gated at image-build time, so `ENABLE_DOCKER=false` produces
+# a near-noop layer (small cache metadata, no apt invocation, no package
+# installs). Placement: AFTER the `useradd hydra` stanza so `usermod -aG
+# docker hydra` targets an existing user; BEFORE `USER hydra` so the apt
+# calls still run as root.
+ARG ENABLE_DOCKER=false
+RUN if [ "$ENABLE_DOCKER" = "true" ]; then \
+        set -eux; \
+        install -m 0755 -d /etc/apt/keyrings; \
+        curl -fsSL https://download.docker.com/linux/debian/gpg \
+            | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
+        chmod a+r /etc/apt/keyrings/docker.gpg; \
+        . /etc/os-release; \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+            > /etc/apt/sources.list.d/docker.list; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends \
+            docker-ce docker-ce-cli containerd.io \
+            docker-buildx-plugin docker-compose-plugin; \
+        rm -rf /var/lib/apt/lists/*; \
+        groupadd -f docker; \
+        usermod -aG docker hydra; \
+    fi
+
 WORKDIR /hydra
 
 # Copy the full hydra framework into the image. At runtime, /hydra/{state,memory,logs}

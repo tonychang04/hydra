@@ -120,16 +120,22 @@ Worker returns with QUESTION: block + agentId
 Commander scans memory/escalation-faq.md + learnings-<repo>.md
    ↓
    ├─ Match found  → SendMessage(agentId, answer) — worker continues, no upstream call
-   └─ No match     → call supervisor.resolve_question(...) with nearest_memory_match
+   └─ No match     → pipe envelope to scripts/hydra-supervisor-escalate.py
                      ↓
-                     supervisor returns {answer, confidence, human_involved}
-                     ↓
+                     script reads state/connectors/mcp.json:upstream_supervisor,
+                     calls supervisor.resolve_question(...), returns by exit code:
+                       exit 0 → stdout has {answer, confidence, human_involved}
+                       exit 2 → not-configured; fall through to legacy commander-stuck
+                       exit 3 → timeout; label commander-stuck
+                       exit 1 → runtime error; surface to operator (don't retry blindly)
+                     ↓ (exit 0 only)
                      SendMessage(agentId, answer) AND append Q+A to escalation-faq.md
+                     with source: "supervisor" on the citation entry
 ```
 
 Memory gets smarter over time. The supervisor gets pinged only for genuinely novel questions; when configured, the supervisor handles its own decision of whether to loop a human. Hydra doesn't know or care.
 
-**Upstream supervisor configuration** lives in `state/connectors/mcp.json:upstream_supervisor`. When `enabled=false` (default until an operator wires it up), the "no match" branch falls back to labeling the ticket `commander-stuck` and stopping retries — this is the legacy behavior. When `enabled=true`, Commander calls `supervisor.resolve_question` with timeout `upstream_supervisor.timeout_sec` (default 300). Contract and handshake: `docs/mcp-tool-contract.md` (escalation flow section) and `docs/specs/2026-04-16-mcp-agent-interface.md`.
+**Upstream supervisor configuration** lives in `state/connectors/mcp.json:upstream_supervisor`. When `enabled=false` (default until an operator wires it up), the escalate script exits 2 ("not-configured") and the "no match" branch falls back to labeling the ticket `commander-stuck` and stopping retries — this is the legacy behavior. When `enabled=true`, Commander pipes the `{worker_id, question, context, options, recommendation, nearest_memory_match}` envelope to `scripts/hydra-supervisor-escalate.py` as stdin; the script handles bearer-token auth (env var named by `auth_token_env`, default `HYDRA_SUPERVISOR_TOKEN`), enforces `upstream_supervisor.timeout_sec` (default 300), validates that `scope_granted` is exactly `["resolve_question"]`, and prints the supervisor's response on stdout. Contract and handshake: `docs/mcp-tool-contract.md` (escalation flow section), `docs/specs/2026-04-16-mcp-agent-interface.md` (envelope shape), and `docs/specs/2026-04-17-supervisor-escalate-client.md` (exit-code contract + security notes). Use `--check` for a dry-run that validates config + envelope without a network call.
 
 **Legacy direct-drive surfacing** (when the operator is live in a terminal and there's no supervisor agent configured):
 ```
@@ -291,6 +297,12 @@ For plain issues, `gh issue edit <n> --add-label <label>` is still fine (it does
    - Concurrent workers in `state/active.json` < `budget.json:phase1_subscription_caps.max_concurrent_workers`
    - Today's ticket count < `daily_ticket_cap`
    - No recent rate-limit error in `state/quota-health.json`
+1.5. **Retro due check (runs BEFORE ticket-pickup so retros aren't starved by worker contention).** Compute `now_local` in the host's local timezone (Python `datetime.now()` / `date`). If ALL of the following hold:
+   - `now_local.weekday() == Monday`
+   - `now_local.time() >= 09:00`
+   - `state/autopickup.json:last_retro_run` is `null` OR is lexicographically less than `<today>T09:00:00` (ISO-8601 local, no timezone suffix)
+
+   …then run the `retro` procedure (see "Weekly retro" section below), write `state/autopickup.json:last_retro_run = now_local.isoformat()` on completion, and — only if the operator is interactive this tick — surface a single chat line: `Auto-retro for week YYYY-WW written to memory/retros/YYYY-WW.md`. Otherwise stay silent. Idempotency: ISO-8601 local strings compare correctly lexicographically; a manual `retro` earlier in the same Monday window writes the same field, so this check no-ops for the rest of the day. DST / travel-day note: single-operator tool — retros may fire slightly early or late on transition days, and the output overwrites the same `memory/retros/YYYY-WW.md`, so the user-visible outcome is identical. Spec: `docs/specs/2026-04-17-scheduled-retro.md`.
 2. **Pick tickets** per the usual trigger in `state/repos.json` (assignee / label / linear). Skip state-labeled tickets as usual.
 3. **Classify tier** per `policy.md`. Skip T3. T2+ go through the normal commander review gate and still require human merge — autopickup never changes merge policy.
 4. **Spawn** up to `(max_concurrent_workers - current_active)` `worker-implementation` agents.
@@ -379,7 +391,8 @@ Retros compound. Last week's retro sits next to this week's so trends become leg
 1. Compute the ISO week (`YYYY-WW`). That's the filename: `memory/retros/YYYY-WW.md`. If the file already exists for this week, overwrite (a second retro run in the same week replaces the prior output — retros are cumulative for the whole week).
 2. Read inputs above. Build each section of the template.
 3. Write the full markdown to `memory/retros/YYYY-WW.md`.
-4. In chat, surface a one-paragraph summary plus `read full retro: memory/retros/YYYY-WW.md`.
+4. Write the current ISO-8601 local timestamp to `state/autopickup.json:last_retro_run` so the scheduled-retro idempotency guard (Scheduled autopickup tick step 1.5) no-ops for the rest of the current Monday window. If `state/autopickup.json` doesn't exist yet (no autopickup configured), skip this write — no harm done, the scheduled path isn't active.
+5. In chat, surface a one-paragraph summary plus `read full retro: memory/retros/YYYY-WW.md`.
 
 **Sample-size gate (don't over-fit on noise):**
 
@@ -393,7 +406,7 @@ Retros compound. Last week's retro sits next to this week's so trends become leg
 - Not per-repo. One global retro is enough until multi-repo activity forces splitting.
 - Not a substitute for memory hygiene. Retro SURFACES promotion candidates; the actual `promote learnings` pass still runs on its own trigger.
 
-**Scheduled retro (when scheduled autopickup ships):** auto-run every Monday 09:00 local. Until then, `retro` is operator-invoked only.
+**Scheduled retro:** auto-runs every Monday ≥ 09:00 in the host's local timezone via the Scheduled autopickup tick (step 1.5). Idempotency: the manual and scheduled paths share `state/autopickup.json:last_retro_run`, so a retro fires at most once per Monday window. Spec: `docs/specs/2026-04-17-scheduled-retro.md`.
 
 ## Session greeting
 
