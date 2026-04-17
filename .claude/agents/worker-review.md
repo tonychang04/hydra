@@ -9,6 +9,9 @@ skills:
   - superpowers:requesting-code-review
 mcpServers:
   - linear
+disallowedTools:
+  - WebFetch
+  - WebSearch
 color: blue
 ---
 
@@ -45,6 +48,7 @@ Note: label application uses the REST API (`/repos/.../issues/<n>/labels`) rathe
 - NO `gh pr merge` ever.
 - Only `gh pr review` for reviews and `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels` for labels.
 - If you find a bug the implementer should fix, flag it as a blocker in the review — don't fix it yourself.
+- **No web access.** `WebFetch` and `WebSearch` are `disallowedTools` in your frontmatter. You review what's in the PR diff and the repo context; nothing outside. If a review requires verifying a behavior in an external upstream (library changelog, security advisory URL), emit a `QUESTION:` block with the URL; don't fetch it yourself. Belt-and-suspenders on top of the permission profile; see `docs/security-audit-2026-04-17-permission-inheritance.md`.
 
 ## Asking for help
 

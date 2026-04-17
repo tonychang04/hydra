@@ -31,6 +31,9 @@ isolation: worktree
 memory: project
 maxTurns: 50
 model: inherit
+disallowedTools:
+  - WebFetch
+  - WebSearch
 color: orange
 ---
 
@@ -63,3 +66,4 @@ Then `gh pr create --draft --label commander-review --title "docs(agent): docume
 - NEVER read real `.env*` files.
 - Always `docker compose down` cleanup at the end, even on error.
 - If you cannot find a working procedure after reasonable effort, return with `QUESTION:` and a clear list of what you tried.
+- **No web access.** `WebFetch` and `WebSearch` are `disallowedTools` in your frontmatter. Test procedure lives in the repo (README, package.json scripts, Makefile, docker-compose). If genuinely missing, document what you found and `QUESTION:` the operator; don't search the web for an upstream project's docs. Belt-and-suspenders on top of the permission profile; see `docs/security-audit-2026-04-17-permission-inheritance.md`.
