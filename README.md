@@ -296,6 +296,7 @@ Daily operations and repo management are exposed as `./hydra <subcommand>` calls
 | `./hydra pause [--reason <text>]` | Create the `PAUSE` file. Commander refuses to spawn new workers while present. |
 | `./hydra resume` | Remove the `PAUSE` file. |
 | `./hydra issue <url-or-owner/repo/num>` | Queue a specific GitHub issue for the next autopickup tick. Does NOT spawn a worker — adds to `state/pending-dispatches.json` (gitignored). |
+| `./hydra activity [--json]` | Text-based observability — last 24h of ticket completions, active + stuck workers, top memory citations, retro counts. `--json` for agent parsing. See **What Hydra is doing** below. |
 
 All subcommands work from any terminal without Commander chat.
 
@@ -304,6 +305,47 @@ All subcommands work from any terminal without Commander chat.
 - You want to **contribute to Hydra itself** → **[DEVELOPING.md](DEVELOPING.md)**
 
 No labels required up-front. Commander creates the handful of state labels it uses (`commander-working`, `commander-review`, `commander-stuck`, etc.) lazily on first use.
+
+## What Hydra is doing
+
+`./hydra activity` is the text-based observability layer. It answers "what has Hydra been doing?" without launching a Claude session and without a web UI. Runs read-only over `logs/*.json`, `state/active.json`, `state/memory-citations.json`, and `memory/retros/`. Spec: [`docs/specs/2026-04-17-hydra-activity.md`](docs/specs/2026-04-17-hydra-activity.md).
+
+```
+$ ./hydra activity
+▸ Hydra activity — last 24h
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Completed (last 24h): 3
+  TICKET               REPO      TIER  RESULT  PR          MIN
+  owner/repo#103       repoB     T2    stuck   —           8
+  owner/repo#102       repoA     T2    merged  repoA#502   23
+  owner/repo#101       repoA     T1    merged  repoA#501   12
+
+Active right now: 1
+  ID            TICKET            TIER  STATUS    AGE
+  w-7f3a        owner/repo#120    T1    running   4m
+
+Stuck (paused-on-question or failed): 1
+  TICKET           REPO      STATUS              REASON
+  owner/repo#121   repoB     paused-on-question  —
+
+Memory citations: top 5 of last 7d
+  COUNT  ENTRY
+  7      learnings-repoA.md#npm install strips peer markers
+  3      learnings-repoA.md#baseline typecheck trick
+
+Retros on disk: 2 (latest: memory/retros/2026-16.md)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+For agent parsing, `./hydra activity --json` emits `{generated_at, window_hours, completed[], active[], stuck[], citations_top[], retros}`. Safe to chain into `jq` pipelines, Slack posts, or Commander auto-surfacing.
+
+Three observability layers, picked based on question:
+
+| Question | Command |
+|---|---|
+| "What's happening right now?" | `./hydra status` — scalar snapshot (counts + pause + autopickup) |
+| "What has Hydra been doing recently?" | `./hydra activity` — 24h history + live snapshot |
+| "How did the week go?" | `retro` (Commander chat) — weekly synthesis into `memory/retros/` |
 
 ## How tickets reach the commander
 

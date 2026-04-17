@@ -1,0 +1,9 @@
+{
+  "ticket": "fixture-org/repoA#101",
+  "repo": "fixture-org/repoA",
+  "tier": "T1",
+  "result": "merged",
+  "pr_url": "https://github.com/fixture-org/repoA/pull/501",
+  "wall_clock_minutes": 12,
+  "subagent_type": "worker-implementation"
+}

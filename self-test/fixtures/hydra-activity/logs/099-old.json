@@ -1,0 +1,10 @@
+{
+  "ticket": "fixture-org/repoA#99",
+  "repo": "fixture-org/repoA",
+  "tier": "T1",
+  "result": "merged",
+  "pr_url": "https://github.com/fixture-org/repoA/pull/499",
+  "wall_clock_minutes": 4,
+  "subagent_type": "worker-implementation",
+  "_fixture_note": "Must be filtered out of the 24h window (setup touches mtime to 3 days ago)."
+}

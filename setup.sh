@@ -117,6 +117,11 @@ else
 #   ./hydra pause [--reason <text>]          Toggle PAUSE on.
 #   ./hydra resume                           Toggle PAUSE off.
 #   ./hydra issue <url-or-owner/repo/num>    Queue a specific issue for next tick.
+#   ./hydra activity [--json]                Text-based observability: last 24h
+#                                            of log activity + live worker
+#                                            snapshot + top memory citations
+#                                            (spec: docs/specs/2026-04-17-hydra-activity.md,
+#                                            ticket #19).
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -159,6 +164,7 @@ case "${1:-}" in
   pause)        shift; hydra_exec_helper scripts/hydra-pause.sh "$@" ;;
   resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
+  activity)     shift; hydra_exec_helper scripts/hydra-activity.sh "$@" ;;
   mcp)
     shift
     case "${1:-}" in

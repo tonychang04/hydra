@@ -1,0 +1,10 @@
+{
+  "ticket": "fixture-org/repoB#103",
+  "repo": "fixture-org/repoB",
+  "tier": "T2",
+  "result": "stuck",
+  "pr_url": null,
+  "wall_clock_minutes": 8,
+  "subagent_type": "worker-implementation",
+  "surprises": "docker-compose up timed out after 120s"
+}
