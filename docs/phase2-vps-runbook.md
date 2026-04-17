@@ -312,6 +312,89 @@ Public repos clone without `GITHUB_TOKEN`; that's how the self-test case runs in
 
 These are documented in the spec so future tickets inherit the context.
 
+## Wiring up an external MCP agent (OpenClaw, Discord bridge, your own Claude)
+
+Once the commander is live with `./hydra mcp serve` booted by `infra/entrypoint.sh`, the MCP surface refuses every request until at least one authorized agent has a real bearer-token hash in `state/connectors/mcp.json`. The `./hydra mcp register-agent` command is the one-step recipe. Spec: [`docs/specs/2026-04-17-mcp-register-agent.md`](specs/2026-04-17-mcp-register-agent.md) · Ticket: [#84](https://github.com/tonychang04/hydra/issues/84).
+
+### 3-step recipe
+
+**1. Generate a token for the client agent (run on the commander):**
+
+```bash
+fly ssh console --app <app> -C './hydra mcp register-agent openclaw'
+```
+
+You'll see something like:
+
+```
+HQxVndgBkWFivV0SsT0AmWrYd6Z0bvzIg3P8+sEH0tI=
+
+⚠ This is the only time this token will be shown.
+  Copy it into the consuming agent's config NOW.
+
+  registered agent-id=openclaw
+  scope=[read] — widen by editing the config if needed
+  Hash stored in /hydra/data/state/connectors/mcp.json
+✓ done
+```
+
+The first line (before the blank) is the raw token — that's stdout. Everything else is stderr (the warning banner). Copy the token immediately; re-running `register-agent` without `--rotate` won't reveal it again (by design — only the SHA-256 hash is persisted).
+
+The new entry is scoped `["read"]` by default. To grant `spawn`, `merge`, or `admin` scope, edit `state/connectors/mcp.json` on the commander volume by hand:
+
+```bash
+fly ssh console --app <app>
+# inside the VM:
+vi /hydra/data/state/connectors/mcp.json
+# add "spawn" to the entry's scope array, save, exit
+# no restart needed — the server reads the config on each request
+```
+
+**2. Paste the token into the consuming agent's config.**
+
+The exact place depends on the client. For OpenClaw, Hermes, Codex, Cursor, or any HTTP-speaking agent, it goes in whatever env var or config field that agent reads for its MCP bearer — typically `HYDRA_MCP_TOKEN` or similar. The consumer presents it in an `Authorization: Bearer <token>` header on every JSON-RPC POST to `https://<app>.fly.dev/mcp` (or the local equivalent if you haven't put TLS in front yet — see `state/connectors/mcp.json:server.bind_address` for the caveat about never binding `0.0.0.0` without a reverse proxy).
+
+**3. Verify the handshake:**
+
+```bash
+curl -s -X POST "https://<app>.fly.dev/mcp" \
+  -H "Authorization: Bearer <token-from-step-1>" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | jq '.result.tools | length'
+# → 13
+```
+
+A `401` means a bad token; a `403` means the token is valid but the scope doesn't cover the tool being called. The commander writes one audit line per call to `logs/mcp-audit.jsonl` — tail it to see who's calling what.
+
+### Rotating a token
+
+```bash
+fly ssh console --app <app> -C './hydra mcp register-agent openclaw --rotate'
+```
+
+`--rotate` replaces `token_hash` only — the entry's `id` and `scope` are preserved. The old token becomes invalid the moment the `mv` completes (atomic config swap). Paste the new token into the consumer's config; no commander restart needed.
+
+### De-authorizing an agent
+
+No dedicated CLI for this (intentionally — deletion is less common than rotation and the file is small). Edit `state/connectors/mcp.json` on the commander and remove the entry from `authorized_agents`:
+
+```bash
+fly ssh console --app <app>
+vi /hydra/data/state/connectors/mcp.json
+# remove the {"id": "openclaw", …} object from authorized_agents[]
+# save, exit
+```
+
+The next request from that agent returns `401`. No restart needed.
+
+### What `register-agent` does NOT do
+
+- **Does not push to `fly secrets`.** Follow-up work: a `--fly-secret NAME` flag. For now, copy the token manually. Non-goal called out in the spec.
+- **Does not edit `scope`.** The CLI only creates (`["read"]` default) or rotates (`token_hash` only). Scope changes are always hand-edits — deliberately, because widening to `"merge"` or `"admin"` warrants a moment of thought.
+- **Does not reveal old tokens.** Re-running without `--rotate` on an existing id returns exit 1. The only way to get back a usable token is to rotate.
+- **Does not work interactively.** There's no prompt for the agent-id or a paste flow — it's non-interactive on purpose (so a token never sits in a readline buffer that could end up in `.bash_history` on some shells).
+
 ## Setting up Slack
 
 The Slack bot (`bin/hydra-slack-bot`) gives the operator a phone-friendly DM surface for Commander. It's a thin bridge: the operator DMs `status` or `pickup 2` and gets a reply; Commander DMs the operator when a PR is ready for human merge (label `commander-review-clean`). Spec: [`docs/specs/2026-04-17-slack-bot.md`](specs/2026-04-17-slack-bot.md).

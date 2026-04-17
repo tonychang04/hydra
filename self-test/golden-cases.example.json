@@ -1574,6 +1574,47 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "mcp-register-agent",
+      "_description": "Script-only self-test for scripts/hydra-mcp-register-agent.sh — the CLI that generates MCP bearer tokens, stores their SHA-256 hash in state/connectors/mcp.json, and prints the raw token once (spec: docs/specs/2026-04-17-mcp-register-agent.md, ticket #84). Security-adjacent: asserts (a) exit 0 on first-use, (b) stdout token is 43+ chars base64, (c) SHA-256 of the printed token matches the hash in the written config, (d) --rotate produces a different token, preserves scope, keeps a single entry, (e) a non-rotate duplicate call exits 1 with NO config writes (atomicity invariant), plus config-missing auto-bootstrap from mcp.json.example. Fixture lives at self-test/fixtures/mcp-register-agent/run.sh — pattern matches mcp-server-starts. Runs locally in <1s; tmpdir-isolated (HYDRA_MCP_REGISTER_CONFIG points at the tmp path; the real state/connectors/mcp.json is never touched). Commander runs this before committing changes to scripts/hydra-mcp-register-agent.sh or the launcher dispatch in setup.sh.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-mcp-register-agent.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-mcp-register-agent.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-mcp-register-agent.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-mcp-register-agent.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra mcp register-agent"
+        },
+        {
+          "name": "missing <agent-id> is a usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/hydra-mcp-register-agent.sh 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo MISSING_ID_EXIT_2",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MISSING_ID_EXIT_2"
+        },
+        {
+          "name": "integration smoke (token generation, SHA-256 match, --rotate, duplicate-refusal, bootstrap)",
+          "cmd": "self-test/fixtures/mcp-register-agent/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "dispatch wired: setup.sh launcher heredoc routes `./hydra mcp register-agent` to the new script",
+          "cmd": "grep -q 'register-agent) shift; hydra_exec_helper scripts/hydra-mcp-register-agent.sh' setup.sh && echo DISPATCH_WIRED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DISPATCH_WIRED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
