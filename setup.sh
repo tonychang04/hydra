@@ -370,6 +370,17 @@ cat > "$LAUNCHER_TMP" <<'EOF'
 #                                            then runs a live sanity check.
 #                                            (spec: docs/specs/2026-04-17-pair-agent.md,
 #                                            ticket #124).
+#   ./hydra connect <linear|slack|supervisor> [--dry-run|--list|--status|--non-interactive]
+#                                            Interactive wizard for wiring
+#                                            connectors. Installs MCP server
+#                                            (where applicable), prompts for
+#                                            connector-specific fields, validates
+#                                            against state/schemas/, and atomic-
+#                                            writes. --list discovers supported
+#                                            connectors; --status runs a live
+#                                            health check.
+#                                            (spec: docs/specs/2026-04-17-connector-wizard.md,
+#                                            ticket #139)
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -432,6 +443,10 @@ Subcommands:
   pair-agent <agent-id> [opts] One-command setup for an MCP-speaking agent:
                                generates a bearer, prints paste-ready recipes,
                                runs a live sanity check.
+  connect <linear|slack|supervisor> [opts]
+                               Interactive wizard for wiring Linear, Slack, or
+                               the outbound MCP supervisor. Run
+                               `./hydra connect --help` for details.
   doctor [--fix|--fix-safe]    Install sanity check. --fix walks the operator
                                through each fixable issue interactively.
   mcp <serve|register-agent>   MCP server subcommands (agent-only interface).
@@ -463,6 +478,7 @@ HYDRAHELP
   activity)     shift; hydra_exec_helper scripts/hydra-activity.sh "$@" ;;
   watch)        shift; hydra_exec_helper scripts/hydra-watch.sh "$@" ;;
   pair-agent)   shift; hydra_exec_helper scripts/hydra-pair-agent.sh "$@" ;;
+  connect)      shift; hydra_exec_helper scripts/hydra-connect.sh "$@" ;;
   mcp)
     shift
     case "${1:-}" in
