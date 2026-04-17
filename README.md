@@ -325,6 +325,10 @@ Operators upgrading from an earlier install need to regenerate the launcher once
 
 No labels required up-front. Commander creates the handful of state labels it uses (`commander-working`, `commander-review`, `commander-stuck`, etc.) lazily on first use.
 
+## Connect your agent
+
+Once Commander is running, pair your Main Agent (or any MCP-speaking client) so it can call `hydra.*` tools. The one-line helper `./hydra pair-agent --editor <name> <agent-id>` mints a bearer, prints a paste-ready config block for the named client, and runs a live sanity check. Per-client recipes (Claude Code, Cursor, Zed, OpenClaw, and a generic MCP fallback) live under **[docs/connecting-your-agent/](docs/connecting-your-agent/)**. Each recipe includes the exact commands, a sanity-check step, and the three most common failure modes with fixes.
+
 ## What Hydra is doing
 
 `./hydra activity` is the text-based observability layer. It answers "what has Hydra been doing?" without launching a Claude session and without a web UI. Runs read-only over `logs/*.json`, `state/active.json`, `state/memory-citations.json`, and `memory/retros/`. Spec: [`docs/specs/2026-04-17-hydra-activity.md`](docs/specs/2026-04-17-hydra-activity.md).
