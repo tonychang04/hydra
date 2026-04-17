@@ -161,7 +161,7 @@ Skill library: `.claude/skills/` is the promotion target for #145; seed list + a
 
 ## Weekly retro (on demand + scheduled)
 
-On `retro` (or Monday ≥ 09:00 local via the scheduled-autopickup tick), read the past 7 days of `logs/*.json`, `state/memory-citations.json` deltas, and recent `memory/escalation-faq.md` additions. Write `memory/retros/YYYY-WW.md` using the fixed template (Shipped / Stuck / Escalations / Citation leaderboard / Proposed edits). Proposed edits need ≥5 data points (sample-size gate). Update `state/autopickup.json:last_retro_run` for manual/scheduled idempotency. Overwrite on re-run. Chat: one-paragraph summary + pointer. Specs: `docs/specs/2026-04-16-retro-workflow.md`, `docs/specs/2026-04-17-scheduled-retro.md`.
+On `retro` (or Monday ≥ 09:00 local via the scheduled-autopickup tick), read the past 7 days of `logs/*.json`, `state/memory-citations.json` deltas, and recent `memory/escalation-faq.md` additions. Write `memory/retros/YYYY-WW.md` using the fixed template (Shipped / Stuck / Escalations / Citation leaderboard / Proposed edits). Proposed edits need ≥5 data points (sample-size gate). Update `state/autopickup.json:last_retro_run` for manual/scheduled idempotency. Overwrite on re-run. Chat: one-paragraph summary + pointer. After write, run `scripts/retro-file-proposed-edits.sh <week>` to auto-file each `## Proposed edits` bullet as a `commander-ready` issue (T3 bullets surface instead; idempotent by title). Specs: `docs/specs/2026-04-16-retro-workflow.md`, `docs/specs/2026-04-17-scheduled-retro.md`, `docs/specs/2026-04-17-retro-auto-file.md`.
 
 ## Session greeting
 
