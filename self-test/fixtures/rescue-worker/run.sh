@@ -111,4 +111,31 @@ if [[ "$ec" -ne 2 ]]; then
   exit 1
 fi
 
+# ---- 9. --rescue with .git/index.lock present → exit 1 + stale-lock message ----
+# Ticket #81: guard the race where a worker is still writing during rescue.
+# The worktree already has a clean HEAD + branch hydra/commander/45. Drop a
+# fake .git/index.lock with a dummy PID; --rescue must refuse before any
+# mutating git call and surface a rescue-specific message (not git's opaque
+# "File exists" 128). The lock file is in $tmp/.git/ since this is a plain
+# repo, not a linked worktree.
+printf '99999\n' > "$tmp/.git/index.lock"
+set +e
+err="$("$RESCUE" --rescue "$tmp" hydra/commander/45 45 --base refs/heads/main 2>&1)"
+ec=$?
+set -e
+rm -f "$tmp/.git/index.lock"
+if [[ "$ec" -ne 1 ]]; then
+  echo "FAIL: --rescue with stale index.lock should exit 1, got $ec" >&2
+  echo "stderr was: $err" >&2
+  exit 1
+fi
+if ! printf '%s' "$err" | grep -q '.git/index.lock present'; then
+  echo "FAIL: expected '.git/index.lock present' in stderr; got: $err" >&2
+  exit 1
+fi
+if ! printf '%s' "$err" | grep -q 'worker may still be writing'; then
+  echo "FAIL: expected 'worker may still be writing' in stderr; got: $err" >&2
+  exit 1
+fi
+
 echo "PASS: scripts/rescue-worker.sh probe fixture roundtrip"

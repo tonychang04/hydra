@@ -26,11 +26,12 @@
 #
 # Exit codes:
 #   0   success (probe done, or rescue completed)
-#   1   I/O error / branch mismatch / worktree not a git repo
+#   1   I/O error / branch mismatch / worktree not a git repo / stale git lock
 #   2   usage error
 #   3   rescue conflict — rebase on main hit a conflict; commander must escalate
 #
 # Spec: docs/specs/2026-04-16-worker-timeout-watchdog.md (ticket #45)
+# Spec: docs/specs/2026-04-17-rescue-worker-index-lock.md (ticket #81)
 
 set -euo pipefail
 
@@ -180,6 +181,23 @@ remote_branch_exists() {
   git_in rev-parse --verify "$remote/$branch" >/dev/null 2>&1
 }
 
+# Ticket #81: refuse --rescue if the worker is still writing
+# (`.git/index.lock` present). Best-effort TOCTOU guard — narrows but does
+# not eliminate the race. Probe mode does not call this (probe is read-only).
+# Spec: docs/specs/2026-04-17-rescue-worker-index-lock.md.
+ensure_no_stale_lock() {
+  local lock="$worktree/.git/index.lock"
+  if [[ -f "$lock" ]]; then
+    local pid=""
+    if [[ -r "$lock" ]]; then
+      pid="$(tr -d '[:space:]' < "$lock" 2>/dev/null || true)"
+    fi
+    [[ -z "$pid" ]] && pid="unknown"
+    echo "ERROR: .git/index.lock present at $worktree — worker may still be writing; rerun when fully exited (pid $pid)" >&2
+    exit 1
+  fi
+}
+
 # ---- mode: probe -----------------------------------------------------------
 
 if [[ "$mode" == "probe" ]]; then
@@ -218,6 +236,10 @@ if [[ "$mode" == "probe" ]]; then
 fi
 
 # ---- mode: rescue ----------------------------------------------------------
+
+# 0. Refuse if a git index.lock is already held. Best-effort guard against
+#    racing a still-writing worker (ticket #81).
+ensure_no_stale_lock
 
 # 1. Commit any uncommitted changes with a rescue-prefixed message.
 if is_dirty; then
