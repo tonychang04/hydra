@@ -456,6 +456,18 @@ check_requires() {
           return 1
         fi
         ;;
+      requires_flyctl)
+        if ! command -v fly >/dev/null 2>&1; then
+          echo "requires_flyctl: flyctl (fly) not on PATH"
+          return 1
+        fi
+        ;;
+      requires_hadolint)
+        if ! command -v hadolint >/dev/null 2>&1; then
+          echo "requires_hadolint: hadolint not on PATH"
+          return 1
+        fi
+        ;;
       *)
         # Unknown token — assume satisfied (forward-compat).
         ;;

@@ -11,6 +11,8 @@ These are **helper scripts invoked by Commander during memory lifecycle operatio
 | `validate-citations.sh` | Commander, during `compact memory` / `promote learnings` hygiene passes | Walk `state/memory-citations.json`, check every citation quote still exists in its referenced file. Flags stale references that need cleanup. |
 | `state-get.sh` / `state-put.sh` | Commander + any adapter call site | Read / write a logical state blob. Defaults to `state/<key>.json` (Phase 1). Flips to DynamoDB when `HYDRA_STATE_BACKEND=dynamodb` (Phase 2). Awscli + jq. |
 | `memory-mount.sh` | Operator, once per host | Mount an S3 bucket at `$HYDRA_EXTERNAL_MEMORY_DIR` via `mount-s3`. Prints clear install instructions if mount-s3 isn't on PATH. `--dry-run` previews the invocation. |
+| `test-cloud-config.sh` | Operator pre-push, or CI | Validate cloud-mode deployment artifacts (`infra/fly.toml`, `infra/Dockerfile`, `infra/entrypoint.sh`, `scripts/deploy-vps.sh`, `mcp/hydra-tools.json`, `state/connectors/mcp.json.example`) without deploying. Skips individual checks gracefully if flyctl/docker/shellcheck are absent. Spec: `docs/specs/2026-04-16-dual-mode-workflow.md`. |
+| `test-local-config.sh` | Operator pre-push, or CI | Validate local-mode install artifacts (`setup.sh`, `.hydra.env` template, `state/repos.json` seeding, `./hydra` launcher) by running the full install flow inside a mktemp'd tree. Never touches the live worktree. Same spec as above. |
 
 Each script is self-contained bash with a `usage()` block. `jq` is the only non-standard dependency — it's already required by Hydra at install time (`INSTALL.md`).
 

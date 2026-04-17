@@ -4,7 +4,10 @@
   "_requires_legend": {
     "requires_docker": "Skip the case if `docker info` fails (no docker daemon reachable). Used by cases that spin up localstack / test containers.",
     "requires_linear_mcp": "Skip the case if the Linear MCP server isn't installed.",
-    "requires_gh_auth": "Skip the case if `gh auth status` fails."
+    "requires_gh_auth": "Skip the case if `gh auth status` fails.",
+    "requires_claude_cli": "Skip the case if `claude` CLI isn't on PATH (setup.sh hard-fails without it).",
+    "requires_flyctl": "Skip the case if `fly` (flyctl) isn't on PATH. Used by `fly config validate` checks against infra/fly.toml.",
+    "requires_hadolint": "Skip the case if `hadolint` isn't on PATH. Used for Dockerfile linting checks."
   },
   "cases": [
     {
@@ -750,6 +753,159 @@
           "cmd": "jq -e '((.dependencies // {}) | length) == 0 and ((.devDependencies // {}) | length) == 0' examples/hello-hydra-demo/package.json >/dev/null && echo OK",
           "expected_exit": 0,
           "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "mcp-tool-contract-valid",
+      "_description": "Script-only self-test for the MCP tool contract landed in ticket #50 (spec: docs/specs/2026-04-16-mcp-agent-interface.md). Validates that mcp/hydra-tools.json is well-formed JSON, declares exactly 13 tools, and that every tool entry has all required fields (name, description, scope, input_schema, output_schema) with scope drawn from the documented set {read, spawn, merge, admin}. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "mcp/hydra-tools.json is valid JSON",
+          "cmd": "jq empty mcp/hydra-tools.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "mcp/hydra-tools.json declares 13 tools",
+          "cmd": "jq -r '.tools | length' mcp/hydra-tools.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "13"
+        },
+        {
+          "name": "every tool has name, description, scope, input_schema, output_schema",
+          "cmd": "jq -e '.tools | all(has(\"name\") and has(\"description\") and has(\"scope\") and has(\"input_schema\") and has(\"output_schema\"))' mcp/hydra-tools.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "every tool.scope is one of {read, spawn, merge, admin}",
+          "cmd": "jq -e '.tools | all(.scope == \"read\" or .scope == \"spawn\" or .scope == \"merge\" or .scope == \"admin\")' mcp/hydra-tools.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "every tool.name starts with 'hydra.'",
+          "cmd": "jq -e '.tools | all(.name | startswith(\"hydra.\"))' mcp/hydra-tools.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "mcp-config-example-valid",
+      "_description": "Script-only self-test for state/connectors/mcp.json.example (landed in ticket #50). Verifies the template is valid JSON and has the three required top-level sections: server, authorized_agents, upstream_supervisor. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "state/connectors/mcp.json.example is valid JSON",
+          "cmd": "jq empty state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "declares .server.enabled as boolean",
+          "cmd": "jq -e '.server.enabled | type == \"boolean\"' state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "declares .authorized_agents as array",
+          "cmd": "jq -e '.authorized_agents | type == \"array\"' state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "declares .upstream_supervisor object",
+          "cmd": "jq -e '.upstream_supervisor | type == \"object\"' state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": ".upstream_supervisor has enabled boolean",
+          "cmd": "jq -e '.upstream_supervisor.enabled | type == \"boolean\"' state/connectors/mcp.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "fly-toml-valid",
+      "_description": "Script-only self-test for infra/fly.toml (landed in ticket #48). Runs `fly config validate` to catch drift from Fly.io's schema before a deploy breaks. Marked requires_flyctl: SKIPs on machines where the flyctl (`fly`) CLI isn't installed — including CI runners. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "requires": ["requires_flyctl"],
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "fly config validate passes against infra/fly.toml",
+          "cmd": "fly config validate --config infra/fly.toml 2>&1 && echo VALIDATED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "VALIDATED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "dockerfile-lintable",
+      "_description": "Script-only self-test for infra/Dockerfile (landed in ticket #48). Runs hadolint to catch common Dockerfile anti-patterns (bad ordering, missing --no-install-recommends, unpinned tags, etc). Marked requires_hadolint: SKIPs on machines where hadolint isn't installed. `docker build --check` was considered as a fallback but only exists in recent Docker Buildx — hadolint is the portable option. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "requires": ["requires_hadolint"],
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "hadolint passes on infra/Dockerfile",
+          "cmd": "hadolint infra/Dockerfile && echo LINTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "LINTED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "entrypoint-idempotent",
+      "_description": "Script-only self-test for infra/entrypoint.sh (landed in ticket #48). Verifies (1) syntax clean, (2) --help prints usage, (3) entrypoint fails loudly when neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set. Uses `env -i` to wipe the host's environment so inherited tokens don't mask the guard. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "entrypoint.sh bash -n clean",
+          "cmd": "bash -n infra/entrypoint.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "entrypoint.sh --help prints usage",
+          "cmd": "NO_COLOR=1 infra/entrypoint.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: entrypoint.sh"
+        },
+        {
+          "name": "entrypoint.sh fails loud when no auth env is set",
+          "cmd": "env -i HOME=\"$HOME\" PATH=\"$PATH\" bash infra/entrypoint.sh 2>&1; ec=$?; [ \"$ec\" -ne 0 ] && echo FAILED_LOUD",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FAILED_LOUD"
+        },
+        {
+          "name": "entrypoint.sh no-auth error message names CLAUDE_CODE_OAUTH_TOKEN",
+          "cmd": "env -i HOME=\"$HOME\" PATH=\"$PATH\" bash infra/entrypoint.sh 2>&1 | grep -F 'CLAUDE_CODE_OAUTH_TOKEN'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CLAUDE_CODE_OAUTH_TOKEN"
         }
       ],
       "last_run": null,
