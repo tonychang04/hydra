@@ -212,6 +212,47 @@
       "last_result": null
     },
     {
+      "id": "hydra-doctor-runs-clean",
+      "_description": "Script-only self-test for scripts/hydra-doctor.sh. Exercises the Scripts category in isolation — deterministic, doesn't depend on external state, so it's safe to run in any Hydra worktree. Also asserts --help prints usage. Commander runs this before committing changes to scripts/hydra-doctor.sh. Spec: docs/specs/2026-04-16-hydra-doctor.md (ticket #36).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "hydra-doctor.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-doctor.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-doctor.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-doctor.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: scripts/hydra-doctor.sh"
+        },
+        {
+          "name": "hydra-doctor.sh --category=scripts passes on clean worktree",
+          "cmd": "NO_COLOR=1 scripts/hydra-doctor.sh --category=scripts",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passed"
+        },
+        {
+          "name": "hydra-doctor.sh --category=scripts output includes Summary line",
+          "cmd": "NO_COLOR=1 scripts/hydra-doctor.sh --category=scripts | grep -F 'Summary:'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Summary:"
+        },
+        {
+          "name": "hydra-doctor.sh invalid --category returns usage error",
+          "cmd": "NO_COLOR=1 scripts/hydra-doctor.sh --category=bogus 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo USAGE_ERR",
+          "expected_exit": 0,
+          "expected_stdout_contains": "USAGE_ERR"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "linear-mcp-contract",
       "_description": "Script-only self-test: exercises scripts/linear-poll.sh against the mock Linear MCP response under self-test/fixtures/linear/. Runs locally; no Linear MCP or credentials required. Commander runs this before committing changes to scripts/linear-poll.sh, state/linear.example.json, or docs/linear-tool-contract.md. The fixture pins the assumed Linear MCP response shape — if an operator validates that shape against their real Linear MCP install and it differs, the fixture AND the tool contract doc must be updated together (same PR).",
       "kind": "script",

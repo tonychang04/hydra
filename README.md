@@ -189,6 +189,10 @@ cd hydra
 
 Full install reference (prereqs, troubleshooting, updating, uninstall): **[INSTALL.md](INSTALL.md)**
 
+### Verify install
+
+After install, run `./hydra doctor` to verify your setup. All ✓'s means you're ready to pick up tickets. It runs a battery of non-destructive checks across environment, config, runtime state, memory, and scripts, prints per-check pass/fail, and exits non-zero if any check fails. Pass `--verbose` for raw command output or `--fix-safe` to attempt safe auto-remediations (chmod +x, mkdir -p).
+
 **Two paths from here:**
 - You want to **use Hydra on your own repos** → **[USING.md](USING.md)**
 - You want to **contribute to Hydra itself** → **[DEVELOPING.md](DEVELOPING.md)**
