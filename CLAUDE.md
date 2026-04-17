@@ -223,6 +223,7 @@ Workers sometimes hit a `Stream idle timeout — partial response received` arou
 | `compact memory` / `promote learnings` / `archive stale` | Run memory hygiene on demand |
 | `retro` | Produce a weekly retro from `logs/*.json`, `state/memory-citations.json`, and recent additions to `memory/escalation-faq.md`. Write output to `memory/retros/YYYY-WW.md`; surface a one-paragraph summary in chat. See the "Weekly retro" section below. |
 | `self-test` / `self-test <case-id>` / `self-test --parallel` | Run regression harness against golden closed PRs in `self-test/golden-cases.json`. Use before committing changes to your own CLAUDE.md, worker subagents, or policy. See `self-test/README.md`. |
+| `audit` | Spawn `worker-auditor` to scan the codebase for drift between CLAUDE.md / framework docs and actual behavior. Files up to 3 GitHub issues labeled `commander-ready` + `commander-auto-filed`, auto-tiered per `policy.md`. See `docs/specs/2026-04-17-worker-auditor-subagent.md` and `.claude/agents/worker-auditor.md`. |
 
 ## Safety rules (hard)
 
