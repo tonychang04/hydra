@@ -35,12 +35,14 @@ Everything else — source, tests, configs, CI, even trivial typo fixes — goes
 
 ## Step 0 — Orient (before touching anything)
 
-Read, in this order:
+**Memory Brief (prepended by Commander):** if your prompt begins with a `# Memory Brief` H1, Commander has preloaded the top learnings for this repo + cross-repo patterns + scoped escalation-faq hits + the latest retro's citation leaderboard. Read it FIRST — it's ≤ 2000 chars, tightly scoped, and the entries you use should be cited back via `MEMORY_CITED: learnings-<repo>.md#"<quote>"` markers the same way you would if you'd discovered them yourself. The brief may be empty on a fresh repo; that's not an error, fall through to the full read below. Spec: `docs/specs/2026-04-17-memory-preloading.md`.
+
+Then, in this order:
 1. `CLAUDE.md` at the worktree root (if present) — repo coding rules
 2. `AGENTS.md` at the worktree root (if present) — repo agent instructions
 3. `.claude/skills/*` in the worktree (if present) — repo-specific skills
 4. `README.md` — build + test commands
-5. `$COMMANDER_ROOT/memory/learnings-<repo>.md` — cross-ticket learnings
+5. `$COMMANDER_ROOT/memory/learnings-<repo>.md` — cross-ticket learnings (full file; the brief is a curated excerpt)
 6. `$COMMANDER_ROOT/memory/escalation-faq.md` — recurring answers
 
 ## Spec-driven (non-negotiable for non-trivial tickets)
