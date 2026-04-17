@@ -160,11 +160,46 @@ If your tickets live in Linear instead of GitHub Issues:
    ```
    claude mcp add linear
    ```
-2. Copy `state/linear.example.json` → `state/linear.json` and fill in team ID(s) + the state/label you want as the trigger
+2. Copy `state/linear.example.json` → `state/linear.json` and fill in team ID(s) + the state/label you want as the trigger (full field reference in [INSTALL.md §Linear](INSTALL.md#optional-linear))
 3. In `state/repos.json`, set `"ticket_trigger": "linear"` per repo
 4. Launch Commander. It will poll Linear via MCP alongside GitHub.
 
-Linear workers post updates back to the issue via the same MCP tool. Full parity with the GitHub flow (assignee trigger / state trigger, comments on updates, state changes on PR open/merge).
+### What differs from the GitHub flow
+
+| Step | GitHub flow | Linear flow |
+|---|---|---|
+| Trigger | `assignee` (ticket assigned to you) or `label` (`commander-ready` on the issue) | `assignee` / `state` (e.g. `Ready for Hydra`) / `label` — configured per Linear team in `state/linear.json:teams[].trigger` |
+| Pickup signal | `gh issue list --assignee @me` | `linear_list_issues` via the Linear MCP server (see `docs/linear-tool-contract.md` for the exact tool contract) |
+| State lock | Labels (`commander-working`) | Linear state transition — by default `Todo` → `In Progress` on pickup (configurable in `state_transitions.on_pickup`) |
+| PR open signal back | `gh issue edit --add-label commander-review` | Linear state → `In Review` **and** a comment on the Linear issue linking the GitHub PR |
+| PR merged signal back | GitHub closes the linked issue automatically (if `Closes #N` in PR body) | Linear state → `Done` **and** a comment "PR merged." posted on the Linear issue |
+| Stuck signal | `commander-stuck` label on the GitHub issue | Linear state → `Blocked` **and** a comment with the stuck reason |
+
+Hydra always opens PRs in the GitHub repo mapped to the Linear team (`state/linear.json:teams[].repo_mapping`). Linear issues don't host code — they host the ticket and the status thread.
+
+### What gets posted back to the Linear issue
+
+Governed by `state/linear.json:comment_on`:
+
+- `worker_started: true` → comment when worker spawns ("Hydra worker started. Branch: ...")
+- `pr_opened: true` → comment with the draft PR URL when the worker finishes
+- `pr_merged: true` → comment "PR merged." when the operator merges
+- `worker_stuck: true` → comment with the stuck reason + last error excerpt
+- `question_asked: true` → comment when a worker hits a `QUESTION:` block and pauses
+
+All flippable independently — set any of these to `false` if you want silent behavior for that phase.
+
+### Validating your Linear install
+
+See `docs/linear-tool-contract.md` for the exact tool surface Hydra calls (`linear_list_issues`, `linear_get_issue`, `linear_add_comment`, `linear_update_issue`) and a checklist you should walk through once per workspace before trusting the Linear path on production tickets. Hydra's assumptions about tool names may differ from your actual Linear MCP server — if they do, update the contract doc first, then retarget the scripts via `HYDRA_LINEAR_TOOL_LIST` env vars.
+
+### Fixture-mode smoke test (no Linear needed)
+
+```bash
+scripts/linear-poll.sh --fixture self-test/fixtures/linear/mock-list-issues-response.json
+```
+
+Returns three normalized issues. Useful for sanity-checking `jq` is present and the script parses responses before hitting real Linear.
 
 ## Phase-2 end state (what this turns into)
 

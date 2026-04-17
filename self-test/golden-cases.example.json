@@ -207,6 +207,59 @@
       "last_result": null
     },
     {
+      "id": "linear-mcp-contract",
+      "_description": "Script-only self-test: exercises scripts/linear-poll.sh against the mock Linear MCP response under self-test/fixtures/linear/. Runs locally; no Linear MCP or credentials required. Commander runs this before committing changes to scripts/linear-poll.sh, state/linear.example.json, or docs/linear-tool-contract.md. The fixture pins the assumed Linear MCP response shape — if an operator validates that shape against their real Linear MCP install and it differs, the fixture AND the tool contract doc must be updated together (same PR).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "linear-poll.sh bash -n clean",
+          "cmd": "bash -n scripts/linear-poll.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "linear-poll.sh --fixture parses mock response",
+          "cmd": "bash self-test/fixtures/linear/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK: linear-poll.sh --fixture parses mock response correctly"
+        },
+        {
+          "name": "linear-poll.sh --fixture emits count=3 on mock",
+          "cmd": "scripts/linear-poll.sh --fixture self-test/fixtures/linear/mock-list-issues-response.json | jq -r .count",
+          "expected_exit": 0,
+          "expected_stdout_contains": "3"
+        },
+        {
+          "name": "state/linear.example.json is valid JSON",
+          "cmd": "jq empty state/linear.example.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "state/linear.example.json declares rate_limit_per_hour",
+          "cmd": "jq -r .rate_limit_per_hour state/linear.example.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "60"
+        },
+        {
+          "name": "state/linear.example.json exposes state_name_mapping per team",
+          "cmd": "jq -r '.teams[0].state_name_mapping | keys | length' state/linear.example.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "4"
+        },
+        {
+          "name": "fixture + expected-trigger-filter are valid JSON",
+          "cmd": "jq empty self-test/fixtures/linear/mock-list-issues-response.json self-test/fixtures/linear/expected-trigger-filter.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "memory-validators",
       "_description": "Script-only self-test: exercises scripts/parse-citations.sh, scripts/validate-learning-entry.sh, and scripts/validate-citations.sh against fixtures under self-test/fixtures/memory-validator/. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to any of those scripts or the memory schema.",
       "kind": "script",

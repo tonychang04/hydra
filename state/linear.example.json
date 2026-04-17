@@ -1,6 +1,10 @@
 {
-  "_description": "Optional Linear integration config. Copy to state/linear.json and fill in. Commander uses this ONLY if at least one repo has ticket_trigger=linear. Requires the Linear MCP server to be installed at the Claude Code level (run: claude mcp add linear).",
+  "_description": "Optional Linear integration config. Copy to state/linear.json and fill in. Commander uses this ONLY if at least one repo has ticket_trigger=linear. Requires the Linear MCP server to be installed at the Claude Code level (run: claude mcp add linear). The exact Linear MCP tool names Hydra depends on are listed in docs/linear-tool-contract.md — an operator with credentials MUST validate that contract against their Linear MCP install before relying on Hydra's Linear path.",
   "enabled": false,
+  "_mcp_server_name": "linear",
+  "_mcp_server_install": "claude mcp add linear",
+  "poll_interval_override_min": null,
+  "rate_limit_per_hour": 60,
   "teams": [
     {
       "team_id": "TEAM-ID-FROM-LINEAR",
@@ -19,6 +23,13 @@
         "your-org/your-repo": {
           "default_branch": "main"
         }
+      },
+      "state_name_mapping": {
+        "_description": "Optional — if your Linear team uses non-default state names (e.g. 'Code Review' instead of 'In Review'), map the logical name (used in state_transitions below) to the actual Linear state name for this team. Hydra applies this mapping before calling the Linear MCP update-issue tool. Leave empty to use state_transitions values verbatim.",
+        "In Progress": null,
+        "In Review": null,
+        "Done": null,
+        "Blocked": null
       }
     }
   ],
@@ -30,7 +41,7 @@
     "worker_stuck": true
   },
   "state_transitions": {
-    "_description": "Which Linear state to transition the issue to at each phase. Leave empty to skip transitions.",
+    "_description": "Which Linear state to transition the issue to at each phase. Leave an individual field empty/null to skip that transition. Values are logical names; per-team overrides go in teams[].state_name_mapping.",
     "on_pickup": "In Progress",
     "on_pr_opened": "In Review",
     "on_pr_merged": "Done",
