@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/linear.schema.json",
+  "title": "Hydra Linear integration config",
+  "description": "Optional Linear integration config. Present only if at least one repo has ticket_trigger='linear'. Reads: scripts/linear-pickup-dispatch.sh (pickup path), scripts/linear-poll.sh (per-team polling), worker-implementation / worker-codex-implementation (state transitions on PR open/merge). Spec: docs/specs/2026-04-17-linear-ticket-trigger.md (ticket #140). Contract: docs/linear-tool-contract.md (ticket #5). Author coordination: shared with ticket #139 (setup wizard) — whichever lands first, the other rebases.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["enabled", "teams", "state_transitions"],
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Master switch. Commander skips Linear pickup entirely when false, regardless of per-repo ticket_trigger. Default in the example template is false — operators must explicitly opt in after walking docs/linear-tool-contract.md operator validation checklist."
+    },
+    "poll_interval_override_min": {
+      "type": ["integer", "null"],
+      "minimum": 5,
+      "maximum": 120,
+      "description": "Optional per-install override for Linear-specific polling cadence, independent of autopickup.interval_min. Null = share autopickup's interval. Reserved for future tuning; today Commander polls Linear at every autopickup tick."
+    },
+    "rate_limit_per_hour": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Per-hour cap on Linear MCP calls. Feeds the same rate-limit preflight as GitHub. Tune downward for workspaces with tight Linear API limits. Default in example template: 60."
+    },
+    "teams": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per Linear team commander polls. Each team maps to one or more GitHub repos via repo_mapping — when a Linear ticket is picked up, Hydra needs to know which local repo to worktree against.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["team_id", "trigger"],
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Linear team UUID, exactly as exposed by linear_list_issues response team.id. Required."
+          },
+          "team_name": {
+            "type": "string",
+            "description": "Human-readable label, used only in Commander chat output. Optional."
+          },
+          "trigger": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["type", "value"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["assignee", "state", "label"],
+                "description": "Which Linear filter drives pickup for this team. Matches the trigger modes for GitHub in state/repos.json (assignee / label)."
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "description": "For assignee: Linear user email (or 'me' for the token holder). For state: Linear state name (e.g. 'Todo', 'Ready for Hydra'). For label: Linear label name."
+              }
+            }
+          },
+          "repo_mapping": {
+            "type": "object",
+            "description": "Map 'owner/name' (matching state/repos.json entries) → per-repo overrides. Commander uses the first matching repo as the worktree target when a Linear ticket is picked up from this team.",
+            "additionalProperties": true
+          },
+          "state_name_mapping": {
+            "type": "object",
+            "description": "Optional per-team override. Maps Hydra's logical state names ('In Progress', 'In Review', 'Done', 'Blocked') to the actual Linear state names used by THIS team. Null or missing keys fall back to the state_transitions values verbatim.",
+            "additionalProperties": {
+              "type": ["string", "null"]
+            }
+          }
+        }
+      }
+    },
+    "comment_on": {
+      "type": "object",
+      "description": "Which lifecycle hooks post a Linear comment via linear_add_comment. All default to true in the example template. Set individually to false to suppress noise.",
+      "additionalProperties": true,
+      "properties": {
+        "worker_started": { "type": "boolean" },
+        "question_asked": { "type": "boolean" },
+        "pr_opened": { "type": "boolean" },
+        "pr_merged": { "type": "boolean" },
+        "worker_stuck": { "type": "boolean" }
+      }
+    },
+    "state_transitions": {
+      "type": "object",
+      "description": "Logical-name map from lifecycle hook to target Linear state. Per-team overrides via teams[].state_name_mapping. null or missing = skip that transition. These four names ALSO define the set of 'commander-managed states' that scripts/linear-pickup-dispatch.sh filters out during pickup (the Linear equivalent of GitHub's commander-working / commander-stuck labels).",
+      "additionalProperties": true,
+      "properties": {
+        "on_pickup": {
+          "type": ["string", "null"],
+          "description": "State when Commander spawns a worker for the issue. Default: 'In Progress'."
+        },
+        "on_pr_opened": {
+          "type": ["string", "null"],
+          "description": "State when the worker has opened a draft PR. Default: 'In Review'."
+        },
+        "on_pr_merged": {
+          "type": ["string", "null"],
+          "description": "State when the PR is merged. Default: 'Done'."
+        },
+        "on_stuck": {
+          "type": ["string", "null"],
+          "description": "State when the worker is commander-stuck. Default: 'Blocked'."
+        }
+      }
+    }
+  }
+}
