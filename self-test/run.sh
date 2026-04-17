@@ -450,6 +450,12 @@ check_requires() {
           return 1
         fi
         ;;
+      requires_claude_cli)
+        if ! command -v claude >/dev/null 2>&1; then
+          echo "requires_claude_cli: claude CLI not on PATH (case invokes setup.sh which hard-fails without it)"
+          return 1
+        fi
+        ;;
       *)
         # Unknown token — assume satisfied (forward-compat).
         ;;
