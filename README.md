@@ -204,6 +204,23 @@ After install, also install the Main Agent skill: `cp -r skills/hydra-operator ~
 
 After install, run `./hydra doctor` to verify your setup. All ✓'s means you're ready to pick up tickets. It runs a battery of non-destructive checks across environment, config, runtime state, memory, and scripts, prints per-check pass/fail, and exits non-zero if any check fails. Pass `--verbose` for raw command output or `--fix-safe` to attempt safe auto-remediations (chmod +x, mkdir -p).
 
+### CLI commands (no chat required)
+
+Daily operations and repo management are exposed as `./hydra <subcommand>` calls that never launch a Claude session. Safe for shell scripts, cron, SSH, and muscle-memory ops. Spec: [`docs/specs/2026-04-16-hydra-cli.md`](docs/specs/2026-04-16-hydra-cli.md).
+
+| Command | What it does |
+|---|---|
+| `./hydra doctor [--verbose]` | Install sanity check. Non-destructive. |
+| `./hydra status [--with-tickets]` | Read-only snapshot: active workers, today's throughput, autopickup state, PAUSE, pending queue. |
+| `./hydra add-repo <owner>/<name>` | Interactive wizard to add a repo to `state/repos.json`. Auto-suggests `local_path`, validates, atomic-writes. `--force` to overwrite an existing entry. |
+| `./hydra remove-repo <owner>/<name>` | Remove a repo entry from `state/repos.json`. |
+| `./hydra list-repos` | Table view of configured repos. |
+| `./hydra pause [--reason <text>]` | Create the `PAUSE` file. Commander refuses to spawn new workers while present. |
+| `./hydra resume` | Remove the `PAUSE` file. |
+| `./hydra issue <url-or-owner/repo/num>` | Queue a specific GitHub issue for the next autopickup tick. Does NOT spawn a worker — adds to `state/pending-dispatches.json` (gitignored). |
+
+All subcommands work from any terminal without Commander chat.
+
 **Two paths from here:**
 - You want to **use Hydra on your own repos** → **[USING.md](USING.md)**
 - You want to **contribute to Hydra itself** → **[DEVELOPING.md](DEVELOPING.md)**
