@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://hydra/state/schemas/active.schema.json",
   "title": "Hydra active workers state",
-  "description": "Runtime state of in-flight workers. Commander writes this after each spawn and on each worker completion. See CLAUDE.md 'Operating loop' step 6 (Track) — worker entries MUST carry {id, ticket, repo, tier, started_at, subagent_type, status}.",
+  "description": "Runtime state of in-flight workers. Commander writes this after each spawn and on each worker completion. See CLAUDE.md 'Operating loop' step 6 (Track) — worker entries MUST carry {id, ticket, repo, tier, started_at, subagent_type, status} and SHOULD carry {worktree, branch} (optional for back-compat with pre-2026-04-17 entries; see docs/specs/2026-04-17-active-schema-drift.md).",
   "type": "object",
   "additionalProperties": true,
   "required": ["workers"],
@@ -41,11 +41,23 @@
           },
           "subagent_type": {
             "type": "string",
-            "enum": ["worker-implementation", "worker-review", "worker-test-discovery"]
+            "description": "Which subagent type spawned this worker. Must match a file in .claude/agents/.",
+            "enum": ["worker-implementation", "worker-review", "worker-test-discovery", "worker-conflict-resolver"]
           },
           "status": {
             "type": "string",
-            "enum": ["running", "paused", "stuck", "done", "failed"]
+            "description": "Current lifecycle state. Both 'paused_on_question' (underscored) and 'paused-on-question' (hyphenated) are accepted for one release cycle — see docs/specs/2026-04-17-active-schema-drift.md for the deprecation plan; CLAUDE.md uses the hyphenated form. 'rescued' is set by the worker timeout watchdog when partial work is recovered via scripts/rescue-worker.sh.",
+            "enum": ["running", "paused_on_question", "paused-on-question", "complete", "failed", "rescued"]
+          },
+          "worktree": {
+            "type": "string",
+            "description": "Absolute path to the worker's git worktree. Optional for back-compat with in-flight entries from before 2026-04-17 (ticket #82); new entries SHOULD set it so scripts/rescue-worker.sh has a canonical source instead of reconstructing the path from convention.",
+            "minLength": 1
+          },
+          "branch": {
+            "type": "string",
+            "description": "Branch the worker is committing to, e.g. 'hydra/commander/82' or the 'commander/hydra-82' fallback when the preferred pattern is taken. Optional for back-compat; new entries SHOULD set it so the watchdog does not have to guess between the two naming patterns.",
+            "minLength": 1
           }
         }
       }
