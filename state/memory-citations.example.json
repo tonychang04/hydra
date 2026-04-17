@@ -6,7 +6,8 @@
       "count": "integer — total number of times this entry has been cited across all tickets",
       "last_cited": "YYYY-MM-DD — date of the most recent citation",
       "tickets": "array of ticket refs that cited this entry (de-duplicated)",
-      "promotion_threshold_reached": "boolean — set by commander when count >= 3 AND tickets.length >= 3 distinct"
+      "promotion_threshold_reached": "boolean — set by commander when count >= 3 AND tickets.length >= 3 distinct",
+      "source": "optional string — one of 'operator' (legacy, direct-drive chat answer) or 'supervisor' (Phase 2 agent-only interface; set when the MCP upstream supervisor answered supervisor.resolve_question). Absent = legacy 'operator' default."
     },
     "delta_schema": {
       "_emitted_by": "scripts/parse-citations.sh",
@@ -26,7 +27,15 @@
       "count": 4,
       "last_cited": "2026-04-16",
       "tickets": ["#50", "#61", "#63", "#64"],
-      "promotion_threshold_reached": true
+      "promotion_threshold_reached": true,
+      "source": "operator"
+    },
+    "learnings-CLI.md#pnpm lockfile conflicts with npm i": {
+      "count": 1,
+      "last_cited": "2026-04-16",
+      "tickets": ["#51"],
+      "promotion_threshold_reached": false,
+      "source": "supervisor"
     }
   }
 }

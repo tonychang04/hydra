@@ -80,6 +80,33 @@ flowchart LR
 
 Read it left-to-right. **Solid line = happy path** (no human). **Dashed = learning or escalation.** The only time the loop touches you is when memory genuinely can't answer — and that answer is then captured so it won't touch you next time for the same thing.
 
+## Where Commander lives (local vs cloud mode)
+
+The loop above is the same whether Commander runs on your laptop or on a VPS. The difference is deployment topology and how the Main Agent reaches Commander. Both are fully supported.
+
+```mermaid
+flowchart TB
+    subgraph LocalMode["🖥 Local mode (default, terminal chat)"]
+        MA1[[🤖 Main Agent]] -->|in-process| C1{{🧠 Commander<br/>on your laptop}}
+        C1 -->|spawn| W1[⚙️ Workers]
+    end
+    subgraph CloudMode["☁ Cloud mode (Fly.io + MCP, agent-driven)"]
+        MA2[[🤖 Main Agent<br/>laptop / cloud]] -->|MCP over stdio or HTTPS| C2{{🧠 Commander<br/>headless on Fly.io VM}}
+        C2 -->|spawn| W2[⚙️ Workers]
+        C2 -.->|persistent volume| V[(/hydra/data<br/>state · memory · logs)]
+    end
+
+    style MA1 fill:#fed7aa,stroke:#ea580c,color:#000
+    style MA2 fill:#fed7aa,stroke:#ea580c,color:#000
+    style C1 fill:#dbeafe,stroke:#2563eb,color:#000
+    style C2 fill:#dbeafe,stroke:#2563eb,color:#000
+    style W1 fill:#dcfce7,stroke:#16a34a,color:#000
+    style W2 fill:#dcfce7,stroke:#16a34a,color:#000
+    style V fill:#fce7f3,stroke:#db2777,color:#000
+```
+
+Local mode ships today and is what most operators start with. Cloud mode adds a 24/7 Commander that keeps working while your laptop is closed — useful for autopickup across time zones and for agent-to-agent orchestration without a human in the loop. Full walkthrough in **[USING.md § Cloud mode](USING.md#cloud-mode-flyio--mcp-agent-driven)**.
+
 ## Inside one iteration
 
 ```mermaid

@@ -322,6 +322,7 @@ Memory is short-term. Consistent patterns graduate into repo-local skills so eve
 **After every completed ticket:**
 - Parse worker's `MEMORY_CITED:` markers → increment `state/memory-citations.json`
 - Flag any entry hitting `count >= 3` across 3+ distinct tickets as promotion-ready
+- Tag each citation entry with `"source": "supervisor"` when the answer came from the Phase 2 agent-only interface (`supervisor.resolve_question`) or `"source": "operator"` when it came from the legacy direct-drive chat path. Schema: `state/schemas/memory-citations.schema.json`. Absence of the field = legacy `"operator"` — the field is additive and backwards-compatible.
 
 **After every 10 completed tickets (or `compact memory` on demand):**
 - Merge near-duplicates in `memory/learnings-*.md`
