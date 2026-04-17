@@ -254,6 +254,53 @@ Return the per-ticket audit log (`logs/<ticket>.json`) by either ticket coordina
 
 ---
 
+### `hydra.file_ticket`
+
+**Scope:** `spawn`
+
+File a new GitHub issue into an enabled repo and surface whether the next autopickup tick will pick it up. Primary use case: Main Agent (the operator's Claude Code session on their laptop) converts a spoken complaint — "the settings page needs an icon" — into a Hydra ticket via one MCP call, shrinking the "human notices something" → "Commander is on it" gap from ~90 seconds of manual transposition to ~3 seconds of "yes, file it."
+
+**Use cases:**
+- Main Agent listens to the human, offers to file, calls this tool, shows the URL back. Human countermands if wrong.
+- A monitoring agent noticing a regression files a ticket automatically and walks away.
+- A CI bot opens a ticket when a nightly job fails in a non-urgent way.
+
+**Tradeoffs:** rate-limited to 10 calls/hour per authorized agent (rolling window; counter in `state/mcp-rate-limit.json`). Exceeds → structured refusal with `error: "rate-limited"` and `retry_after_sec`. This is a hard cap that protects target repos from runaway Main Agent loops — if you need more, either open a follow-up ticket to widen the limit or rotate to a second agent id. The tool does NOT spawn a worker directly; it queues via the usual autopickup tick, so the caller sees `will_autopickup: true` and then the autopickup scheduler picks up on its next interval.
+
+**T3 handling:** `proposed_tier: "T3"` is allowed but auto-refused — the issue is filed with `commander-stuck` instead of `commander-ready`, the body is prefixed with a T3 notice, and the return value reports `will_autopickup: false` with `reason: "proposed_tier=T3 (Commander refuses T3 autopickup)"`. Commander never merges T3; filing as T3 is the same deal.
+
+**Input:**
+- `repo` (required) — `owner/name`; must have `enabled: true` in `state/repos.json`, else `error: "repo-not-enabled"`.
+- `title` (required) — ≤ 120 chars.
+- `body` (required, markdown) — combined with title must be ≥ 20 chars (anti-spam).
+- `proposed_tier` (optional) — `T1` / `T2` / `T3`. Commander still re-classifies per `policy.md` before spawning.
+- `labels` (optional, string[]) — appended to the commander-default labels.
+- `auto_pickup` (optional, default `true`) — if `false`, `commander-ready` is NOT applied, so autopickup skips. Useful for filing draft tickets the caller wants to inspect first.
+
+**Output:** `{issue_number, issue_url, will_autopickup, reason?}`. `reason` is populated iff `will_autopickup` is `false`.
+
+**Example request:**
+```json
+{"repo": "tonychang04/hydra", "title": "Add icon to settings page", "body": "The settings page header has no icon next to each section title."}
+```
+
+**Example response:**
+```json
+{"issue_number": 142, "issue_url": "https://github.com/tonychang04/hydra/issues/142", "will_autopickup": true, "reason": null}
+```
+
+**Error shapes (wire format):** all errors are tool-call results with `isError: true` and `structuredContent: {error, reason, ...}`:
+- `{"error": "validation-error", "reason": "title exceeds 120 chars (got 121)"}`
+- `{"error": "repo-not-enabled", "reason": "repo 'foo/bar' is not enabled in state/repos.json — add or enable it before filing."}`
+- `{"error": "rate-limited", "reason": "...", "limit": 10, "window_sec": 3600, "retry_after_sec": 847}`
+- `{"error": "gh-failure", "reason": "gh issue create exited 1: ..."}`
+
+**Not in scope (see ticket #143):** filing to Linear (follow-up once the Linear trigger lands), fan-out to multiple repos, bypass of the autopickup tick.
+
+Spec: `docs/specs/2026-04-17-main-agent-filing.md`.
+
+---
+
 ### `hydra.kill_worker`
 
 **Scope:** `admin`

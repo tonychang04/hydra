@@ -7,7 +7,7 @@
 # a real running server on a random free port:
 #
 #   1. Starts the server in the background with a fixture mcp.json.
-#   2. Sends tools/list with a valid bearer → expects 13 tools.
+#   2. Sends tools/list with a valid bearer → expects 14 tools.
 #   3. Sends tools/call hydra.get_status → expects the documented shape.
 #   4. Sends with a bad bearer → expects HTTP 401.
 #   5. Sends tools/call hydra.pause with a read-only bearer → expects HTTP 403.
@@ -49,7 +49,11 @@ EOF
 PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")
 
 # --- start the server -------------------------------------------------------
+# Pin HYDRA_MCP_TOOLS to the worktree-local manifest so an inherited HYDRA_ROOT
+# (e.g. from an operator's shell or another worktree) can't redirect the
+# server to the wrong mcp/hydra-tools.json and skew the expected tool count.
 HYDRA_MCP_CONFIG="$TMP/mcp.json" \
+HYDRA_MCP_TOOLS="$ROOT_DIR/mcp/hydra-tools.json" \
 HYDRA_MCP_AUDIT_LOG="$TMP/audit.jsonl" \
 HYDRA_MCP_PAUSE_FILE="$TMP/PAUSE" \
   python3 "$ROOT_DIR/scripts/hydra-mcp-server.py" --port "$PORT" --bind 127.0.0.1 \
@@ -92,8 +96,8 @@ status_code() {
 # --- 1) tools/list ----------------------------------------------------------
 RESP=$(post "$ADMIN_TOKEN" '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
 COUNT=$(printf '%s' "$RESP" > "$TMP/tools-list.json" && python3 -c "import json; print(len(json.load(open('$TMP/tools-list.json'))['result']['tools']))")
-if [[ "$COUNT" != "13" ]]; then
-  echo "FAIL: tools/list returned $COUNT tools (expected 13)"
+if [[ "$COUNT" != "14" ]]; then
+  echo "FAIL: tools/list returned $COUNT tools (expected 14)"
   echo "body: $RESP"
   exit 1
 fi

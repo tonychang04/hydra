@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/mcp-rate-limit.schema.json",
+  "title": "Hydra MCP per-agent rate-limit state",
+  "description": "Rolling-window rate-limit counters for MCP tools that mutate external systems (e.g. hydra.file_ticket creating GitHub issues). Commander writes this on each rate-limited tool call. Spec: docs/specs/2026-04-17-main-agent-filing.md. The structure is deliberately simple: a single `limits` block declares the ceiling per tool, and `agents.<id>.<tool>` is a list of ISO-8601 UTC timestamps in the current window. Timestamps older than `limits.<tool>.window_sec` are evicted on every read.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["limits", "agents"],
+  "properties": {
+    "limits": {
+      "type": "object",
+      "description": "Declares the per-tool ceilings. Keys are tool names (dotless — e.g. 'file_ticket' for hydra.file_ticket).",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["window_sec", "max_calls"],
+        "additionalProperties": true,
+        "properties": {
+          "window_sec": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Rolling window length in seconds. A call is counted if its timestamp is within `now - window_sec`."
+          },
+          "max_calls": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum calls permitted per agent within the rolling window."
+          }
+        }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "description": "Per-agent call-time lists. Keys are authorized_agents[].id values. Each agent's entry maps tool names to arrays of ISO-8601 UTC timestamps; timestamps older than the tool's window_sec are evicted on every read.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}",
+            "description": "ISO-8601 UTC timestamp of a single call."
+          }
+        }
+      }
+    }
+  }
+}

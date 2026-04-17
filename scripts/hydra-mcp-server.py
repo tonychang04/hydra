@@ -115,6 +115,21 @@ def _pause_path() -> Path:
     return _hydra_root() / "commander" / "PAUSE"
 
 
+def _rate_limit_path() -> Path:
+    """Per-agent rate-limit state file. See state/schemas/mcp-rate-limit.schema.json."""
+    override = os.environ.get("HYDRA_MCP_RATE_LIMIT")
+    if override:
+        return Path(override)
+    return _hydra_root() / "state" / "mcp-rate-limit.json"
+
+
+def _repos_path() -> Path:
+    override = os.environ.get("HYDRA_REPOS_CONFIG")
+    if override:
+        return Path(override)
+    return _hydra_root() / "state" / "repos.json"
+
+
 def load_config() -> Dict[str, Any]:
     """Load state/connectors/mcp.json. Refuses to return if authorized_agents is empty."""
     path = _config_path()
@@ -422,6 +437,300 @@ class _T3RefusedError(Exception):
         self.reason = reason
 
 
+class _StructuredToolError(Exception):
+    """
+    Raised by tool handlers that want to return a structured error payload
+    (e.g. validation error, rate-limit error) rather than a JSON-RPC error
+    code.
+
+    The dispatcher turns this into a tool-call result with isError=true and
+    structuredContent={error, reason, **extra}. This matches the shape used
+    by hydra.merge_pr's t3-refused response, which clients already know how
+    to parse.
+    """
+
+    def __init__(self, error: str, reason: str, **extra: Any):
+        super().__init__(f"{error}: {reason}")
+        self.error = error
+        self.reason = reason
+        self.extra = extra
+
+
+# -----------------------------------------------------------------------------
+# Rate limiter — rolling window, file-backed
+# -----------------------------------------------------------------------------
+
+_RATE_LIMIT_LOCK = threading.Lock()
+
+# Per-tool ceilings. Kept small — hydra.file_ticket is the only rate-limited
+# tool today. Adding more means adding entries here and plumbing the tool
+# handler to call _rate_limit_check("<tool>", agent_id) early.
+RATE_LIMITS: Dict[str, Dict[str, int]] = {
+    "file_ticket": {"window_sec": 3600, "max_calls": 10},
+}
+
+
+def _parse_iso_utc(ts: str) -> float:
+    """Parse an ISO-8601 UTC timestamp (e.g. '2026-04-17T12:34:56Z') to a Unix epoch float."""
+    # Accept both trailing 'Z' and naive '...:56' — we always write with Z.
+    if ts.endswith("Z"):
+        ts = ts[:-1]
+    # Strip any fractional seconds that may sneak in — we write to second precision.
+    if "." in ts:
+        ts = ts.split(".", 1)[0]
+    dt = _dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+    return dt.replace(tzinfo=_dt.timezone.utc).timestamp()
+
+
+def _rate_limit_load() -> Dict[str, Any]:
+    """Load the rate-limit state file. Returns a fresh skeleton if missing/unreadable."""
+    path = _rate_limit_path()
+    if not path.exists():
+        return {"limits": {}, "agents": {}}
+    try:
+        with path.open() as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {"limits": {}, "agents": {}}
+
+
+def _rate_limit_save(state: Dict[str, Any]) -> None:
+    """Write the rate-limit state atomically (tmpfile + rename, same dir)."""
+    path = _rate_limit_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    with tmp.open("w") as f:
+        json.dump(state, f, separators=(",", ":"), sort_keys=True)
+    os.replace(tmp, path)
+
+
+def _rate_limit_check_and_record(tool_key: str, agent_id: str) -> None:
+    """
+    Check whether the given agent may call the given tool right now. If yes,
+    record this call's timestamp. If no, raise _StructuredToolError with
+    error='rate-limited' and retry_after_sec.
+
+    Implementation: rolling window. On every check, evict timestamps older
+    than window_sec. If the remaining count is >= max_calls, refuse with
+    retry_after_sec = window_sec - (now - oldest_remaining_ts).
+
+    Thread-safe within one process via _RATE_LIMIT_LOCK. Multi-process
+    safety is not required in Phase 1 (one MCP server per Commander).
+    """
+    limit = RATE_LIMITS.get(tool_key)
+    if limit is None:  # Defensive — caller passed an unregistered tool key.
+        return
+
+    window_sec = limit["window_sec"]
+    max_calls = limit["max_calls"]
+    now = _dt.datetime.utcnow()
+    now_epoch = now.replace(tzinfo=_dt.timezone.utc).timestamp()
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    with _RATE_LIMIT_LOCK:
+        state = _rate_limit_load()
+        # Keep the `limits` block aligned with RATE_LIMITS so operators can
+        # inspect the running config without grepping the source.
+        state.setdefault("limits", {})
+        state["limits"][tool_key] = {"window_sec": window_sec, "max_calls": max_calls}
+        state.setdefault("agents", {})
+        state["agents"].setdefault(agent_id, {})
+        timestamps: List[str] = state["agents"][agent_id].get(tool_key, [])
+
+        # Evict old timestamps.
+        fresh: List[str] = []
+        for ts in timestamps:
+            try:
+                ts_epoch = _parse_iso_utc(ts)
+            except ValueError:
+                continue  # Skip malformed — never count toward the limit.
+            if now_epoch - ts_epoch < window_sec:
+                fresh.append(ts)
+        timestamps = fresh
+
+        if len(timestamps) >= max_calls:
+            oldest_epoch = _parse_iso_utc(timestamps[0])
+            retry_after_sec = int(window_sec - (now_epoch - oldest_epoch)) + 1
+            if retry_after_sec < 1:
+                retry_after_sec = 1
+            # Persist the eviction result even on refusal — next call re-reads
+            # a tidier list.
+            state["agents"][agent_id][tool_key] = timestamps
+            _rate_limit_save(state)
+            raise _StructuredToolError(
+                error="rate-limited",
+                reason=(
+                    f"tool '{tool_key}' is rate-limited: "
+                    f"{max_calls} calls per {window_sec}s per agent. "
+                    f"Retry in ~{retry_after_sec}s."
+                ),
+                limit=max_calls,
+                window_sec=window_sec,
+                retry_after_sec=retry_after_sec,
+            )
+
+        # Record this call.
+        timestamps.append(now_iso)
+        state["agents"][agent_id][tool_key] = timestamps
+        _rate_limit_save(state)
+
+
+def _handler_file_ticket(params: Dict[str, Any], agent: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    hydra.file_ticket — file a GitHub issue into an enabled repo and surface
+    whether the next autopickup tick will pick it up.
+
+    Primary use case: Main Agent (the operator's Claude Code session on their
+    laptop) turns a spoken complaint into a Hydra ticket via one MCP call.
+
+    Spec: docs/specs/2026-04-17-main-agent-filing.md.
+    """
+    # --- validate inputs ----------------------------------------------------
+    repo = str(params.get("repo", "")).strip()
+    title = str(params.get("title", ""))
+    body = str(params.get("body", ""))
+    proposed_tier = params.get("proposed_tier")
+    user_labels = params.get("labels") or []
+    auto_pickup = params.get("auto_pickup", True)
+
+    if not repo or "/" not in repo:
+        raise _StructuredToolError(
+            error="validation-error",
+            reason="repo must be 'owner/name' form",
+        )
+
+    if not title:
+        raise _StructuredToolError(
+            error="validation-error",
+            reason="title is required",
+        )
+    if len(title) > 120:
+        raise _StructuredToolError(
+            error="validation-error",
+            reason=f"title exceeds 120 chars (got {len(title)})",
+        )
+    # Anti-spam: title + body combined must be at least 20 chars.
+    if len(title) + len(body) < 20:
+        raise _StructuredToolError(
+            error="validation-error",
+            reason="title + body must be ≥ 20 chars combined (anti-spam)",
+        )
+    if proposed_tier is not None and proposed_tier not in ("T1", "T2", "T3"):
+        raise _StructuredToolError(
+            error="validation-error",
+            reason=f"proposed_tier must be T1/T2/T3 (got {proposed_tier!r})",
+        )
+    if not isinstance(user_labels, list) or not all(isinstance(x, str) for x in user_labels):
+        raise _StructuredToolError(
+            error="validation-error",
+            reason="labels must be an array of strings",
+        )
+
+    # --- enabled-repo gate --------------------------------------------------
+    repos_cfg = _read_json_safe(_repos_path(), {"repos": []})
+    enabled_match = next(
+        (
+            r for r in repos_cfg.get("repos", [])
+            if r.get("enabled") is True
+            and r.get("owner") and r.get("name")
+            and f"{r['owner']}/{r['name']}" == repo
+        ),
+        None,
+    )
+    if enabled_match is None:
+        raise _StructuredToolError(
+            error="repo-not-enabled",
+            reason=(
+                f"repo '{repo}' is not enabled in state/repos.json — "
+                "add or enable it before filing."
+            ),
+        )
+
+    # --- rate limit ---------------------------------------------------------
+    # Rate-limit AFTER validation so a malformed call doesn't consume a slot.
+    _rate_limit_check_and_record("file_ticket", str(agent.get("id", "unknown")))
+
+    # --- assemble labels + body ---------------------------------------------
+    is_t3 = (proposed_tier == "T3")
+    final_body = body
+    if is_t3:
+        final_body = (
+            "_Filed as T3 — Commander will not pick up automatically; "
+            "operator must resolve manually._\n\n" + body
+        )
+
+    commander_labels = ["commander-auto-filed"]
+    if is_t3:
+        commander_labels.append("commander-stuck")
+    elif auto_pickup:
+        commander_labels.append("commander-ready")
+    # If auto_pickup=False and not T3 → no commander-ready, autopickup skips.
+
+    # De-dupe while preserving order: commander-* first, then user labels.
+    seen = set()
+    final_labels: List[str] = []
+    for lbl in commander_labels + list(user_labels):
+        if lbl and lbl not in seen:
+            final_labels.append(lbl)
+            seen.add(lbl)
+
+    # --- file via gh issue create -------------------------------------------
+    cmd = ["gh", "issue", "create",
+           "--repo", repo,
+           "--title", title,
+           "--body", final_body]
+    for lbl in final_labels:
+        cmd.extend(["--label", lbl])
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        raise _StructuredToolError(
+            error="gh-failure",
+            reason=f"gh issue create failed: {type(e).__name__}: {e}",
+        )
+    if result.returncode != 0:
+        raise _StructuredToolError(
+            error="gh-failure",
+            reason=(
+                f"gh issue create exited {result.returncode}: "
+                f"{(result.stderr or result.stdout).strip()[:300]}"
+            ),
+        )
+
+    # gh prints the created issue URL on stdout, e.g.
+    # "https://github.com/tonychang04/hydra/issues/142".
+    issue_url = (result.stdout or "").strip().splitlines()[-1].strip() if result.stdout else ""
+    issue_number = 0
+    if "/issues/" in issue_url:
+        try:
+            issue_number = int(issue_url.rsplit("/", 1)[-1])
+        except ValueError:
+            issue_number = 0
+
+    # --- compute will_autopickup --------------------------------------------
+    reason: Optional[str] = None
+    will_autopickup = True
+    if is_t3:
+        will_autopickup = False
+        reason = "proposed_tier=T3 (Commander refuses T3 autopickup)"
+    elif not auto_pickup:
+        will_autopickup = False
+        reason = "auto_pickup=false"
+    elif _pause_path().exists():
+        will_autopickup = False
+        reason = "commander-paused (PAUSE sentinel present)"
+
+    return {
+        "issue_number": issue_number,
+        "issue_url": issue_url,
+        "will_autopickup": will_autopickup,
+        "reason": reason,
+    }
+
+
 def _handler_merge_pr(params: Dict[str, Any], agent: Dict[str, Any]) -> Dict[str, Any]:
     """
     hydra.merge_pr — Phase 1 STUB with a live T3 pre-check.
@@ -486,6 +795,7 @@ TOOL_HANDLERS: Dict[str, Any] = {
     "hydra.list_ready_tickets": _handler_list_ready_tickets,
     "hydra.pause": _handler_pause,
     "hydra.merge_pr": _handler_merge_pr,  # T3 pre-check, then NotImplemented.
+    "hydra.file_ticket": _handler_file_ticket,  # ticket #143, spec: 2026-04-17-main-agent-filing.md
     # Phase 1 scaffolded tools — schemas visible in tools/list, calls return -32001:
     "hydra.pick_up": _handler_not_implemented("hydra.pick_up"),
     "hydra.pick_up_specific": _handler_not_implemented("hydra.pick_up_specific"),
@@ -684,6 +994,23 @@ class McpHandler(http.server.BaseHTTPRequestHandler):
                 "structuredContent": {"error": "t3-refused", "reason": e.reason},
             })
             return
+        except _StructuredToolError as e:
+            # Generic structured refusal (validation errors, rate-limit,
+            # gh-failure). Same wire shape as t3-refused so clients have
+            # one parse path for all tool-level refusals.
+            payload: Dict[str, Any] = {"error": e.error, "reason": e.reason}
+            payload.update(e.extra)
+            audit(
+                caller_agent_id=agent["id"], tool=tool_name,
+                scope_check="ok", refused_reason=e.error,
+                input_hash=input_hash,
+            )
+            self._send_jsonrpc_result(req_id, {
+                "content": [{"type": "text", "text": json.dumps(payload)}],
+                "isError": True,
+                "structuredContent": payload,
+            })
+            return
         except _NotImplementedError as e:
             audit(
                 caller_agent_id=agent["id"], tool=tool_name,
@@ -802,7 +1129,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         sys.stdout.write(
             f"✓ config OK: {len(cfg['authorized_agents'])} authorized agent(s)\n"
             f"✓ tools OK: {len(tools)} registered\n"
-            f"✓ all 13 tool handlers mapped: "
+            f"✓ all {len(tools)} tool handlers mapped: "
             f"{sum(1 for t in tools if t['name'] in TOOL_HANDLERS)}/{len(tools)}\n"
         )
         return 0

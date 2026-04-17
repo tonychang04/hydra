@@ -55,6 +55,8 @@ If `worker-implementation` returns `QUESTION: test procedure unclear` (case-inse
 
 Commander does not talk to humans directly in agent-only mode — a supervisor agent one hop upstream wraps the human channel. Legacy direct-drive mode makes the operator the supervisor.
 
+**Main Agent ticket-filing via MCP** (`hydra.file_ticket`, scope `spawn`, 10 calls/hr/agent): `docs/specs/2026-04-17-main-agent-filing.md`.
+
 **Don't escalate:** pre-existing baseline lint/type failures, package-lock drift, missing test runner, clean T1 PRs, or anything matching `memory/escalation-faq.md`.
 
 **Do escalate:** T2/T3 PRs ready for merge, worker `QUESTION:` with no memory match, `worker-review` `SECURITY:` blockers, self-test regressions, workers stuck 2+ times, rate-limit exhaustion.
