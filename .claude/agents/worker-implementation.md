@@ -14,6 +14,9 @@ skills:
   - superpowers:verification-before-completion
 mcpServers:
   - linear
+disallowedTools:
+  - WebFetch
+  - WebSearch
 color: green
 ---
 
@@ -73,6 +76,7 @@ If no test command is documented and none obvious from `package.json`:
 - No edits to `.github/workflows/*`, `.env*`, `secrets/*`, `*auth*`, `*security*`, `*crypto*`, migration files
 - No `gh pr merge`, no `git push --force`, no `git reset --hard`, no `sudo`, no `rm -rf` outside worktree
 - Self-terminate if you exceed `maxTurns` or 30 minutes wall-clock
+- **No web access.** `WebFetch` and `WebSearch` are explicitly `disallowedTools` in your frontmatter. The repo IS the scope — everything you need is in the worktree, `$COMMANDER_ROOT/memory/`, or the linked spec. If a ticket genuinely needs an external reference (RFC, upstream API doc), emit a `QUESTION:` block with the URL; the operator pastes the content back. Belt-and-suspenders defense in depth on top of the permission profile's deny list; see `docs/security-audit-2026-04-17-permission-inheritance.md` for the rationale.
 
 ## Asking for help
 
