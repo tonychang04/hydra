@@ -11,23 +11,37 @@
 #   --category <name>   Run only one category
 #   --verbose           Print raw command output per check
 #   --fix-safe          Attempt safe auto-remediations (chmod +x, mkdir -p)
+#   --fix               Interactive walkthrough: prompt y/n/s for each fixable
+#                       failure (implies --fix-safe for mkdir/chmod class)
 #   -h, --help          Show this help
 #
-# Spec: docs/specs/2026-04-16-hydra-doctor.md
+# Specs:
+#   docs/specs/2026-04-16-hydra-doctor.md  (base doctor, ticket #36)
+#   docs/specs/2026-04-17-doctor-fix-mode.md  (actionable hints + --fix, #104)
 #
 # Hard rules:
 #   - set -euo pipefail
 #   - Bash + jq only (no Python/Node)
-#   - Non-destructive by default; --fix-safe is the only write path
+#   - Non-destructive by default; --fix-safe / --fix are the only write paths
 #   - Never edits CLAUDE.md, policy.md, budget.json, settings.local.json, worker subagents
+#   - --fix auto_fix commands are rejected if they contain sudo/curl/wget/brew/
+#     apt/rm/mv/redirects — those print as manual hints and never auto-run
 
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
 # resolve worktree root (script lives at <root>/scripts/hydra-doctor.sh)
+#
+# Allow HYDRA_ROOT to override. Needed by the `doctor-fix-smoke` self-test
+# fixture (see docs/specs/2026-04-17-doctor-fix-mode.md). Falls back to the
+# script's containing worktree so normal invocations keep working unchanged.
 # -----------------------------------------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+if [[ -n "${HYDRA_ROOT:-}" ]] && [[ -d "$HYDRA_ROOT" ]]; then
+  ROOT_DIR="$(cd -- "$HYDRA_ROOT" && pwd)"
+else
+  ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+fi
 
 # -----------------------------------------------------------------------------
 # color / TTY
@@ -62,8 +76,17 @@ Options:
                        (default: all)
   --verbose            Print raw command output per check
   --fix-safe           Attempt safe auto-remediations (chmod +x scripts,
-                       mkdir -p missing dirs). Non-destructive.
+                       mkdir -p missing dirs). Non-destructive. No prompts.
+  --fix                Interactive: walk through each fixable failure and
+                       prompt [y]es apply / [n]o skip / [s]how command /
+                       [q]uit. Implies --fix-safe for the auto-remediations.
+                       Requires an interactive terminal.
   -h, --help           Show this help
+
+Environment:
+  HYDRA_ROOT           Override worktree root (defaults to the script's
+                       containing worktree). Used by the self-test fixture.
+  NO_COLOR=1           Disable ANSI color output even on a TTY.
 
 Exit codes:
   0   all checks pass or only warnings
@@ -87,6 +110,7 @@ EOF
 category_filter="all"
 verbose=0
 fix_safe=0
+fix_interactive=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -103,6 +127,9 @@ while [[ $# -gt 0 ]]; do
     --fix-safe)
       fix_safe=1; shift
       ;;
+    --fix)
+      fix_interactive=1; fix_safe=1; shift
+      ;;
     -h|--help)
       usage; exit 0
       ;;
@@ -113,6 +140,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# --fix needs an interactive terminal. Scripted callers should use --fix-safe,
+# which bypasses prompts for the narrow chmod/mkdir class.
+if [[ "$fix_interactive" -eq 1 ]] && [[ ! -t 0 ]] && [[ ! -r /dev/tty ]]; then
+  echo "hydra-doctor: --fix requires an interactive terminal; use --fix-safe instead" >&2
+  exit 2
+fi
 
 case "$category_filter" in
   all|environment|config|runtime|memory|scripts|integrations|self-test) ;;
@@ -130,8 +164,36 @@ passed=0
 warnings=0
 failures=0
 
-# Per-check reporting primitives. Each returns 0 on pass, 1 on warn, 2 on fail.
-# We track counters directly.
+# Fix queue — parallel arrays (bash 3.2 compatible; no associative arrays).
+# Every check_warn / check_fail with a non-empty hint appends one entry.
+# After categories finish, --fix walks this list interactively.
+#   fix_labels[i]   — short check label (for the "[k/N] <label>" header)
+#   fix_hints[i]    — actionable text: "fix: ...", "run: ...", or "manual: ..."
+#   fix_auto[i]     — optional bash command string; empty = manual-only
+#   fix_severity[i] — "warn" or "fail" (display color)
+fix_labels=()
+fix_hints=()
+fix_auto=()
+fix_severity=()
+
+# AUTO_FIX_DENY — reject auto-runnable fixes that touch anything beyond the
+# narrow chmod/mkdir class. `--fix` downgrades these to manual hints.
+# Intentionally conservative; widening is a separate spec'd change.
+AUTO_FIX_DENY_PATTERN='(^|[^[:alnum:]])(sudo|curl|wget|brew|apt|apt-get|yum|dnf|pip|pipx|npm|pnpm|yarn|rm|mv|cp|dd|kill|pkill|killall)([^[:alnum:]]|$)|[|&;]|>[^&]|<[^<]'
+
+# Per-check reporting primitives.
+# Signatures (backward-compatible — extra args optional):
+#   check_pass  label [detail]
+#   check_warn  label reason [fix_hint] [auto_fix]
+#   check_fail  label reason [fix_hint] [auto_fix]
+#
+# fix_hint  — one-line actionable suggestion, printed in yellow below the
+#             warn/fail line. Conventionally prefixed with "fix:" (for an
+#             auto-runnable command), "run:" (for a command to run elsewhere),
+#             or "manual:" (for instructions to edit a file).
+# auto_fix  — bash command string that --fix can offer to run after y/n/s
+#             confirmation. Vetoed silently (printed as manual hint instead)
+#             if it matches AUTO_FIX_DENY_PATTERN.
 
 check_pass() {
   # $1 = label, $2 = optional detail
@@ -145,25 +207,46 @@ check_pass() {
 }
 
 check_warn() {
-  # $1 = label, $2 = reason
-  local label="$1" reason="${2:-}"
+  # $1 = label, $2 = reason, $3 = fix_hint, $4 = auto_fix
+  local label="$1" reason="${2:-}" hint="${3:-}" auto="${4:-}"
   if [[ -n "$reason" ]]; then
     printf "  %s⚠%s %s %s— %s%s\n" "$C_YELLOW" "$C_RESET" "$label" "$C_YELLOW" "$reason" "$C_RESET"
   else
     printf "  %s⚠%s %s\n" "$C_YELLOW" "$C_RESET" "$label"
   fi
+  if [[ -n "$hint" ]]; then
+    printf "      %s%s%s\n" "$C_YELLOW" "$hint" "$C_RESET"
+    _queue_fix "$label" "$hint" "$auto" "warn"
+  fi
   warnings=$((warnings + 1))
 }
 
 check_fail() {
-  # $1 = label, $2 = reason
-  local label="$1" reason="${2:-}"
+  # $1 = label, $2 = reason, $3 = fix_hint, $4 = auto_fix
+  local label="$1" reason="${2:-}" hint="${3:-}" auto="${4:-}"
   if [[ -n "$reason" ]]; then
     printf "  %s✗%s %s %s— %s%s\n" "$C_RED" "$C_RESET" "$label" "$C_RED" "$reason" "$C_RESET"
   else
     printf "  %s✗%s %s\n" "$C_RED" "$C_RESET" "$label"
   fi
+  if [[ -n "$hint" ]]; then
+    printf "      %s%s%s\n" "$C_YELLOW" "$hint" "$C_RESET"
+    _queue_fix "$label" "$hint" "$auto" "fail"
+  fi
   failures=$((failures + 1))
+}
+
+_queue_fix() {
+  # $1=label $2=hint $3=auto $4=severity
+  local auto="$3"
+  # Veto auto_fix commands that touch anything beyond the chmod/mkdir class.
+  if [[ -n "$auto" ]] && [[ "$auto" =~ $AUTO_FIX_DENY_PATTERN ]]; then
+    auto=""
+  fi
+  fix_labels+=("$1")
+  fix_hints+=("$2")
+  fix_auto+=("$auto")
+  fix_severity+=("$4")
 }
 
 verbose_log() {
@@ -192,7 +275,8 @@ check_environment() {
     v="$(claude --version 2>/dev/null | head -1 || true)"
     check_pass "claude CLI on PATH" "${v:-version unknown}"
   else
-    check_fail "claude CLI on PATH" "not found; install https://claude.com/claude-code"
+    check_fail "claude CLI on PATH" "not found" \
+      "run: install Claude Code from https://claude.com/claude-code, then re-run doctor"
   fi
 
   # gh CLI + auth
@@ -204,10 +288,12 @@ check_environment() {
       gh_user="$(gh api user --jq .login 2>/dev/null || echo '?')"
       check_pass "gh CLI authenticated" "${gh_v:-}; user=$gh_user"
     else
-      check_fail "gh CLI authenticated" "gh auth status failed; run 'gh auth login'"
+      check_fail "gh CLI authenticated" "gh auth status failed" \
+        "run: gh auth login    # then re-run doctor"
     fi
   else
-    check_fail "gh CLI on PATH" "not found; brew install gh"
+    check_fail "gh CLI on PATH" "not found" \
+      "run: brew install gh    # or see https://cli.github.com for your OS"
   fi
 
   # jq
@@ -216,7 +302,8 @@ check_environment() {
     jq_v="$(jq --version 2>/dev/null || true)"
     check_pass "jq on PATH" "${jq_v:-}"
   else
-    check_fail "jq on PATH" "not found; brew install jq"
+    check_fail "jq on PATH" "not found" \
+      "run: brew install jq    # or apt-get install jq on Linux"
   fi
 
   # git version ≥ 2.25 (worktree support)
@@ -229,23 +316,27 @@ check_environment() {
        { [[ "$major" -gt 2 ]] || { [[ "$major" -eq 2 ]] && [[ "$minor" -ge 25 ]]; }; }; then
       check_pass "git ≥ 2.25 (worktree support)" "git $git_v"
     else
-      check_fail "git ≥ 2.25 (worktree support)" "found git $git_v"
+      check_fail "git ≥ 2.25 (worktree support)" "found git $git_v" \
+        "run: brew install git    # or upgrade your distro's git package"
     fi
   else
-    check_fail "git on PATH" "not found"
+    check_fail "git on PATH" "not found" \
+      "run: brew install git    # git is a hard dep — worker worktrees need it"
   fi
 
   # HYDRA_ROOT / HYDRA_EXTERNAL_MEMORY_DIR env vars
   if [[ -n "${HYDRA_ROOT:-}" ]]; then
     check_pass "\$HYDRA_ROOT set" "$HYDRA_ROOT"
   else
-    check_warn "\$HYDRA_ROOT set" "unset; setup.sh writes it to .hydra.env — launcher sources it"
+    check_warn "\$HYDRA_ROOT set" "unset; setup.sh writes it to .hydra.env — launcher sources it" \
+      "manual: launch hydra via ./hydra (not scripts/ directly) so .hydra.env is sourced"
   fi
 
   if [[ -n "${HYDRA_EXTERNAL_MEMORY_DIR:-}" ]]; then
     check_pass "\$HYDRA_EXTERNAL_MEMORY_DIR set" "$HYDRA_EXTERNAL_MEMORY_DIR"
   else
-    check_warn "\$HYDRA_EXTERNAL_MEMORY_DIR set" "unset; will fall back to ./memory/ (OK for Phase 1)"
+    check_warn "\$HYDRA_EXTERNAL_MEMORY_DIR set" "unset; will fall back to ./memory/ (OK for Phase 1)" \
+      "manual: export HYDRA_EXTERNAL_MEMORY_DIR=\$HOME/.hydra/memory in .hydra.env to split memory from the repo"
   fi
 
   # External memory dir exists + writable
@@ -255,17 +346,21 @@ check_environment() {
       if [[ -w "$ext_mem" ]]; then
         check_pass "external memory dir exists + writable" "$ext_mem"
       else
-        check_fail "external memory dir writable" "$ext_mem is not writable"
+        check_fail "external memory dir writable" "$ext_mem is not writable" \
+          "run: chmod u+w '$ext_mem'    # or chown to your user"
       fi
     else
-      if [[ "$fix_safe" -eq 1 ]]; then
+      if [[ "$fix_safe" -eq 1 ]] && [[ "$fix_interactive" -eq 0 ]]; then
         if mkdir -p "$ext_mem" 2>/dev/null; then
           check_pass "external memory dir created" "$ext_mem (--fix-safe)"
         else
-          check_fail "external memory dir exists" "$ext_mem does not exist and mkdir failed"
+          check_fail "external memory dir exists" "$ext_mem does not exist and mkdir failed" \
+            "run: mkdir -p '$ext_mem'    # check parent dir permissions"
         fi
       else
-        check_fail "external memory dir exists" "$ext_mem does not exist (rerun with --fix-safe or mkdir manually)"
+        check_fail "external memory dir exists" "$ext_mem does not exist" \
+          "fix: mkdir -p '$ext_mem'" \
+          "mkdir -p '$ext_mem'"
       fi
     fi
   else
@@ -285,10 +380,12 @@ check_config() {
     if jq empty "$settings" 2>/dev/null; then
       check_pass ".claude/settings.local.json valid JSON"
     else
-      check_fail ".claude/settings.local.json valid JSON" "parse error"
+      check_fail ".claude/settings.local.json valid JSON" "parse error" \
+        "manual: jq . $settings to see the parse error; fix the JSON or restore from .claude/settings.local.json.example"
     fi
   else
-    check_fail ".claude/settings.local.json exists" "run ./setup.sh to create it"
+    check_fail ".claude/settings.local.json exists" "missing" \
+      "run: ./setup.sh    # creates it from .claude/settings.local.json.example"
   fi
 
   # Self-modification denylist spot-check (look for Edit($COMMANDER_ROOT/CLAUDE.md))
@@ -303,7 +400,8 @@ check_config() {
         check_pass "self-modification denylist intact" "CLAUDE.md denied via permissions.deny"
       else
         check_fail "self-modification denylist intact" \
-          "no Edit(...CLAUDE.md) entry found in .claude/settings.local.json deny list"
+          "no Edit(...CLAUDE.md) entry found in .claude/settings.local.json deny list" \
+          "manual: add \"Edit(\$COMMANDER_ROOT/CLAUDE.md)\" to permissions.deny in .claude/settings.local.json — this protects Commander from editing its own system prompt"
       fi
     fi
   fi
@@ -317,7 +415,8 @@ check_config() {
       if [[ "$enabled_count" -ge 1 ]]; then
         check_pass "state/repos.json valid" "$enabled_count enabled repo(s)"
       else
-        check_warn "state/repos.json has ≥1 enabled repo" "0 enabled — edit state/repos.json"
+        check_warn "state/repos.json has ≥1 enabled repo" "0 enabled" \
+          "manual: edit state/repos.json and set .enabled = true for at least one repo, or run ./hydra add-repo"
       fi
 
       # Each enabled repo: local_path + .git/
@@ -330,18 +429,22 @@ check_config() {
             if [[ -d "$p/.git" ]] || [[ -f "$p/.git" ]]; then
               check_pass "repo local_path + .git/" "$p"
             else
-              check_fail "repo local_path has .git/" "$p exists but is not a git repo"
+              check_fail "repo local_path has .git/" "$p exists but is not a git repo" \
+                "manual: cd '$p' && git init    # or update state/repos.json:local_path to the correct clone"
             fi
           else
-            check_fail "repo local_path exists" "$p does not exist"
+            check_fail "repo local_path exists" "$p does not exist" \
+              "run: git clone <remote-url> '$p'    # or update state/repos.json:local_path"
           fi
         done <<< "$paths"
       fi
     else
-      check_fail "state/repos.json valid JSON" "parse error"
+      check_fail "state/repos.json valid JSON" "parse error" \
+        "manual: jq . '$repos' to see the parse error; restore from state/repos.example.json if needed"
     fi
   else
-    check_fail "state/repos.json exists" "run ./setup.sh; edit to list your repos"
+    check_fail "state/repos.json exists" "missing" \
+      "run: ./setup.sh    # then edit state/repos.json to list your repos"
   fi
 
   # budget.json
@@ -353,13 +456,16 @@ check_config() {
       if [[ "$mcw" =~ ^[0-9]+$ ]] && [[ "$mcw" -ge 1 ]] && [[ "$mcw" -le 20 ]]; then
         check_pass "budget.json sane" "max_concurrent_workers=$mcw"
       else
-        check_fail "budget.json sane" "max_concurrent_workers out of [1,20]: got '$mcw'"
+        check_fail "budget.json sane" "max_concurrent_workers out of [1,20]: got '$mcw'" \
+          "manual: edit budget.json and set .phase1_subscription_caps.max_concurrent_workers to a value between 1 and 20"
       fi
     else
-      check_fail "budget.json valid JSON" "parse error"
+      check_fail "budget.json valid JSON" "parse error" \
+        "manual: jq . '$budget' to see the parse error; restore from the default in git history"
     fi
   else
-    check_fail "budget.json exists" "missing"
+    check_fail "budget.json exists" "missing" \
+      "run: git checkout budget.json    # restore from the repo's committed default"
   fi
 }
 
@@ -376,16 +482,19 @@ check_runtime() {
       if jq empty "$p" 2>/dev/null; then
         check_pass "$f exists + parses"
       else
-        check_fail "$f valid JSON" "parse error"
+        check_fail "$f valid JSON" "parse error" \
+          "manual: jq . '$p' to see the parse error; restore from state/*.example.json if needed"
       fi
     else
-      check_fail "$f exists" "run ./setup.sh"
+      check_fail "$f exists" "missing" \
+        "run: ./setup.sh    # creates state/*.json from their .example templates"
     fi
   done
 
   # PAUSE file
   if [[ -f "$ROOT_DIR/PAUSE" ]] || [[ -f "$ROOT_DIR/commander/PAUSE" ]]; then
-    check_warn "no unexpected PAUSE file" "PAUSE present — commander will refuse to spawn"
+    check_warn "no unexpected PAUSE file" "PAUSE present — commander will refuse to spawn" \
+      "manual: rm PAUSE (or commander/PAUSE) when you're ready to resume, or tell commander 'resume'"
   else
     check_pass "no PAUSE file"
   fi
@@ -396,17 +505,21 @@ check_runtime() {
     if [[ -w "$logs" ]]; then
       check_pass "logs/ writable"
     else
-      check_fail "logs/ writable" "not writable"
+      check_fail "logs/ writable" "not writable" \
+        "run: chmod u+w '$logs'    # or chown to your user"
     fi
   else
-    if [[ "$fix_safe" -eq 1 ]]; then
+    if [[ "$fix_safe" -eq 1 ]] && [[ "$fix_interactive" -eq 0 ]]; then
       if mkdir -p "$logs" 2>/dev/null; then
         check_pass "logs/ created" "$logs (--fix-safe)"
       else
-        check_fail "logs/ exists" "mkdir failed"
+        check_fail "logs/ exists" "mkdir failed" \
+          "run: mkdir -p '$logs'    # check parent dir permissions"
       fi
     else
-      check_warn "logs/ exists" "missing (rerun with --fix-safe or mkdir logs)"
+      check_warn "logs/ exists" "missing" \
+        "fix: mkdir -p '$logs'" \
+        "mkdir -p '$logs'"
     fi
   fi
 }
@@ -421,7 +534,8 @@ check_memory() {
   if [[ -f "$ROOT_DIR/memory/MEMORY.md" ]]; then
     check_pass "memory/MEMORY.md exists"
   else
-    check_fail "memory/MEMORY.md exists" "missing (framework file — reinstall or git checkout)"
+    check_fail "memory/MEMORY.md exists" "missing" \
+      "run: git checkout memory/MEMORY.md    # framework file; restore from the repo"
   fi
 
   # validate-learning-entry.sh against every learnings-*.md
@@ -431,8 +545,14 @@ check_memory() {
     local learning_files=("$ROOT_DIR/memory/"learnings-*.md)
     local ext_mem="${HYDRA_EXTERNAL_MEMORY_DIR:-}"
     if [[ -n "$ext_mem" ]] && [[ -d "$ext_mem" ]]; then
+      # bash 3.2 note: `foo=("$glob"*)` under `set -u` with zero matches leaves
+      # foo unset, which then blows up `"${foo[@]}"`. shopt nullglob above
+      # gives us an empty array on zero-matches; still default-guard the
+      # expansion so a bare `set -u` + empty dir doesn't abort doctor.
       local ext_learnings=("$ext_mem/"learnings-*.md)
-      learning_files+=("${ext_learnings[@]}")
+      if [[ ${#ext_learnings[@]} -gt 0 ]]; then
+        learning_files+=("${ext_learnings[@]}")
+      fi
     fi
     shopt -u nullglob
 
@@ -444,7 +564,8 @@ check_memory() {
         if "$validator" "$f" >/dev/null 2>&1; then
           verbose_log "learnings valid: $f"
         else
-          check_fail "validate-learning-entry.sh on $(basename "$f")" "failed"
+          check_fail "validate-learning-entry.sh on $(basename "$f")" "failed" \
+            "run: scripts/validate-learning-entry.sh '$f'    # shows which frontmatter/field failed"
           bad=1
         fi
       done
@@ -453,7 +574,9 @@ check_memory() {
       fi
     fi
   else
-    check_warn "scripts/validate-learning-entry.sh executable" "missing or not executable"
+    check_warn "scripts/validate-learning-entry.sh executable" "missing or not executable" \
+      "fix: chmod +x '$validator'" \
+      "chmod +x '$validator'"
   fi
 
   # validate-citations.sh against memory-citations.json
@@ -469,11 +592,14 @@ check_memory() {
       if [[ "$citation_count" -eq 0 ]]; then
         check_pass "validate-citations.sh" "empty citations (clean install)"
       else
-        check_fail "validate-citations.sh on memory-citations.json" "stale or invalid entries"
+        check_fail "validate-citations.sh on memory-citations.json" "stale or invalid entries" \
+          "run: scripts/validate-citations.sh --citations '$cite_file'    # shows which citation's quote no longer matches"
       fi
     fi
   elif [[ ! -x "$cite_validator" ]]; then
-    check_warn "scripts/validate-citations.sh executable" "missing or not executable"
+    check_warn "scripts/validate-citations.sh executable" "missing or not executable" \
+      "fix: chmod +x '$cite_validator'" \
+      "chmod +x '$cite_validator'"
   fi
 }
 
@@ -500,7 +626,8 @@ check_scripts() {
     if bash -n "$f" 2>/dev/null; then
       verbose_log "bash -n OK: $f"
     else
-      check_fail "bash -n $(basename "$f")" "syntax error"
+      check_fail "bash -n $(basename "$f")" "syntax error" \
+        "run: bash -n '$f'    # shows the line number of the syntax error"
       bad_syntax=1
     fi
   done
@@ -518,14 +645,21 @@ check_scripts() {
   if [[ ${#not_exec[@]} -eq 0 ]]; then
     check_pass "scripts executable (+x)"
   else
-    if [[ "$fix_safe" -eq 1 ]]; then
+    if [[ "$fix_safe" -eq 1 ]] && [[ "$fix_interactive" -eq 0 ]]; then
       local nf
       for nf in "${not_exec[@]}"; do
         chmod +x "$nf" 2>/dev/null || true
       done
       check_pass "scripts executable (+x)" "chmod +x applied to ${#not_exec[@]} file(s) (--fix-safe)"
     else
-      check_warn "scripts executable (+x)" "${#not_exec[@]} not executable (rerun with --fix-safe)"
+      # Build a chmod +x command that covers every affected file.
+      local nf_list=""
+      for nf in "${not_exec[@]}"; do
+        nf_list+=" '$nf'"
+      done
+      check_warn "scripts executable (+x)" "${#not_exec[@]} not executable" \
+        "fix: chmod +x$nf_list" \
+        "chmod +x$nf_list"
     fi
   fi
 
@@ -550,7 +684,8 @@ check_scripts() {
         verbose_log "validate-state: $f OK"
         checked=$((checked + 1))
       else
-        check_fail "validate-state.sh on $base.json" "failed"
+        check_fail "validate-state.sh on $base.json" "failed" \
+          "run: scripts/validate-state.sh '$f'    # shows which field failed against $schema"
         any_fail=1
       fi
     done
@@ -558,7 +693,9 @@ check_scripts() {
       check_pass "validate-state.sh" "$checked state file(s) pass schema check"
     fi
   else
-    check_warn "scripts/validate-state.sh executable" "missing"
+    check_warn "scripts/validate-state.sh executable" "missing" \
+      "fix: chmod +x '$vs'" \
+      "chmod +x '$vs'"
   fi
 }
 
@@ -579,10 +716,12 @@ check_integrations() {
           check_pass "Linear MCP server installed" "state/linear.json:enabled=true"
         else
           check_fail "Linear MCP server installed" \
-            "state/linear.json:enabled=true but 'claude mcp list' shows no linear entry; run 'claude mcp add linear'"
+            "state/linear.json:enabled=true but 'claude mcp list' shows no linear entry" \
+            "run: claude mcp add linear    # or flip state/linear.json:enabled to false if you don't use Linear"
         fi
       else
-        check_warn "Linear MCP check" "claude CLI missing, cannot verify"
+        check_warn "Linear MCP check" "claude CLI missing, cannot verify" \
+          "run: install Claude Code from https://claude.com/claude-code so 'claude mcp list' is available"
       fi
     else
       verbose_log "Linear integration disabled (state/linear.json:enabled=false) — skipping"
@@ -598,17 +737,20 @@ check_integrations() {
     if command -v mount-s3 >/dev/null 2>&1; then
       check_pass "mount-s3 installed" "HYDRA_STATE_BACKEND=dynamodb"
     else
-      check_fail "mount-s3 installed" "HYDRA_STATE_BACKEND=dynamodb but mount-s3 not on PATH"
+      check_fail "mount-s3 installed" "HYDRA_STATE_BACKEND=dynamodb but mount-s3 not on PATH" \
+        "run: install mount-s3 — see https://github.com/awslabs/mountpoint-s3/releases"
     fi
 
     if command -v aws >/dev/null 2>&1; then
       if aws sts get-caller-identity >/dev/null 2>&1; then
         check_pass "AWS credentials configured"
       else
-        check_fail "AWS credentials configured" "aws sts get-caller-identity failed"
+        check_fail "AWS credentials configured" "aws sts get-caller-identity failed" \
+          "run: aws configure    # or set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars"
       fi
     else
-      check_fail "aws CLI on PATH" "HYDRA_STATE_BACKEND=dynamodb but aws CLI missing"
+      check_fail "aws CLI on PATH" "HYDRA_STATE_BACKEND=dynamodb but aws CLI missing" \
+        "run: brew install awscli    # or see https://aws.amazon.com/cli for your OS"
     fi
   else
     verbose_log "HYDRA_STATE_BACKEND != dynamodb — skipping AWS/mount-s3 checks"
@@ -624,7 +766,9 @@ check_self_test() {
 
   local runner="$ROOT_DIR/self-test/run.sh"
   if [[ ! -x "$runner" ]]; then
-    check_fail "./self-test/run.sh executable" "missing or not +x"
+    check_fail "./self-test/run.sh executable" "missing or not +x" \
+      "fix: chmod +x '$runner'" \
+      "chmod +x '$runner'"
     return
   fi
 
@@ -637,13 +781,109 @@ check_self_test() {
     verbose_log "--- self-test output ---"
     [[ "$verbose" -eq 1 ]] && sed 's/^/    /' "$tmp"
   else
-    check_fail "./self-test/run.sh --kind=script" "one or more script cases failed"
+    check_fail "./self-test/run.sh --kind=script" "one or more script cases failed" \
+      "run: ./self-test/run.sh --kind=script --verbose    # shows per-case stdout + which assertion failed"
     if [[ "$verbose" -eq 1 ]] || [[ -s "$tmp" ]]; then
       echo "    ${C_DIM}--- self-test output ---${C_RESET}"
       sed 's/^/    /' "$tmp"
     fi
   fi
   rm -f "$tmp"
+}
+
+# -----------------------------------------------------------------------------
+# --fix interactive walkthrough
+#
+# Runs AFTER all categories emit their lines so the operator sees the full
+# doctor report first, then gets a focused y/n/s loop over each queued fix.
+#
+# Per item:
+#   y → execute fix_auto[i] via bash -c (if present + safely allowlisted);
+#       report ran/failed; move on.
+#   n → skip; move on.
+#   s → print the exact command that would run; re-prompt same item.
+#   q → quit the loop early; remaining items are untouched.
+# Items with no auto_fix (manual hints) print and move on — nothing to run.
+# -----------------------------------------------------------------------------
+run_fix_walkthrough() {
+  # Short-circuit if nothing queued
+  if [[ ${#fix_labels[@]} -eq 0 ]]; then
+    echo
+    printf "%sNo fixable issues queued.%s\n" "$C_DIM" "$C_RESET"
+    return 0
+  fi
+
+  echo
+  printf "%s─── Fix walkthrough ───%s\n" "$C_BOLD" "$C_RESET"
+  printf "%s%d item(s). [y]es apply · [n]o skip · [s]how · [q]uit%s\n" \
+    "$C_DIM" "${#fix_labels[@]}" "$C_RESET"
+
+  local n="${#fix_labels[@]}"
+  local i
+  for ((i=0; i<n; i++)); do
+    local label="${fix_labels[$i]}"
+    local hint="${fix_hints[$i]}"
+    local auto="${fix_auto[$i]}"
+    local sev="${fix_severity[$i]}"
+    local marker="✗" mcol="$C_RED"
+    if [[ "$sev" == "warn" ]]; then marker="⚠"; mcol="$C_YELLOW"; fi
+
+    echo
+    printf "  [%d/%d] %s%s%s %s\n" "$((i+1))" "$n" "$mcol" "$marker" "$C_RESET" "$label"
+    printf "        %s%s%s\n" "$C_YELLOW" "$hint" "$C_RESET"
+
+    if [[ -z "$auto" ]]; then
+      printf "        %s(manual fix — nothing auto-runnable)%s\n" "$C_DIM" "$C_RESET"
+      continue
+    fi
+
+    # Interactive prompt. Reads from /dev/tty so stdout pipes still work.
+    while :; do
+      local ans=""
+      printf "        %s▸%s " "$C_BOLD" "$C_RESET"
+      if ! read -r ans </dev/tty; then
+        echo
+        printf "        %s(stdin closed — ending walkthrough)%s\n" "$C_DIM" "$C_RESET"
+        return 0
+      fi
+      case "$ans" in
+        y|Y|yes)
+          local fix_stdout fix_stderr fix_exit
+          fix_stdout="$(mktemp)"; fix_stderr="$(mktemp)"
+          set +e
+          bash -c "$auto" >"$fix_stdout" 2>"$fix_stderr"
+          fix_exit=$?
+          set -e
+          if [[ "$fix_exit" -eq 0 ]]; then
+            printf "        %s→ ran. ✓%s\n" "$C_GREEN" "$C_RESET"
+            if [[ "$verbose" -eq 1 ]] && [[ -s "$fix_stdout" ]]; then
+              sed "s/^/        $C_DIM/; s/$/$C_RESET/" "$fix_stdout"
+            fi
+          else
+            printf "        %s→ failed (exit %d):%s\n" "$C_RED" "$fix_exit" "$C_RESET"
+            [[ -s "$fix_stderr" ]] && sed "s/^/        $C_RED/; s/$/$C_RESET/" "$fix_stderr"
+          fi
+          rm -f "$fix_stdout" "$fix_stderr"
+          break
+          ;;
+        n|N|no|"")
+          printf "        %s→ skipped.%s\n" "$C_DIM" "$C_RESET"
+          break
+          ;;
+        s|S|show)
+          printf "        %s→ would run: %s%s%s\n" "$C_DIM" "$C_BOLD" "$auto" "$C_RESET"
+          # loop: re-prompt
+          ;;
+        q|Q|quit)
+          printf "        %s→ quitting walkthrough (remaining items untouched).%s\n" "$C_DIM" "$C_RESET"
+          return 0
+          ;;
+        *)
+          printf "        %s(answer y/n/s/q)%s\n" "$C_DIM" "$C_RESET"
+          ;;
+      esac
+    done
+  done
 }
 
 # -----------------------------------------------------------------------------
@@ -659,6 +899,11 @@ should_run memory       && check_memory
 should_run scripts      && check_scripts
 should_run integrations && check_integrations
 should_run self-test    && check_self_test
+
+# --fix interactive walkthrough (after categories, before summary).
+if [[ "$fix_interactive" -eq 1 ]]; then
+  run_fix_walkthrough
+fi
 
 echo
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

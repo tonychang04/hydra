@@ -1,0 +1,4 @@
+# --fix-safe creates this when the runtime-category check runs against the
+# broken fixture. Keep it out of git so the fixture stays deterministically
+# broken between runs.
+logs/
