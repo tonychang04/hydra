@@ -26,34 +26,36 @@ Hydra is for **three things. Nothing else:**
 
 Humans are the exception, not the default. Hydra runs while you sleep and pings you only for: merge gates on non-trivial PRs, genuinely novel questions, security tripwires, and weekly retros. Every time it has to ping you, the answer gets captured so it won't need to ping again for a similar question. The goal is a slow, measurable reduction in how often a human is in the loop.
 
-## Quick start
+## Install
+
+**One-liner** (clones to `~/hydra`, runs setup, drops you at the launcher):
 
 ```bash
-# 1. Clone this repo
-git clone https://github.com/tonychang04/hydra.git
-cd hydra
-
-# 2. Export your paths
-export COMMANDER_ROOT=$(pwd)
-
-# 3. Configure your permission profile
-cp .claude/settings.local.json.example .claude/settings.local.json
-# Then edit .claude/settings.local.json and replace $COMMANDER_ROOT and $HOME_DIR
-# with absolute paths. The deny list for self-modification is critical — don't relax it.
-
-# 4. Configure which repos to poll
-cp state/repos.example.json state/repos.json
-# Edit state/repos.json to list your repos + their local clone paths.
-# Default infra/security-critical repos to enabled:false.
-
-# 5. Authenticate
-gh auth status  # must be logged in
-
-# 6. Launch
-claude
+curl -fsSL https://raw.githubusercontent.com/tonychang04/hydra/main/install.sh | bash
 ```
 
-**No labels required up-front.** Commander creates the handful of state labels it uses (`commander-working`, `commander-review`, `commander-stuck`, etc.) lazily on first use.
+**Or manually:**
+
+```bash
+git clone https://github.com/tonychang04/hydra.git
+cd hydra
+./setup.sh
+./hydra
+```
+
+`setup.sh` is interactive (one prompt, for the external memory directory), idempotent, and safe to re-run. It:
+- Verifies `gh`, `claude`, and auth
+- Creates `.claude/settings.local.json` from the template with your paths filled in
+- Creates `state/repos.json` from the template (edit it to add your repos)
+- Initializes runtime state files
+- Creates `.hydra.env` (gitignored) with your config
+- Generates a `./hydra` launcher (gitignored) that sources the env and runs `claude`
+
+**Two paths from here:**
+- You want to **use Hydra on your own repos** → **[USING.md](USING.md)**
+- You want to **contribute to Hydra itself** → **[DEVELOPING.md](DEVELOPING.md)**
+
+No labels required up-front. Commander creates the handful of state labels it uses (`commander-working`, `commander-review`, `commander-stuck`, etc.) lazily on first use.
 
 ## How tickets reach the commander
 
@@ -201,16 +203,22 @@ Workers enforce this at spec scope:
 
 ## Hydra builds Hydra (self-hosting)
 
-Hydra is a regular GitHub repo. Which means: **Hydra can work on Hydra.**
+Hydra is a regular GitHub repo. Which means: **one Hydra instance can work on Hydra AND on your external repos at the same time.**
 
-Add this repo (`tonychang04/hydra` or your fork) to your `state/repos.json` with the same trigger you use elsewhere. File an issue in the repo, assign it to yourself (or label `commander-ready`), then in the commander chat: `pick up #N`. A worker head spawns against this repo, reads this CLAUDE.md, writes a spec to `docs/specs/`, implements, opens a PR.
+The `state/repos.json` template already includes a dogfood entry for `tonychang04/hydra` — just flip `enabled: true` and point `local_path` at your clone. Your Commander session then polls BOTH:
 
-The self-test harness catches regressions before the PR merges. The review worker runs `/review` + `/codex review` on every Hydra PR — same quality bar as any other repo.
+- Tickets assigned to you in `tonychang04/hydra` (or your fork) → worker head writes a spec + implements against Hydra itself
+- Tickets assigned to you in `your-org/your-repo` → worker head clears tickets in your normal codebase
+
+Parallelism doesn't care about repo boundaries. If you have 5 tickets ready across 3 repos and `max_concurrent_workers: 3`, you'll get 3 workers in parallel — some on hydra, some on your repos, whichever got picked up first.
 
 Why this matters:
-- Every improvement to Hydra goes through its own process — proves the process works
+- Every improvement to Hydra goes through Hydra's own process — proves the system works
 - Specs in `docs/specs/` become self-documenting history of why Hydra is the way it is
-- You can file aspirational tickets ("support Jira", "add circuit-breaker for repeated stuck workers") and let Hydra attempt them while you sleep — worst case, a `commander-stuck` label and a `QUESTION:` block in your chat next morning
+- You can file aspirational tickets ("support Jira", "add circuit-breaker for repeated stuck workers") on the hydra repo AND let Hydra attempt them alongside your normal ticket queue
+- Worst case on a self-hosted ticket: `commander-stuck` label + a `QUESTION:` block in your chat next morning
+
+See **[DEVELOPING.md](DEVELOPING.md)** for the full contributor flow.
 
 ## Files
 

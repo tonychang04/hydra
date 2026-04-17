@@ -16,6 +16,8 @@ state/commander.lock
 logs/*
 !logs/.gitkeep
 PAUSE
+.hydra.env
+hydra
 
 # Operator-specific config with absolute paths
 .claude/settings.local.json

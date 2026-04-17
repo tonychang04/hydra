@@ -1,26 +1,38 @@
 {
-  "_description": "Copy to state/repos.json and fill in your own repos. One entry per repo you want the commander to poll.",
+  "_description": "Copy to state/repos.json and fill in. One entry per repo you want Hydra to poll. Hydra can work on external repos AND on itself simultaneously.",
   "default_ticket_trigger": "assignee",
   "_trigger_modes": {
-    "assignee": "Commander picks up issues assigned to you (the gh auth user). Simplest UX — no labels required. Good if you treat 'assigned to me' as 'please take this'.",
-    "label": "Commander picks up only issues labeled 'commander-ready'. Explicit per-ticket opt-in. Use this if your 'assigned to me' field is already used for personal work tracking."
+    "assignee": "Commander picks up issues assigned to you (the gh auth user). Simplest UX — no labels required.",
+    "label": "Commander picks up only issues labeled 'commander-ready'. Explicit per-ticket opt-in.",
+    "linear": "Commander polls Linear via MCP. Requires 'claude mcp add linear' and state/linear.json populated."
   },
   "repos": [
     {
+      "_comment": "DOGFOOD — Hydra working on Hydra itself. File issues on tonychang04/hydra (or your fork), assign to yourself, and let a worker implement a spec from docs/specs/. See DEVELOPING.md.",
+      "owner": "tonychang04",
+      "name": "hydra",
+      "local_path": "REPLACE_WITH_ABSOLUTE_PATH_TO_YOUR_HYDRA_CLONE",
+      "enabled": false,
+      "ticket_trigger": "assignee"
+    },
+    {
+      "_comment": "Your own repo — the normal use case. One entry per repo you want Hydra to clear tickets in.",
       "owner": "your-org",
       "name": "your-repo",
-      "local_path": "/absolute/path/to/local/clone",
+      "local_path": "/absolute/path/to/your/local/clone",
       "enabled": true,
       "ticket_trigger": "assignee"
     },
     {
+      "_comment": "Another repo of yours, using the label trigger instead of assignee.",
       "owner": "your-org",
-      "name": "other-repo",
-      "local_path": "/absolute/path/to/other",
+      "name": "another-repo",
+      "local_path": "/absolute/path/to/another/clone",
       "enabled": true,
       "ticket_trigger": "label"
     },
     {
+      "_comment": "An infra-critical repo — disabled because it's effectively Tier 3 everywhere. Re-enable only if you want workers to attempt non-infra tickets in it.",
       "owner": "your-org",
       "name": "infra-repo",
       "local_path": "/absolute/path/to/infra",
@@ -28,5 +40,5 @@
       "disabled_reason": "Tier 3 always — infra changes refused"
     }
   ],
-  "notes": "State labels (commander-working, commander-review, commander-stuck, commander-rejected, commander-reviewed, commander-skill-promotion) are created lazily by the commander on first use. You don't need to create them up-front."
+  "notes": "Flip enabled:false to exclude a repo temporarily. State labels (commander-working, commander-review, commander-stuck, commander-rejected, commander-reviewed, commander-skill-promotion) are created lazily by Hydra on first use — you do not need to create them up-front."
 }
