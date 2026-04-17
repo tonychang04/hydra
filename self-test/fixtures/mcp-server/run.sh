@@ -49,7 +49,11 @@ EOF
 PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")
 
 # --- start the server -------------------------------------------------------
+# Pin HYDRA_MCP_TOOLS to the worktree-local manifest so an inherited HYDRA_ROOT
+# (e.g. from an operator's shell or another worktree) can't redirect the
+# server to the wrong mcp/hydra-tools.json and skew the expected tool count.
 HYDRA_MCP_CONFIG="$TMP/mcp.json" \
+HYDRA_MCP_TOOLS="$ROOT_DIR/mcp/hydra-tools.json" \
 HYDRA_MCP_AUDIT_LOG="$TMP/audit.jsonl" \
 HYDRA_MCP_PAUSE_FILE="$TMP/PAUSE" \
   python3 "$ROOT_DIR/scripts/hydra-mcp-server.py" --port "$PORT" --bind 127.0.0.1 \
