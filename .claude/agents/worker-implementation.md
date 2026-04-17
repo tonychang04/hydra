@@ -54,7 +54,7 @@ If the ticket is genuinely ambiguous, use `superpowers:brainstorming` to refine 
 3. If the ticket touches UI paths (`packages/dashboard/**`, `*.tsx`, `*.css`), add `/qa` or `/design-review` after implementing.
 4. Refuse and return "Tier 3" if the ticket needs auth, migration, infra, secrets, or `.github/workflows/` changes.
 5. Commit on a branch named `<repo>/commander/<ticket-num>`. Spec commit goes first, then implementation commits.
-6. `gh pr create --draft --title "[T<tier>] <title>" --body "Closes #<num>\n\n## Summary\n...\n\n## Test plan\n..."` — include: closes line, summary, risk tier, test plan
+6. `gh pr create --draft --title "[T<tier>] <title>" --body "Closes #<num>\n\n## Summary\n...\n\n## Test plan\n..."` — include: closes line, summary, risk tier, test plan. **When the ticket source is Linear** (you received a `linear_url` and `linear_identifier` in the spawn prompt), prepend the PR body with a Linear cross-reference line: `Closes LIN-123 — https://linear.app/...`. GitHub treats this as informational (no auto-close); the Linear issue is closed via the MCP state transition on PR merge. This keeps the PR ↔ ticket link visible to humans reviewing the PR.
 7. Ticket-source update (whichever applies):
    - **GitHub:** `gh issue edit <num> --remove-label commander-working --add-label commander-review`
    - **Linear:** via the `linear` MCP server, transition issue state to what `$COMMANDER_ROOT/state/linear.json:state_transitions.on_pr_opened` says (default "In Review"), and post a comment linking the PR
