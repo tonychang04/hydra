@@ -1536,6 +1536,44 @@
       },
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "cloud-worker-docker-available",
+      "_description": "Opt-in self-test for the cloud-worker DinD image variant (ticket #77). SKIPs by default. To run: set HYDRA_TEST_CLOUD_DOCKER=1 on a machine with docker + --privileged support (local laptop with docker desktop works; CI runners generally do NOT). When active, the test (1) builds the image with --build-arg ENABLE_DOCKER=true, (2) confirms docker binary is present + hydra user is in the docker group, (3) runs `docker info` inside the built image under --privileged to verify the inner daemon starts and talks to its socket. Each build is ~400-600 MB + ~60-90s wall-clock, so gating this behind an env var keeps the default CI run fast and prevents false-greens on hosts that can't meaningfully run it. Spec: docs/specs/2026-04-17-cloud-worker-docker.md.",
+      "kind": "script",
+      "requires": [
+        "requires_cloud_docker_opt_in"
+      ],
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "build the DinD image variant",
+          "cmd": "docker build --build-arg ENABLE_DOCKER=true -t hydra-dind-selftest:ci -f infra/Dockerfile . >/tmp/hydra-dind-build-$$.log 2>&1 && echo BUILT_OK || (tail -60 /tmp/hydra-dind-build-$$.log >&2; rm -f /tmp/hydra-dind-build-$$.log; exit 1)",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BUILT_OK"
+        },
+        {
+          "name": "docker CLI present in DinD image",
+          "cmd": "docker run --rm hydra-dind-selftest:ci docker --version | grep -qE 'Docker version' && echo DOCKER_CLI_PRESENT",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DOCKER_CLI_PRESENT"
+        },
+        {
+          "name": "hydra user is in docker group",
+          "cmd": "docker run --rm hydra-dind-selftest:ci id hydra | grep -qE '\\b(docker)\\b' && echo HYDRA_IN_DOCKER_GROUP",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HYDRA_IN_DOCKER_GROUP"
+        },
+        {
+          "name": "inner dockerd reports a live Server Version under --privileged",
+          "cmd": "docker run --privileged --rm hydra-dind-selftest:ci sh -c 'dockerd >/tmp/dind.log 2>&1 & for i in $(seq 1 20); do docker info >/tmp/info.log 2>&1 && break; sleep 1; done; grep -qE \"^\\s*Server Version:\\s+[0-9]+\\.\" /tmp/info.log && echo DIND_SERVER_UP || (tail -40 /tmp/dind.log /tmp/info.log >&2; exit 1)'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DIND_SERVER_UP"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
