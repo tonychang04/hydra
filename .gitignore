@@ -14,6 +14,7 @@ state/autopickup.json
 state/commander.lock
 state/pending-dispatches.json
 state/slack-notified-prs.json
+state/webhook-triggers/
 
 # Connector configs — real values live here; only the .example mirror is committed.
 state/connectors/*.json
