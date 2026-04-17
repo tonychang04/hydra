@@ -548,10 +548,11 @@ check_memory() {
       # bash 3.2 note: `foo=("$glob"*)` under `set -u` with zero matches leaves
       # foo unset, which then blows up `"${foo[@]}"`. shopt nullglob above
       # gives us an empty array on zero-matches; still default-guard the
-      # expansion so a bare `set -u` + empty dir doesn't abort doctor.
+      # expansion so a bare `set -u` + empty dir doesn't abort doctor even
+      # if a future refactor drops `nullglob`.
       local ext_learnings=("$ext_mem/"learnings-*.md)
-      if [[ ${#ext_learnings[@]} -gt 0 ]]; then
-        learning_files+=("${ext_learnings[@]}")
+      if [[ ${#ext_learnings[@]:-0} -gt 0 ]]; then
+        learning_files+=("${ext_learnings[@]:-}")
       fi
     fi
     shopt -u nullglob
