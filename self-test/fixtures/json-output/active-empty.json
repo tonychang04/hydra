@@ -1,0 +1,5 @@
+{
+  "_description": "Fixture state/active.json with zero workers for the json-output-schema-valid self-test empty-state branch.",
+  "workers": [],
+  "last_updated": null
+}

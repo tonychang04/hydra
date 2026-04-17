@@ -1,0 +1,136 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/hydra-status-output.schema.json",
+  "title": "Hydra status / ps CLI JSON output",
+  "description": "Canonical shape of the JSON emitted by `./hydra status --json` and `./hydra ps --json`. Stable, additive-only contract for agents driving Hydra (OpenClaw, MCP clients, external orchestrators). The `version` field gates breaking changes; additive changes (new optional fields) leave it alone. Cross-referenced from mcp/hydra-tools.json as the canonical shape for hydra.get_status output. Spec: docs/specs/2026-04-17-json-output-mode.md (ticket #105).",
+  "oneOf": [
+    { "$ref": "#/definitions/status_output" },
+    { "$ref": "#/definitions/ps_output" }
+  ],
+  "definitions": {
+    "status_output": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["version", "active_workers", "today", "paused", "autopickup"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Contract version. Bumps only on breaking changes. Additive changes (new optional fields) leave this alone.",
+          "enum": ["1.0"]
+        },
+        "generated_at": {
+          "type": "string",
+          "description": "ISO-8601 timestamp when this snapshot was emitted. Clients diff two snapshots by this field.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        },
+        "active_workers": {
+          "type": "array",
+          "description": "In-flight workers from state/active.json. Empty array if none.",
+          "items": { "$ref": "#/definitions/worker" }
+        },
+        "today": {
+          "type": "object",
+          "description": "Per-day counters from state/budget-used.json.",
+          "required": ["done", "failed", "wall_clock_min"],
+          "properties": {
+            "done": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "integer", "minimum": 0 },
+            "wall_clock_min": { "type": "number", "minimum": 0 }
+          }
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "True if PAUSE or commander/PAUSE sentinel file is present; Commander refuses new spawns while true."
+        },
+        "autopickup": {
+          "type": "object",
+          "description": "Snapshot of state/autopickup.json (with defaults if file is missing).",
+          "required": ["enabled", "interval_min"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval_min": { "type": "integer", "minimum": 5, "maximum": 120 },
+            "last_run": { "type": ["string", "null"] },
+            "consecutive_rate_limit_hits": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "repos": {
+          "type": "object",
+          "description": "Configured-repo counts from state/repos.json.",
+          "properties": {
+            "enabled": { "type": "integer", "minimum": 0 },
+            "total": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "pending": {
+          "type": "object",
+          "description": "Pending-dispatch queue from state/pending-dispatches.json.",
+          "properties": {
+            "count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "quota_health": {
+          "type": "object",
+          "description": "Provider quota / rate-limit health. Optional; absent when state/quota-health.json is not maintained.",
+          "properties": {
+            "github_rate_limit_ok": { "type": "boolean" },
+            "linear_rate_limit_ok": { "type": "boolean" }
+          }
+        },
+        "tickets_ready": {
+          "type": ["integer", "string", "null"],
+          "description": "Ready-ticket count across enabled repos. Integer when populated via --with-tickets, string ('skipped (no gh)') when gh is unavailable, null when not computed."
+        }
+      }
+    },
+    "ps_output": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["version", "workers"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "enum": ["1.0"]
+        },
+        "generated_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        },
+        "workers": {
+          "type": "array",
+          "description": "Per-worker detail array. Empty array if no active workers.",
+          "items": { "$ref": "#/definitions/worker" }
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "ticket", "repo", "tier", "started_at", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "ticket": { "type": "string", "minLength": 1 },
+        "repo": { "type": "string", "minLength": 1 },
+        "tier": { "type": "string", "enum": ["T1", "T2", "T3"] },
+        "started_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        },
+        "subagent_type": {
+          "type": "string",
+          "description": "Which worker subagent type spawned this entry. Optional for back-compat with pre-2026-04-17 state entries."
+        },
+        "status": {
+          "type": "string",
+          "description": "Worker lifecycle state per state/schemas/active.schema.json."
+        },
+        "worktree": { "type": "string" },
+        "branch": { "type": "string" },
+        "minutes_running": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Wall-clock minutes since started_at. Present on ps output, optional on status output."
+        }
+      }
+    }
+  }
+}

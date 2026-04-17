@@ -1,9 +1,8 @@
 # Hydra demo recording
 
-Lives here so the README can embed it without a network fetch. Refreshing this
-artifact is a manual, operator-driven task — we don't regenerate on every PR
-because the flow involves real GitHub issues, real worker spawns, and real
-merges that don't repro deterministically in CI.
+**Looking for the hands-on demo?** Go to [`examples/hello-hydra-demo/DEMO.md`](../../examples/hello-hydra-demo/DEMO.md). It's a ~10-minute live walkthrough against a fixture repo with 3 pre-seeded tickets — the fastest way to see Hydra clear real issues end-to-end. You run it yourself in your shell; no video needed.
+
+This directory is **just the passive-viewer bonus** — an asciinema cast someone can watch instead of running the walkthrough. Refreshing this artifact is a manual, operator-driven task — we don't regenerate on every PR because the flow involves real GitHub issues, real worker spawns, and real merges that don't repro deterministically in CI.
 
 ## Files
 

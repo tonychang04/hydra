@@ -1,0 +1,39 @@
+{
+  "_description": "Fixture state/active.json with three mixed-tier workers for the json-output-schema-valid self-test.",
+  "workers": [
+    {
+      "id": "w-fix-a",
+      "ticket": "fixture-org/alpha#42",
+      "repo": "fixture-org/alpha",
+      "tier": "T1",
+      "started_at": "2026-04-17T12:00:00Z",
+      "subagent_type": "worker-implementation",
+      "status": "running",
+      "worktree": "/tmp/fixture/alpha/.claude/worktrees/agent-aaa",
+      "branch": "hydra/commander/42"
+    },
+    {
+      "id": "w-fix-b",
+      "ticket": "fixture-org/beta#7",
+      "repo": "fixture-org/beta",
+      "tier": "T2",
+      "started_at": "2026-04-17T12:05:30Z",
+      "subagent_type": "worker-review",
+      "status": "running",
+      "worktree": "/tmp/fixture/beta/.claude/worktrees/agent-bbb",
+      "branch": "hydra/commander/7"
+    },
+    {
+      "id": "w-fix-c",
+      "ticket": "fixture-org/gamma#99",
+      "repo": "fixture-org/gamma",
+      "tier": "T2",
+      "started_at": "2026-04-17T12:12:00Z",
+      "subagent_type": "worker-implementation",
+      "status": "paused-on-question",
+      "worktree": "/tmp/fixture/gamma/.claude/worktrees/agent-ccc",
+      "branch": "hydra/commander/99"
+    }
+  ],
+  "last_updated": "2026-04-17T12:12:00Z"
+}

@@ -1,79 +1,288 @@
 #!/usr/bin/env bash
-# Hydra setup — run once after cloning. Idempotent; safe to re-run.
+# Hydra setup — interactive bootstrap. Idempotent; safe to re-run.
+#
+# Default mode is interactive: the script auto-detects what's installed,
+# prints a color-coded ✓ / ⚠ / ✗ summary, and asks at most one plain-English
+# question (memory directory) with a sensible default.
+#
+# Non-interactive mode (all prompts skipped, all defaults accepted) triggers
+# automatically when ANY of:
+#   - --non-interactive / --ci flag
+#   - stdin is not a TTY (piped, redirected, closed)
+#   - HYDRA_NON_INTERACTIVE=1 env var
+#   - CI=true env var (GitHub Actions, GitLab, etc.)
+#
+# The .hydra.env output format is unchanged from previous versions — existing
+# installs re-running this script see "already exists — leaving as-is" for
+# every artifact, identical to the pre-#102 behavior.
+#
+# Spec: docs/specs/2026-04-17-interactive-setup.md (ticket #102)
+
 set -euo pipefail
 
 HYDRA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HYDRA_ROOT"
 
-say() { printf "\n\033[1m▸ %s\033[0m\n" "$*"; }
-warn() { printf "\033[33m⚠ %s\033[0m\n" "$*"; }
-fail() { printf "\033[31m✗ %s\033[0m\n" "$*"; exit 1; }
-ok()   { printf "\033[32m✓ %s\033[0m\n" "$*"; }
+# ----------------------------------------------------------------------------
+# flag parsing
+# ----------------------------------------------------------------------------
+INTERACTIVE=1
 
+for arg in "$@"; do
+  case "$arg" in
+    --non-interactive|--ci) INTERACTIVE=0 ;;
+    -h|--help)
+      cat <<'HELP'
+Usage: ./setup.sh [options]
+
+Bootstrap a fresh Hydra install. Idempotent — safe to re-run.
+
+Options:
+  --non-interactive   Skip all prompts, use all defaults (alias: --ci).
+                      Also auto-enabled when stdin is not a TTY, when
+                      HYDRA_NON_INTERACTIVE=1, or when CI=true.
+  -h, --help          Show this help.
+
+Environment variables:
+  HYDRA_EXTERNAL_MEMORY_DIR  If set, used as the memory directory and the
+                             prompt is skipped (interactive or not).
+  NO_COLOR=1                 Disable ANSI color output.
+  HYDRA_NON_INTERACTIVE=1    Force non-interactive mode.
+HELP
+      exit 0
+      ;;
+    *)
+      printf '✗ Unknown argument: %s\n  Run ./setup.sh --help for options.\n' "$arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# Auto-detect non-interactive mode.
+if [[ ! -t 0 ]] || [[ "${HYDRA_NON_INTERACTIVE:-}" = "1" ]] || [[ "${CI:-}" = "true" ]]; then
+  INTERACTIVE=0
+fi
+
+# ----------------------------------------------------------------------------
+# color / TTY
+# ----------------------------------------------------------------------------
+if [[ -t 1 ]] && [[ "${NO_COLOR:-}" != "1" ]]; then
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_RESET=$'\033[0m'
+else
+  C_GREEN=""
+  C_YELLOW=""
+  C_RED=""
+  C_BOLD=""
+  C_DIM=""
+  C_RESET=""
+fi
+
+say()  { printf "\n%s▸ %s%s\n" "$C_BOLD" "$*" "$C_RESET"; }
+ok()   { printf "  %s✓%s %s\n" "$C_GREEN"  "$C_RESET" "$*"; }
+warn() { printf "  %s⚠%s %s\n" "$C_YELLOW" "$C_RESET" "$*"; }
+fail() { printf "  %s✗%s %s\n" "$C_RED"    "$C_RESET" "$*" >&2; exit 1; }
+dim()  { printf "    %s%s%s\n" "$C_DIM" "$*" "$C_RESET"; }
+
+# Run a command with a short timeout so hung daemons never freeze setup.
+# Falls back to the plain command if `timeout` isn't on PATH.
+timed() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${secs}s" "$@"
+  else
+    "$@"
+  fi
+}
+
+# ----------------------------------------------------------------------------
+# banner
+# ----------------------------------------------------------------------------
 say "Hydra setup at $HYDRA_ROOT"
+if [[ "$INTERACTIVE" -eq 0 ]]; then
+  dim "(non-interactive mode — all prompts skipped, defaults accepted)"
+fi
 
-# ---------- Prerequisites ----------
-say "Checking prerequisites"
-command -v claude >/dev/null || fail "Claude Code CLI not found. Install from https://claude.com/claude-code"
-ok "claude CLI found"
+# ----------------------------------------------------------------------------
+# Prereq detection
+#   Hard requirements: claude, gh. Missing → red ✗ + exit.
+#   Informational: docker, aws, flyctl, jq. Missing → yellow ⚠, setup continues.
+# ----------------------------------------------------------------------------
+say "Checking what's already installed"
 
-command -v gh >/dev/null || fail "GitHub CLI not found. brew install gh"
-gh auth status >/dev/null 2>&1 || fail "gh not authenticated. Run: gh auth login"
-GH_USER=$(gh api user --jq .login)
-ok "gh authenticated as $GH_USER"
+# -- Claude Code CLI (hard) --
+if command -v claude >/dev/null 2>&1; then
+  CLAUDE_VER="$(timed 3 claude --version 2>/dev/null | head -n1 | tr -d '[:cntrl:]' || true)"
+  CLAUDE_VER="${CLAUDE_VER:-installed}"
+  ok "Claude Code — $CLAUDE_VER"
+else
+  fail "Claude Code not installed — install from https://claude.com/claude-code"
+fi
 
-command -v jq >/dev/null || warn "jq not found — needed for some helper scripts. brew install jq"
+# -- GitHub CLI (hard) --
+if ! command -v gh >/dev/null 2>&1; then
+  fail "GitHub CLI not found — brew install gh (or https://cli.github.com/)"
+fi
+if ! timed 5 gh auth status >/dev/null 2>&1; then
+  fail "GitHub CLI installed but not authenticated — run: gh auth login"
+fi
+GH_USER="$(timed 5 gh api user --jq .login 2>/dev/null || echo 'unknown')"
+ok "GitHub CLI — signed in as $GH_USER"
 
-# ---------- External memory directory ----------
+# -- Docker (informational) --
+if command -v docker >/dev/null 2>&1; then
+  if timed 3 docker info >/dev/null 2>&1; then
+    ok "Docker reachable"
+  else
+    warn "Docker installed but daemon unreachable — start Docker Desktop to enable cloud-mode worker isolation"
+  fi
+else
+  warn "Docker not found — cloud-mode worker isolation disabled (you can enable later)"
+fi
+
+# -- AWS CLI + credentials (informational) --
+if command -v aws >/dev/null 2>&1; then
+  if timed 5 aws sts get-caller-identity >/dev/null 2>&1; then
+    AWS_ACCT="$(timed 5 aws sts get-caller-identity --query Account --output text 2>/dev/null || echo 'unknown')"
+    ok "AWS credentials — account $AWS_ACCT"
+  else
+    warn "AWS CLI found but credentials not set — S3-backed memory disabled (you can enable later)"
+  fi
+else
+  warn "AWS CLI not found — S3-backed memory disabled (you can enable later)"
+fi
+
+# -- Fly CLI (informational) --
+FLY_VER=""
+if command -v flyctl >/dev/null 2>&1; then
+  FLY_VER="$(timed 3 flyctl version 2>/dev/null | head -n1 | tr -d '[:cntrl:]' || true)"
+elif command -v fly >/dev/null 2>&1; then
+  FLY_VER="$(timed 3 fly version 2>/dev/null | head -n1 | tr -d '[:cntrl:]' || true)"
+fi
+if [[ -n "$FLY_VER" ]]; then
+  ok "Fly CLI — $FLY_VER"
+else
+  warn "Fly CLI not found — cloud deploy disabled (you can enable later)"
+fi
+
+# -- jq (informational — some helper scripts need it) --
+if command -v jq >/dev/null 2>&1; then
+  JQ_VER="$(timed 3 jq --version 2>/dev/null || echo 'installed')"
+  ok "jq — $JQ_VER"
+else
+  warn "jq not found — some helper scripts will fail (brew install jq)"
+fi
+
+# ----------------------------------------------------------------------------
+# Prompt helper
+#   ask_path <question> <default> <varname>
+#     - interactive + stdin TTY → read -r with prompt
+#     - non-interactive OR env-var set → use default (or env-var value)
+#     - empty input → default
+#     - tilde and relative paths are normalized to absolute
+# ----------------------------------------------------------------------------
+ask_path() {
+  local question="$1"
+  local default="$2"
+  local varname="$3"
+  local answer=""
+
+  if [[ "$INTERACTIVE" -eq 1 ]]; then
+    printf "\n%s%s%s\n" "$C_BOLD" "$question" "$C_RESET"
+    printf "  %sDefault:%s %s\n" "$C_DIM" "$C_RESET" "$default"
+    # shellcheck disable=SC2162   # -r is set
+    # read may return non-zero on EOF — we already guarded via INTERACTIVE but
+    # be defensive: `|| true` prevents set -e tripping on a closed FD.
+    read -r -p "  [Press Enter to accept, or type a different path]: " answer || answer=""
+  fi
+
+  # Empty answer → use default. Tilde-expand + normalize to absolute.
+  answer="${answer:-$default}"
+  # Tilde expansion (bash `read` doesn't do this).
+  answer="${answer/#\~/$HOME}"
+  # Normalize to absolute. If the path doesn't yet exist, resolve the parent.
+  if [[ "$answer" != /* ]]; then
+    warn "That's a relative path — normalizing to absolute."
+    answer="$PWD/$answer"
+  fi
+
+  printf -v "$varname" '%s' "$answer"
+}
+
+# ----------------------------------------------------------------------------
+# Memory directory
+# ----------------------------------------------------------------------------
 DEFAULT_EXT_MEM="${HOME}/.hydra/memory"
-say "External memory directory (where per-target-repo learnings live; gitignored + outside this repo)"
-printf "  Default: %s\n  [Enter to accept, or type a different absolute path]: " "$DEFAULT_EXT_MEM"
-read -r EXT_MEM_INPUT
-EXT_MEM_DIR="${EXT_MEM_INPUT:-$DEFAULT_EXT_MEM}"
-mkdir -p "$EXT_MEM_DIR"
-ok "External memory: $EXT_MEM_DIR"
 
-# ---------- Permission profile ----------
+if [[ -n "${HYDRA_EXTERNAL_MEMORY_DIR:-}" ]]; then
+  EXT_MEM_DIR="$HYDRA_EXTERNAL_MEMORY_DIR"
+  say "Memory folder"
+  ok "Using HYDRA_EXTERNAL_MEMORY_DIR from env: $EXT_MEM_DIR"
+else
+  say "Memory folder"
+  dim "Hydra learns what works for each of your repos and stores those notes here."
+  dim "This lives outside the hydra repo so it persists across upgrades."
+  ask_path "Where should Hydra store its memory?" "$DEFAULT_EXT_MEM" EXT_MEM_DIR
+fi
+
+# Create the dir; surface a friendly error if the user pointed at a file.
+if [[ -e "$EXT_MEM_DIR" ]] && [[ ! -d "$EXT_MEM_DIR" ]]; then
+  fail "$EXT_MEM_DIR exists and is a file, not a directory. Pick a different path or move the file."
+fi
+if ! mkdir -p "$EXT_MEM_DIR" 2>/dev/null; then
+  fail "Cannot create $EXT_MEM_DIR — check permissions or pick a different path."
+fi
+ok "Memory folder: $EXT_MEM_DIR"
+
+# ----------------------------------------------------------------------------
+# Config file generation (idempotent — "already exists" = yellow ⚠, no prompt)
+# ----------------------------------------------------------------------------
+say "Writing config files"
+
+# -- Permission profile --
 if [[ -f .claude/settings.local.json ]]; then
   warn ".claude/settings.local.json already exists — leaving as-is"
 else
-  say "Creating .claude/settings.local.json from template"
   HOME_DIR_ESC=$(printf '%s' "$HOME" | sed 's:/:\\/:g')
   HYDRA_ROOT_ESC=$(printf '%s' "$HYDRA_ROOT" | sed 's:/:\\/:g')
   sed -e "s/\$COMMANDER_ROOT/$HYDRA_ROOT_ESC/g" \
       -e "s/\$HOME_DIR/$HOME_DIR_ESC/g" \
       .claude/settings.local.json.example > .claude/settings.local.json
-  ok "Wrote .claude/settings.local.json (edit to tune allow/deny if needed)"
+  ok ".claude/settings.local.json"
 fi
 
-# ---------- Repos config ----------
+# -- Repos config --
 if [[ -f state/repos.json ]]; then
   warn "state/repos.json already exists — leaving as-is"
 else
-  say "Creating state/repos.json from template"
   cp state/repos.example.json state/repos.json
-  ok "Wrote state/repos.json — edit this to list your repos (owner, name, local_path, ticket_trigger)"
+  ok "state/repos.json (edit to list your repos)"
 fi
 
-# ---------- Runtime state files ----------
-say "Initializing runtime state files"
+# -- Runtime state files --
 for f in state/active.json state/budget-used.json state/memory-citations.json state/autopickup.json; do
   if [[ -f "$f" ]]; then
-    ok "$f exists"
+    ok "$f (exists)"
   else
     case "$f" in
-      */active.json)          echo '{"workers": [], "last_updated": null}' > "$f" ;;
-      */budget-used.json)     echo '{"date": null, "tickets_completed_today": 0, "tickets_failed_today": 0, "total_worker_wall_clock_minutes_today": 0, "rate_limit_hits_today": 0, "phase2_spend_usd_today": 0}' > "$f" ;;
+      */active.json)           echo '{"workers": [], "last_updated": null}' > "$f" ;;
+      */budget-used.json)      echo '{"date": null, "tickets_completed_today": 0, "tickets_failed_today": 0, "total_worker_wall_clock_minutes_today": 0, "rate_limit_hits_today": 0, "phase2_spend_usd_today": 0}' > "$f" ;;
       */memory-citations.json) echo '{"_schema": "key = learnings-<repo>.md#<quote>, value = {count, last_cited, tickets, promotion_threshold_reached}", "citations": {}}' > "$f" ;;
-      */autopickup.json)      echo '{"enabled": false, "interval_min": 30, "auto_enable_on_session_start": true, "last_run": null, "last_picked_count": 0, "consecutive_rate_limit_hits": 0}' > "$f" ;;
+      */autopickup.json)       echo '{"enabled": false, "interval_min": 30, "auto_enable_on_session_start": true, "last_run": null, "last_picked_count": 0, "consecutive_rate_limit_hits": 0}' > "$f" ;;
     esac
-    ok "Created $f"
+    ok "$f"
   fi
 done
 
-# ---------- .env for the launcher ----------
+# -- .env for the launcher --
+#   FORMAT CONTRACT: these three exports must stay in this order with this
+#   exact quoting. scripts/test-local-config.sh greps for them by name.
 if [[ -f .hydra.env ]]; then
-  warn ".hydra.env exists — leaving as-is"
+  warn ".hydra.env already exists — leaving as-is"
 else
   cat > .hydra.env <<EOF
 # Hydra environment — sourced by ./hydra launcher.
@@ -82,12 +291,17 @@ export HYDRA_ROOT="$HYDRA_ROOT"
 export HYDRA_EXTERNAL_MEMORY_DIR="$EXT_MEM_DIR"
 export COMMANDER_ROOT="$HYDRA_ROOT"
 EOF
-  ok "Wrote .hydra.env"
+  ok ".hydra.env"
 fi
 
-# ---------- Launcher ----------
+# ----------------------------------------------------------------------------
+# Launcher — DO NOT MODIFY the heredoc below. Contract per
+# memory/learnings-hydra.md 2026-04-17 #84: ./hydra is NOT committed, it's
+# generated here. Editing this block is how you add new ./hydra subcommands,
+# but reflowing or restructuring breaks the launcher contract.
+# ----------------------------------------------------------------------------
 if [[ -f hydra ]]; then
-  warn "./hydra launcher exists — leaving as-is"
+  warn "./hydra launcher already exists — leaving as-is"
 else
   cat > hydra <<'EOF'
 #!/usr/bin/env bash
@@ -113,10 +327,16 @@ else
 #   ./hydra add-repo <owner>/<name> [args]   Interactive wizard: add a repo.
 #   ./hydra remove-repo <owner>/<name>       Remove a repo entry.
 #   ./hydra list-repos                       Table view of state/repos.json.
-#   ./hydra status [--with-tickets]          Read-only Hydra state snapshot.
+#   ./hydra status [--with-tickets] [--json] Read-only Hydra state snapshot.
+#   ./hydra ps [--json]                      Per-worker detail from state/active.json.
 #   ./hydra pause [--reason <text>]          Toggle PAUSE on.
 #   ./hydra resume                           Toggle PAUSE off.
 #   ./hydra issue <url-or-owner/repo/num>    Queue a specific issue for next tick.
+#   ./hydra activity [--json]                Text-based observability: last 24h
+#                                            of log activity + live worker
+#                                            snapshot + top memory citations
+#                                            (spec: docs/specs/2026-04-17-hydra-activity.md,
+#                                            ticket #19).
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -156,9 +376,11 @@ case "${1:-}" in
   remove-repo)  shift; hydra_exec_helper scripts/hydra-remove-repo.sh "$@" ;;
   list-repos)   shift; hydra_exec_helper scripts/hydra-list-repos.sh "$@" ;;
   status)       shift; hydra_exec_helper scripts/hydra-status.sh "$@" ;;
+  ps)           shift; hydra_exec_helper scripts/hydra-ps.sh "$@" ;;
   pause)        shift; hydra_exec_helper scripts/hydra-pause.sh "$@" ;;
   resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
+  activity)     shift; hydra_exec_helper scripts/hydra-activity.sh "$@" ;;
   mcp)
     shift
     case "${1:-}" in
@@ -228,27 +450,46 @@ if [[ -n "$HYDRA_NO_AUTOPICKUP_FLAG" ]]; then
   export HYDRA_NO_AUTOPICKUP=1
 fi
 
+# --- Dual-mode memory: S3 pull at session start ----------------------------
+# If the operator has flipped HYDRA_MEMORY_BACKEND to s3 or s3-strict
+# (via .hydra.env or their shell), pull the memory dir from S3 BEFORE
+# launching Claude so this session starts with the freshest shared state.
+# - s3          → warn on failure, continue (fail-soft)
+# - s3-strict   → exit 1 on failure (cloud commander must not boot stale)
+# Spec: docs/specs/2026-04-17-dual-mode-memory.md
+case "${HYDRA_MEMORY_BACKEND:-local}" in
+  s3|s3-strict)
+    if [[ -x scripts/hydra-memory-sync.sh ]]; then
+      echo "▸ Dual-mode memory: pulling ${HYDRA_MEMORY_BACKEND} memory from S3..."
+      if ! scripts/hydra-memory-sync.sh --pull; then
+        if [[ "$HYDRA_MEMORY_BACKEND" == "s3-strict" ]]; then
+          echo "✗ s3-strict: memory pull failed; refusing to launch" >&2
+          exit 1
+        fi
+        echo "⚠ memory pull failed; continuing with local copy (backend=s3)" >&2
+      fi
+    fi
+    ;;
+esac
+
 exec claude ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}
 EOF
   chmod +x hydra
-  ok "Wrote ./hydra launcher (chmod +x)"
+  ok "./hydra launcher (chmod +x)"
 fi
 
-# ---------- Summary ----------
-say "Setup complete"
+# ----------------------------------------------------------------------------
+# Summary
+# ----------------------------------------------------------------------------
+printf "\n%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n" "$C_DIM" "$C_RESET"
+printf "%sSetup complete.%s\n\n" "$C_BOLD" "$C_RESET"
 cat <<EOF
-
 Next steps:
-  1. Edit state/repos.json — add the repos you want Hydra to poll.
-  2. Review .claude/settings.local.json — tune allow/deny if your workflow needs it.
-  3. (Optional) claude mcp add linear — if using Linear as a ticket source.
-  4. Launch:  ./hydra
+  1. Tell Hydra about a repo:  ./hydra add-repo <owner>/<repo>
+  2. Launch the commander:     ./hydra
 
-File issues in those repos (assign to yourself or label commander-ready),
-then in the Hydra chat: pick up N.
+Memory folder: $EXT_MEM_DIR
+  Outside the hydra repo on purpose — learnings persist across upgrades.
 
-External operational memory (per-target-repo learnings): $EXT_MEM_DIR
-  → This is deliberately outside the hydra repo. Framework memory stays in ./memory/.
-
-Docs:  README.md (what) · USAGE.md (how) · docs/specs/ (why)
+Docs: README.md (what) · USING.md (how) · docs/specs/ (why)
 EOF
