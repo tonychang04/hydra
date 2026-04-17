@@ -320,7 +320,7 @@ atomic_write() {
 # about. For each, report installed / missing state.
 cmd_list() {
   # The canonical set. If a new connector is added, extend here.
-  declare -a connectors=("linear" "slack" "supervisor")
+  declare -a connectors=("linear" "slack" "supervisor" "digest")
 
   printf "%-12s %-12s %s\n" "CONNECTOR" "STATE" "DETAIL"
   printf "%-12s %-12s %s\n" "---------" "-----" "------"
@@ -371,6 +371,22 @@ cmd_list() {
           fi
         else
           detail="no $MCP_FILE"
+        fi
+        ;;
+      digest)
+        if [[ -f "$DIGEST_FILE" ]]; then
+          local enabled channel
+          enabled="$(jq -r '.enabled // false' "$DIGEST_FILE" 2>/dev/null || echo false)"
+          channel="$(jq -r '.channel // "stdout"' "$DIGEST_FILE" 2>/dev/null || echo stdout)"
+          if [[ "$enabled" == "true" ]]; then
+            state="installed"
+            detail="$DIGEST_FILE (enabled, channel=$channel)"
+          else
+            state="disabled"
+            detail="$DIGEST_FILE (enabled=false)"
+          fi
+        else
+          detail="no $DIGEST_FILE"
         fi
         ;;
     esac
@@ -471,6 +487,36 @@ cmd_status() {
       else
         ok_names+=("supervisor")
         [[ "$quiet" -eq 1 ]] || printf "%-12s %-12s %s\n" "supervisor" "OK" "upstream_supervisor enabled + connect_url set"
+      fi
+    fi
+  }
+
+  # ---- digest (daily status paragraph — spec: docs/specs/2026-04-17-daily-digest.md) ----
+  {
+    if [[ ! -f "$DIGEST_FILE" ]]; then
+      disabled_names+=("digest")
+      [[ "$quiet" -eq 1 ]] || printf "%-12s %-12s %s\n" "digest" "NOT-CONFIG" "run: ./hydra connect digest"
+    else
+      local enabled channel destination time
+      enabled="$(jq -r '.enabled // false' "$DIGEST_FILE")"
+      channel="$(jq -r '.channel // "stdout"' "$DIGEST_FILE")"
+      destination="$(jq -r '.destination // ""' "$DIGEST_FILE")"
+      time="$(jq -r '.time // "09:00"' "$DIGEST_FILE")"
+      if [[ "$enabled" != "true" ]]; then
+        disabled_names+=("digest")
+        [[ "$quiet" -eq 1 ]] || printf "%-12s %-12s %s\n" "digest" "DISABLED" "$DIGEST_FILE:enabled=false"
+      elif [[ -z "$destination" ]]; then
+        broken_names+=("digest destination empty")
+        any_broken=1
+        [[ "$quiet" -eq 1 ]] || printf "%-12s %-12s %s\n" "digest" "BROKEN" "destination is empty — channel has nowhere to write"
+      else
+        ok_names+=("digest")
+        if [[ "$channel" == "stdout" ]]; then
+          [[ "$quiet" -eq 1 ]] || printf "%-12s %-12s %s\n" "digest" "OK" "channel=stdout, fires at $time local, writes $destination"
+        else
+          # slack/webhook/email ride logs/digest-out.jsonl in Phase 1.
+          [[ "$quiet" -eq 1 ]] || printf "%-12s %-12s %s\n" "digest" "OK" "channel=$channel, fires at $time local (Phase 1 transport=JSONL; see spec)"
+        fi
       fi
     fi
   }
@@ -831,6 +877,150 @@ connect_supervisor() {
 }
 
 # -----------------------------------------------------------------------------
+# wizard: connect_digest — subscribe a channel to the daily status digest.
+# Spec: docs/specs/2026-04-17-daily-digest.md (ticket #144).
+# -----------------------------------------------------------------------------
+#
+# Writes state/digests.json. Validates against state/schemas/digests.schema.json.
+# Channel-specific destination semantics:
+#   stdout   → directory prefix (default memory/digests/).
+#   slack    → channel ID (C.../D.../G...).
+#   webhook  → env-var NAME holding the URL (never the URL itself).
+#   email    → bare address.
+#
+# Phase 1 behavior: stdout writes to memory/digests/YYYY-MM-DD.md AND prints
+# to stdout. slack/webhook/email append to logs/digest-out.jsonl — real
+# transport is a follow-up ticket.
+connect_digest() {
+  local dry_run="$1"
+
+  info "Connecting daily status digest"
+  info "Phase 1: stdout writes to memory/digests/YYYY-MM-DD.md; other channels append to logs/digest-out.jsonl (transport fan-out is a follow-up)."
+
+  local existing_json
+  if [[ -f "$DIGEST_FILE" ]]; then
+    existing_json="$(cat "$DIGEST_FILE")"
+  elif [[ -f "$DIGEST_EXAMPLE" ]]; then
+    existing_json="$(strip_doc_fields <"$DIGEST_EXAMPLE")"
+  else
+    err "neither $DIGEST_FILE nor $DIGEST_EXAMPLE exists"
+    exit 1
+  fi
+
+  local cur_enabled cur_channel cur_time cur_destination cur_last_run
+  cur_enabled="$(echo "$existing_json"     | jq -r '.enabled // false')"
+  cur_channel="$(echo "$existing_json"     | jq -r '.channel // "stdout"')"
+  cur_time="$(echo "$existing_json"        | jq -r '.time // "09:00"')"
+  cur_destination="$(echo "$existing_json" | jq -r '.destination // ""')"
+  cur_last_run="$(echo "$existing_json"    | jq -r '.last_digest_run // null')"
+
+  # If the caller did `./hydra connect digest <channel>`, we captured
+  # $subcommand="digest" earlier. We don't currently have a second positional;
+  # channel comes from the prompt. Operators who want one-liner can still
+  # set HYDRA_CONNECT_DIGEST_FILE + --non-interactive with a pre-seeded file.
+
+  local channel time destination enabled
+
+  # Reasonable default destination per channel — suggested on prompt if empty.
+  default_destination_for() {
+    case "$1" in
+      stdout)  echo "memory/digests/" ;;
+      slack)   echo "$(json_get_or_empty "$SLACK_FILE" '.default_channel')" ;;
+      webhook) echo "HYDRA_DIGEST_WEBHOOK_URL" ;;
+      email)   echo "" ;;
+      *)       echo "" ;;
+    esac
+  }
+
+  enabled="$(prompt_default "enabled (true|false)" "$cur_enabled" '^(true|false)$')"
+  channel="$(prompt_default "channel (stdout|slack|webhook|email)" "$cur_channel" '^(stdout|slack|webhook|email)$')"
+  time="$(prompt_default "time HH:MM local (default 09:00)" "$cur_time" '^([01][0-9]|2[0-3]):[0-5][0-9]$')"
+
+  # If channel changed since last run, surface the new default in the prompt.
+  local suggested_dest="$cur_destination"
+  if [[ -z "$suggested_dest" ]] || [[ "$cur_channel" != "$channel" ]]; then
+    suggested_dest="$(default_destination_for "$channel")"
+  fi
+
+  # Channel-specific prompt label + validation regex.
+  local dest_label dest_regex
+  case "$channel" in
+    stdout)
+      dest_label="destination directory (default memory/digests/)"
+      dest_regex=''
+      ;;
+    slack)
+      dest_label="destination Slack channel ID (C.../D.../G...)"
+      dest_regex='^[CDG][A-Z0-9]+$'
+      ;;
+    webhook)
+      dest_label="destination env-var NAME (never paste the URL; use e.g. HYDRA_DIGEST_WEBHOOK_URL)"
+      dest_regex='^[A-Z_][A-Z0-9_]*$'
+      ;;
+    email)
+      dest_label="destination email address"
+      dest_regex='^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
+      ;;
+  esac
+
+  destination="$(prompt_default "$dest_label" "$suggested_dest" "$dest_regex")"
+
+  if [[ "$enabled" == "true" ]] && [[ -z "$destination" ]]; then
+    err "destination is required when enabled=true (channel=$channel)"
+    exit 1
+  fi
+
+  # Guard: webhook destination must be an env-var NAME, not a raw URL. This
+  # catches the obvious paste-the-URL mistake even if --non-interactive
+  # skipped the regex check.
+  if [[ "$channel" == "webhook" ]] && [[ "$destination" == http://* || "$destination" == https://* ]]; then
+    err "webhook destination should be an env-var NAME (e.g. HYDRA_DIGEST_WEBHOOK_URL), not the URL itself — tokens stay out of this file"
+    exit 1
+  fi
+
+  # Build merged JSON. Preserve last_digest_run across re-runs so the tick
+  # doesn't fire a second time in the same day after an idempotent re-save.
+  local merged
+  merged="$(
+    echo "$existing_json" | jq \
+      --argjson enabled "$enabled" \
+      --arg channel     "$channel" \
+      --arg time        "$time" \
+      --arg destination "$destination" \
+      '
+      .enabled     = $enabled
+      | .channel     = $channel
+      | .time        = $time
+      | .destination = $destination
+      | .last_digest_run = (.last_digest_run // null)
+      '
+  )"
+
+  if [[ "$dry_run" -eq 1 ]]; then
+    printf "%s-- dry-run: would write to %s --%s\n" "$C_DIM" "$DIGEST_FILE" "$C_RESET" >&2
+    echo "$merged" | jq .
+    local tmp
+    tmp="$(mktemp)"
+    echo "$merged" >"$tmp"
+    if ! validate_against_schema "$tmp" "$DIGEST_SCHEMA"; then
+      rm -f "$tmp"
+      err "dry-run output failed schema validation"
+      exit 1
+    fi
+    rm -f "$tmp"
+    ok "dry-run JSON valid against $DIGEST_SCHEMA"
+    exit 0
+  fi
+
+  echo "$merged" | atomic_write "$DIGEST_FILE" "$DIGEST_SCHEMA"
+  ok "wrote $DIGEST_FILE"
+  if [[ "$enabled" == "true" ]]; then
+    info "Next fire: $time local (on the next autopickup tick at/after that)."
+    info "Preview now: scripts/build-daily-digest.sh"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # dispatch
 # -----------------------------------------------------------------------------
 case "$mode" in
@@ -838,13 +1028,14 @@ case "$mode" in
   status) cmd_status ;;
   dry-run)
     if [[ -z "$subcommand" ]]; then
-      err "--dry-run requires a connector (linear|slack|supervisor)"
+      err "--dry-run requires a connector (linear|slack|supervisor|digest)"
       exit 2
     fi
     case "$subcommand" in
       linear)     connect_linear     1 ;;
       slack)      connect_slack      1 ;;
       supervisor) connect_supervisor 1 ;;
+      digest)     connect_digest     1 ;;
       *) err "unknown connector: $subcommand"; exit 2 ;;
     esac
     ;;
@@ -853,6 +1044,7 @@ case "$mode" in
       linear)     connect_linear     0 ;;
       slack)      connect_slack      0 ;;
       supervisor) connect_supervisor 0 ;;
+      digest)     connect_digest     0 ;;
       *) err "unknown connector: $subcommand"; exit 2 ;;
     esac
     ;;
