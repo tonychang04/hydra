@@ -107,6 +107,30 @@ kill_timeout = "30s"
     interval      = "15s"
     timeout       = "5s"
 
+# Opt-in docker-in-docker support (ticket #77 / spec:
+# docs/specs/2026-04-17-cloud-worker-docker.md). Left OFF here by design:
+# flipping privileged mode is an attestation the operator has read the
+# runbook, accepted the security surface, and intends to build the DinD
+# image variant. Do NOT add `privileged = true` to this file as a default.
+#
+# If you need DinD:
+#   1. Rebuild with `fly deploy --build-arg ENABLE_DOCKER=true`.
+#   2. Enable privileged mode on the Machine (the current flyctl syntax
+#      is pinned in docs/phase2-vps-runbook.md §"Enabling worker docker
+#      support" — we keep the runbook as the single source of truth
+#      because Fly's API has moved before).
+#   3. Verify with `fly ssh console -C 'docker info'` — expect a live
+#      daemon report, not `Cannot connect to the Docker daemon`.
+#   4. Size `hydra_data` to 3-5 GB instead of 1 GB — layered images
+#      accumulate under /var/lib/docker inside the persistent volume.
+#
+# Rollback: rebuild with ENABLE_DOCKER=false (or omit the build-arg)
+# and `fly machine update --vm-privileged=false`. Nothing on the
+# volume is touched by the flip.
+#
+# This is Phase 2. Long-term migration path: per-worker managed
+# sandboxes (E2B / Daytona / Managed Agents) tracked under #40.
+
 [[vm]]
   size        = "shared-cpu-1x"
   memory      = "512mb"

@@ -139,6 +139,114 @@ If you disable auto-stop (set `min_machines_running = 1` in `infra/fly.toml` so 
 - **Volume.** `/hydra/data` is encrypted at rest by Fly. It contains your memory, learnings, and logs — valuable, but not credentials (tokens live in Fly's secret store, not on disk).
 - **Webhook secret (follow-up #40/#41).** Will ride in `fly secrets` as `HYDRA_WEBHOOK_SECRET`.
 
+## Enabling worker docker support
+
+**Default: off.** The standard commander image has no docker binary. Workers running on cloud commander therefore can't `docker compose up` against a repo's compose file — so any test procedure that needs postgres/redis/any other containerised dep will fail at step 1 of `worker-test-discovery`.
+
+To enable it, rebuild with an opt-in build arg and flip one Fly setting. This is a deliberate per-operator attestation — **read the security caveats below before enabling**.
+
+Spec: [`docs/specs/2026-04-17-cloud-worker-docker.md`](specs/2026-04-17-cloud-worker-docker.md) · Ticket: [#77](https://github.com/tonychang04/hydra/issues/77).
+
+### When to enable
+
+You probably want this if:
+
+- You're running Hydra against repos whose test procedure uses `docker compose` (most InsForge repos — `InsForge/InsForge`, `insforge-cloud-backend`, anything with a `docker-compose.yml` in the root).
+- `worker-test-discovery` has returned "test procedure unclear" on a repo twice in a row with the docker-missing signature in the worker log.
+
+You probably don't want this if:
+
+- Your repos are pure-source (no integration tests, or tests that use in-memory fixtures).
+- You're not comfortable with the security posture of a privileged Fly Machine (see below).
+
+### Step 1 — Rebuild the image with DinD enabled
+
+```bash
+fly deploy --build-arg ENABLE_DOCKER=true --app <your-app>
+```
+
+`fly deploy` passes the build-arg to `docker build`, which triggers the conditional stanza in `infra/Dockerfile`. The layer installs `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, and `docker-compose-plugin` from Docker's own apt repo, then adds the `hydra` user to the `docker` group so workers run `docker` without sudo.
+
+Image size delta: ~+400-600 MB (docker-ce + containerd + plugins). Build time delta: ~+60-90 s on a warm cache.
+
+### Step 2 — Enable privileged mode on the Fly Machine
+
+DinD needs the inner daemon to load kernel modules and access raw devices, which requires the Fly Machine to run privileged. The current flyctl command is:
+
+```bash
+fly machine list --app <your-app>
+fly machine update <machine-id> --vm-privileged=true --app <your-app>
+```
+
+(Fly's syntax for privileged mode has changed twice in the past year — if the flag above is rejected, `fly machine update --help | grep -i priv` surfaces the current form. We keep the runbook as the single source of truth so you update in one place.)
+
+Without this step, the inner daemon can start but will fail to create any container — `docker run` returns `operation not permitted`.
+
+### Step 3 — Verify DinD is live
+
+```bash
+fly ssh console --app <your-app> -C 'docker info'
+```
+
+Expected (shortened):
+
+```
+Server Version: 27.x.y
+Storage Driver: overlay2
+Cgroup Driver: systemd
+...
+```
+
+If you see `Cannot connect to the Docker daemon at unix:///var/run/docker.sock`, the inner daemon didn't start — usually because Step 2 (privileged mode) wasn't applied. Re-check `fly machine list --app <app>` and look for `privileged: true` in the output.
+
+### Step 4 — Size the volume for docker images
+
+DinD builds accumulate under `/var/lib/docker` inside the commander volume. `hydra_data` defaults to 1 GB; bump it to 3-5 GB for DinD operation:
+
+```bash
+fly volumes extend <volume-id> --size 5 --app <your-app>
+```
+
+`docker system prune -af` inside the machine reclaims space between major compose-heavy ticket runs — add to your monthly housekeeping.
+
+### Security caveats (read this before enabling)
+
+**Privileged mode genuinely widens the blast radius.** The Fly Machine gains kernel capabilities a normal container doesn't have: can load kernel modules, access raw block devices, escape the usual namespace isolation. This matters for commander specifically because:
+
+- Commander runs worker subagents that execute **arbitrary code from the repos in `state/repos.json`**. That includes `docker compose up` on repo-supplied compose files — every `image:` tag in every compose file is now something the commander trusts at the kernel level.
+- A malicious or compromised `docker-compose.yml` in one of your repos could mount host paths, join host networks, or load kernel modules via the inner daemon.
+
+Mitigations in rough priority order:
+
+1. **Narrow `state/repos.json`** to repos you fully control. This is the single biggest lever.
+2. **Short-lived Machines.** `auto_stop_machines = "suspend"` in `fly.toml` already limits the always-on surface. Don't set `min_machines_running` above what you actually need.
+3. **Audit the compose files** for every enabled repo before turning DinD on for the first time. Look for `privileged: true` services, `volumes: - /:/host`, and `network_mode: host` — none of these should be in a repo you're testing.
+4. **Plan migration to Option C** (per-worker managed sandboxes via E2B / Daytona / Managed Agents, tracked under [#40](https://github.com/tonychang04/hydra/issues/40)). DinD is Phase 2 only — the long-term fix runs each worker in its own tiny cloud VM so one compromised compose file can't affect any other worker or the commander itself.
+
+### Rollback
+
+Two steps, in either order:
+
+```bash
+# Rebuild without the build-arg (default FALSE).
+fly deploy --app <your-app>
+
+# Turn privileged mode off on the Machine.
+fly machine update <machine-id> --vm-privileged=false --app <your-app>
+```
+
+Nothing on the `hydra_data` volume is touched by the flip. Workers that relied on `docker` inside the cloud commander will now fail with a clear `command not found`, and `worker-test-discovery` can annotate the procedure as "container-required, not executable on this commander."
+
+### Self-test
+
+An opt-in self-test case `cloud-worker-docker-available` exists in [`self-test/golden-cases.example.json`](../self-test/golden-cases.example.json). It SKIPs by default; run with:
+
+```bash
+HYDRA_TEST_CLOUD_DOCKER=1 ./self-test/run.sh --case cloud-worker-docker-available
+```
+
+Requires a local `docker` + `--privileged` to execute. Not run in CI; this is an on-demand verification for operators who've just enabled DinD on their own image.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -203,6 +311,89 @@ Public repos clone without `GITHUB_TOKEN`; that's how the self-test case runs in
 - SSH-key-based auth. HTTPS + `GITHUB_TOKEN` only.
 
 These are documented in the spec so future tickets inherit the context.
+
+## Wiring up an external MCP agent (OpenClaw, Discord bridge, your own Claude)
+
+Once the commander is live with `./hydra mcp serve` booted by `infra/entrypoint.sh`, the MCP surface refuses every request until at least one authorized agent has a real bearer-token hash in `state/connectors/mcp.json`. The `./hydra mcp register-agent` command is the one-step recipe. Spec: [`docs/specs/2026-04-17-mcp-register-agent.md`](specs/2026-04-17-mcp-register-agent.md) · Ticket: [#84](https://github.com/tonychang04/hydra/issues/84).
+
+### 3-step recipe
+
+**1. Generate a token for the client agent (run on the commander):**
+
+```bash
+fly ssh console --app <app> -C './hydra mcp register-agent openclaw'
+```
+
+You'll see something like:
+
+```
+HQxVndgBkWFivV0SsT0AmWrYd6Z0bvzIg3P8+sEH0tI=
+
+⚠ This is the only time this token will be shown.
+  Copy it into the consuming agent's config NOW.
+
+  registered agent-id=openclaw
+  scope=[read] — widen by editing the config if needed
+  Hash stored in /hydra/data/state/connectors/mcp.json
+✓ done
+```
+
+The first line (before the blank) is the raw token — that's stdout. Everything else is stderr (the warning banner). Copy the token immediately; re-running `register-agent` without `--rotate` won't reveal it again (by design — only the SHA-256 hash is persisted).
+
+The new entry is scoped `["read"]` by default. To grant `spawn`, `merge`, or `admin` scope, edit `state/connectors/mcp.json` on the commander volume by hand:
+
+```bash
+fly ssh console --app <app>
+# inside the VM:
+vi /hydra/data/state/connectors/mcp.json
+# add "spawn" to the entry's scope array, save, exit
+# no restart needed — the server reads the config on each request
+```
+
+**2. Paste the token into the consuming agent's config.**
+
+The exact place depends on the client. For OpenClaw, Hermes, Codex, Cursor, or any HTTP-speaking agent, it goes in whatever env var or config field that agent reads for its MCP bearer — typically `HYDRA_MCP_TOKEN` or similar. The consumer presents it in an `Authorization: Bearer <token>` header on every JSON-RPC POST to `https://<app>.fly.dev/mcp` (or the local equivalent if you haven't put TLS in front yet — see `state/connectors/mcp.json:server.bind_address` for the caveat about never binding `0.0.0.0` without a reverse proxy).
+
+**3. Verify the handshake:**
+
+```bash
+curl -s -X POST "https://<app>.fly.dev/mcp" \
+  -H "Authorization: Bearer <token-from-step-1>" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | jq '.result.tools | length'
+# → 13
+```
+
+A `401` means a bad token; a `403` means the token is valid but the scope doesn't cover the tool being called. The commander writes one audit line per call to `logs/mcp-audit.jsonl` — tail it to see who's calling what.
+
+### Rotating a token
+
+```bash
+fly ssh console --app <app> -C './hydra mcp register-agent openclaw --rotate'
+```
+
+`--rotate` replaces `token_hash` only — the entry's `id` and `scope` are preserved. The old token becomes invalid the moment the `mv` completes (atomic config swap). Paste the new token into the consumer's config; no commander restart needed.
+
+### De-authorizing an agent
+
+No dedicated CLI for this (intentionally — deletion is less common than rotation and the file is small). Edit `state/connectors/mcp.json` on the commander and remove the entry from `authorized_agents`:
+
+```bash
+fly ssh console --app <app>
+vi /hydra/data/state/connectors/mcp.json
+# remove the {"id": "openclaw", …} object from authorized_agents[]
+# save, exit
+```
+
+The next request from that agent returns `401`. No restart needed.
+
+### What `register-agent` does NOT do
+
+- **Does not push to `fly secrets`.** Follow-up work: a `--fly-secret NAME` flag. For now, copy the token manually. Non-goal called out in the spec.
+- **Does not edit `scope`.** The CLI only creates (`["read"]` default) or rotates (`token_hash` only). Scope changes are always hand-edits — deliberately, because widening to `"merge"` or `"admin"` warrants a moment of thought.
+- **Does not reveal old tokens.** Re-running without `--rotate` on an existing id returns exit 1. The only way to get back a usable token is to rotate.
+- **Does not work interactively.** There's no prompt for the agent-id or a paste flow — it's non-interactive on purpose (so a token never sits in a readline buffer that could end up in `.bash_history` on some shells).
 
 ## Setting up Slack
 
