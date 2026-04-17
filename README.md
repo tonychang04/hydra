@@ -43,13 +43,7 @@ cd hydra
 ./hydra
 ```
 
-`setup.sh` is interactive (one prompt, for the external memory directory), idempotent, and safe to re-run. It:
-- Verifies `gh`, `claude`, and auth
-- Creates `.claude/settings.local.json` from the template with your paths filled in
-- Creates `state/repos.json` from the template (edit it to add your repos)
-- Initializes runtime state files
-- Creates `.hydra.env` (gitignored) with your config
-- Generates a `./hydra` launcher (gitignored) that sources the env and runs `claude`
+Full install reference (prereqs, troubleshooting, updating, uninstall): **[INSTALL.md](INSTALL.md)**
 
 **Two paths from here:**
 - You want to **use Hydra on your own repos** → **[USING.md](USING.md)**
