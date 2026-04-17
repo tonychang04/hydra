@@ -40,6 +40,17 @@ Options:
                           Must exist and contain a .git directory.
   --trigger <t>           ticket_trigger: assignee | label | linear.
                           Default: assignee.
+  --assignee <user>       Optional. GitHub username to poll via
+                          `gh issue list --assignee <user>` instead of @me.
+                          Bot-account mode (ticket #26). Only meaningful when
+                          --trigger is 'assignee'. Omit to use @me (default).
+                          See docs/specs/2026-04-17-assignee-override.md.
+  --state-file <path>     Write to this repos.json instead of state/repos.json.
+                          Used by self-tests so they don't mutate committed
+                          state; also useful for staging / scripted ops.
+                          Does NOT bootstrap from state/repos.example.json
+                          when --state-file is set — create the target file
+                          yourself first (minimal: '{"repos":[]}').
   --enabled               Enable the repo (default for new entries).
   --disabled              Add the entry in disabled state.
   --force                 Overwrite an existing entry with the same owner/name.
@@ -55,6 +66,7 @@ Example:
   ./hydra add-repo tonychang04/hydra \
     --local-path ~/projects/hydra \
     --trigger assignee \
+    --assignee hydra-bot-example \
     --non-interactive
 EOF
 }
@@ -84,6 +96,9 @@ slug=""
 local_path=""
 trigger=""
 enabled=""
+assignee_override=""
+assignee_override_set=0
+state_file_override=""
 force=0
 non_interactive=0
 
@@ -94,6 +109,10 @@ while [[ $# -gt 0 ]]; do
     --local-path=*) local_path="${1#--local-path=}"; shift ;;
     --trigger) [[ $# -ge 2 ]] || { err "--trigger needs a value"; usage >&2; exit 2; }; trigger="$2"; shift 2 ;;
     --trigger=*) trigger="${1#--trigger=}"; shift ;;
+    --assignee) [[ $# -ge 2 ]] || { err "--assignee needs a value"; usage >&2; exit 2; }; assignee_override="$2"; assignee_override_set=1; shift 2 ;;
+    --assignee=*) assignee_override="${1#--assignee=}"; assignee_override_set=1; shift ;;
+    --state-file) [[ $# -ge 2 ]] || { err "--state-file needs a value"; usage >&2; exit 2; }; state_file_override="$2"; shift 2 ;;
+    --state-file=*) state_file_override="${1#--state-file=}"; shift ;;
     --enabled) enabled="true"; shift ;;
     --disabled) enabled="false"; shift ;;
     --force) force=1; shift ;;
@@ -134,19 +153,44 @@ if [[ -n "$trigger" ]]; then
   esac
 fi
 
+# Validate --assignee if provided now. Bot-account mode (ticket #26):
+# the override must look like a GitHub login. Mirrors the schema pattern.
+# Empty string is explicitly rejected — the only two valid states are
+# "unset" (default @me) and "a non-empty valid login".
+if [[ "$assignee_override_set" -eq 1 ]]; then
+  if [[ -z "$assignee_override" ]]; then
+    err "--assignee cannot be empty (omit the flag for default @me behavior)"
+    exit 2
+  fi
+  if ! [[ "$assignee_override" =~ ^[A-Za-z0-9-]+(\[bot\])?$ ]]; then
+    err "invalid --assignee '$assignee_override' — expected a GitHub login (alphanumeric + dashes, optional [bot] suffix)"
+    exit 2
+  fi
+fi
+
 # -----------------------------------------------------------------------------
 # locate state file
 # -----------------------------------------------------------------------------
-repos_file="$ROOT_DIR/state/repos.json"
-repos_example="$ROOT_DIR/state/repos.example.json"
-
-if [[ ! -f "$repos_file" ]]; then
-  if [[ -f "$repos_example" ]]; then
-    warn "state/repos.json missing — bootstrapping from example"
-    cp "$repos_example" "$repos_file"
-  else
-    err "neither state/repos.json nor state/repos.example.json exists"
+if [[ -n "$state_file_override" ]]; then
+  # Caller-supplied path. We don't bootstrap — the caller owns the file.
+  # This is the codepath self-tests use.
+  repos_file="$state_file_override"
+  if [[ ! -f "$repos_file" ]]; then
+    err "--state-file path does not exist: $repos_file (create it first with '{\"repos\":[]}')"
     exit 1
+  fi
+else
+  repos_file="$ROOT_DIR/state/repos.json"
+  repos_example="$ROOT_DIR/state/repos.example.json"
+
+  if [[ ! -f "$repos_file" ]]; then
+    if [[ -f "$repos_example" ]]; then
+      warn "state/repos.json missing — bootstrapping from example"
+      cp "$repos_example" "$repos_file"
+    else
+      err "neither state/repos.json nor state/repos.example.json exists"
+      exit 1
+    fi
   fi
 fi
 
@@ -257,6 +301,30 @@ case "$trigger" in
   *) err "invalid ticket_trigger '$trigger'"; exit 2 ;;
 esac
 
+# assignee_override (bot-account mode, ticket #26). Only relevant when the
+# trigger is 'assignee' — the override is the username polled by
+# `gh issue list --assignee <user>`. Absent = fall back to @me. Only prompt
+# interactively; non-interactive mode uses whatever --assignee set (or nothing).
+if [[ "$assignee_override_set" -eq 0 ]] && [[ "$trigger" == "assignee" ]] && [[ "$non_interactive" -eq 0 ]]; then
+  printf "%sassignee_override%s (GitHub login, blank for @me) []: " "$C_BOLD" "$C_RESET"
+  IFS= read -r line || true
+  if [[ -n "$line" ]]; then
+    if ! [[ "$line" =~ ^[A-Za-z0-9-]+(\[bot\])?$ ]]; then
+      err "invalid assignee_override '$line' — expected a GitHub login"
+      exit 2
+    fi
+    assignee_override="$line"
+    assignee_override_set=1
+  fi
+fi
+
+# If the user set --assignee but the trigger isn't 'assignee', warn that
+# the override is unused. Don't refuse — it's persisted so flipping the
+# trigger later doesn't lose the value.
+if [[ "$assignee_override_set" -eq 1 ]] && [[ "$trigger" != "assignee" ]]; then
+  warn "assignee_override '$assignee_override' recorded but ticket_trigger is '$trigger' — the override is only used with the 'assignee' trigger"
+fi
+
 # enabled
 if [[ -z "$enabled" ]]; then
   if [[ "$non_interactive" -eq 1 ]]; then
@@ -280,15 +348,32 @@ tmp="$(mktemp)"
 # shellcheck disable=SC2064
 trap "rm -f '$tmp'" EXIT
 
-new_entry="$(
-  jq -n \
-    --arg owner "$owner" \
-    --arg name  "$name" \
-    --arg lp    "$local_path" \
-    --arg trig  "$trigger" \
-    --argjson en "$enabled" \
-    '{owner: $owner, name: $name, local_path: $lp, enabled: $en, ticket_trigger: $trig}'
-)"
+# Build the entry. assignee_override is conditionally included — we omit it
+# entirely when no override was set, so diffs stay minimal for operators who
+# never use bot mode. Same reason we use jq's del(nulls) idiom rather than
+# inserting `"assignee_override": null`.
+if [[ "$assignee_override_set" -eq 1 ]]; then
+  new_entry="$(
+    jq -n \
+      --arg owner "$owner" \
+      --arg name  "$name" \
+      --arg lp    "$local_path" \
+      --arg trig  "$trigger" \
+      --arg ao    "$assignee_override" \
+      --argjson en "$enabled" \
+      '{owner: $owner, name: $name, local_path: $lp, enabled: $en, ticket_trigger: $trig, assignee_override: $ao}'
+  )"
+else
+  new_entry="$(
+    jq -n \
+      --arg owner "$owner" \
+      --arg name  "$name" \
+      --arg lp    "$local_path" \
+      --arg trig  "$trigger" \
+      --argjson en "$enabled" \
+      '{owner: $owner, name: $name, local_path: $lp, enabled: $en, ticket_trigger: $trig}'
+  )"
+fi
 
 jq \
   --arg owner "$owner" \

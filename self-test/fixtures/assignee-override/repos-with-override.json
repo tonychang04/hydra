@@ -1,0 +1,14 @@
+{
+  "_description": "Positive fixture for the repo-assignee-override self-test case (kind: script). A minimal repos.json with one entry that sets assignee_override to a valid bot-user login. Used to assert scripts/validate-state.sh accepts the new field under the patched schema without any pattern tooling. Bot-account mode: ticket #26, spec docs/specs/2026-04-17-assignee-override.md.",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "fixture-org",
+      "name": "bot-served",
+      "local_path": "/tmp/fixture/bot-served",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "assignee_override": "hydra-bot-fixture"
+    }
+  ]
+}

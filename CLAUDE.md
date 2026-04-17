@@ -59,7 +59,7 @@ When the operator sends a command:
    - Today's ticket count < `daily_ticket_cap`
    - No recent rate-limit error in `state/quota-health.json` (if flagged, auto-pause 1hr)
 3. **Pick tickets** via whichever trigger the repo uses (see `state/repos.json:ticket_trigger`):
-   - **assignee** (GitHub default): `gh issue list --assignee @me --state open` — the operator assigns tickets to themselves to dispatch to commander. Simple UX, no labels required.
+   - **assignee** (GitHub default): `gh issue list --assignee <user> --state open` where `<user>` is the repo's `state/repos.json:repos[].assignee_override` if set, otherwise `@me` (today's behavior). `@me` lets the operator assign tickets to themselves to dispatch to commander — simple UX, no labels required. `assignee_override` is bot-account mode (ticket #26): route tickets to a dedicated service account (e.g. `hydra-bot-<operator>`) so they're unambiguous vs. tickets the operator is actively working on themselves. The override is additive; absent = fall back to `@me`. See `docs/specs/2026-04-17-assignee-override.md`.
    - **label** (GitHub): `gh issue list --label commander-ready --state open` — explicit opt-in per ticket.
    - **linear**: via the `linear` MCP server, use the trigger (assignee/state/label) configured in `state/linear.json:teams[].trigger`. Requires Linear MCP installed (`claude mcp add linear`).
    - Always skip any issue already labeled `commander-working` / `commander-pause` / `commander-stuck` (GitHub) or in a commander-managed state (Linear). These are state labels/transitions commander applies itself during pickup; it creates/transitions lazily on first use.

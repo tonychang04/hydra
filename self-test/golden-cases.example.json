@@ -2105,6 +2105,89 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "repo-assignee-override",
+      "_description": "Script-only self-test for bot-account mode — the per-repo assignee_override field added in ticket #26 (spec: docs/specs/2026-04-17-assignee-override.md). Exercises: (1) the patched state/schemas/repos.schema.json still validates a fixture WITH the new field and WITHOUT it (back-compat), (2) scripts/hydra-add-repo.sh --help documents --assignee and --state-file, (3) the CLI writes assignee_override when --assignee is given, (4) the CLI omits the field when --assignee is absent, (5) the CLI rejects empty and invalid override values with exit 2 before touching state. No worker spawn, no Claude auth, no network. Uses --state-file to avoid mutating the worktree's committed state/repos.json. Runs on every CI tick.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "positive fixture is valid JSON",
+          "cmd": "jq empty self-test/fixtures/assignee-override/repos-with-override.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "back-compat (no override) fixture is valid JSON",
+          "cmd": "jq empty self-test/fixtures/assignee-override/repos-no-override.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "positive fixture passes validate-state.sh against patched schema",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/repos.schema.json self-test/fixtures/assignee-override/repos-with-override.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "back-compat fixture passes validate-state.sh (absent override = valid)",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/repos.schema.json self-test/fixtures/assignee-override/repos-no-override.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "schema declares the assignee_override property (type, minLength, pattern)",
+          "cmd": "jq -e '.properties.repos.items.properties.assignee_override | (.type == \"string\") and (.minLength >= 1) and (.pattern | contains(\"bot\"))' state/schemas/repos.schema.json >/dev/null && echo SCHEMA_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SCHEMA_OK"
+        },
+        {
+          "name": "hydra-add-repo.sh --help documents --assignee",
+          "cmd": "NO_COLOR=1 scripts/hydra-add-repo.sh --help | grep -F -- '--assignee <user>' && echo HELP_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HELP_OK"
+        },
+        {
+          "name": "hydra-add-repo.sh --help documents --state-file",
+          "cmd": "NO_COLOR=1 scripts/hydra-add-repo.sh --help | grep -F -- '--state-file <path>' && echo HELP_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HELP_OK"
+        },
+        {
+          "name": "--assignee with bad value exits 2 without writing",
+          "cmd": "TMP=$(mktemp -d); cp self-test/fixtures/assignee-override/empty-repos.json \"$TMP/repos.json\"; NO_COLOR=1 scripts/hydra-add-repo.sh foo/bar --local-path \"$TMP\" --trigger assignee --assignee '@me' --non-interactive --state-file \"$TMP/repos.json\" >/dev/null 2>&1; ec=$?; unchanged=$(jq '.repos | length' \"$TMP/repos.json\"); rm -rf \"$TMP\"; [ \"$ec\" -eq 2 ] && [ \"$unchanged\" = \"0\" ] && echo REJECT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REJECT_OK"
+        },
+        {
+          "name": "--assignee with empty string exits 2 without writing",
+          "cmd": "TMP=$(mktemp -d); cp self-test/fixtures/assignee-override/empty-repos.json \"$TMP/repos.json\"; NO_COLOR=1 scripts/hydra-add-repo.sh foo/bar --local-path \"$TMP\" --trigger assignee --assignee '' --non-interactive --state-file \"$TMP/repos.json\" >/dev/null 2>&1; ec=$?; unchanged=$(jq '.repos | length' \"$TMP/repos.json\"); rm -rf \"$TMP\"; [ \"$ec\" -eq 2 ] && [ \"$unchanged\" = \"0\" ] && echo REJECT_EMPTY_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REJECT_EMPTY_OK"
+        },
+        {
+          "name": "--assignee hydra-bot-foo writes the field",
+          "cmd": "TMP=$(mktemp -d); cp self-test/fixtures/assignee-override/empty-repos.json \"$TMP/repos.json\"; mkdir \"$TMP/fake-clone\"; ( cd \"$TMP/fake-clone\" && git init -q ); NO_COLOR=1 scripts/hydra-add-repo.sh foo/bar --local-path \"$TMP/fake-clone\" --trigger assignee --assignee hydra-bot-foo --non-interactive --state-file \"$TMP/repos.json\" >/dev/null; got=$(jq -r '.repos[0].assignee_override' \"$TMP/repos.json\"); rm -rf \"$TMP\"; [ \"$got\" = \"hydra-bot-foo\" ] && echo WRITE_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "WRITE_OK"
+        },
+        {
+          "name": "no --assignee writes entry WITHOUT the field (back-compat)",
+          "cmd": "TMP=$(mktemp -d); cp self-test/fixtures/assignee-override/empty-repos.json \"$TMP/repos.json\"; mkdir \"$TMP/fake-clone\"; ( cd \"$TMP/fake-clone\" && git init -q ); NO_COLOR=1 scripts/hydra-add-repo.sh foo/bar --local-path \"$TMP/fake-clone\" --trigger assignee --non-interactive --state-file \"$TMP/repos.json\" >/dev/null; has=$(jq 'has(\"repos\") and (.repos[0] | has(\"assignee_override\"))' \"$TMP/repos.json\"); rm -rf \"$TMP\"; [ \"$has\" = \"false\" ] && echo ABSENT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ABSENT_OK"
+        },
+        {
+          "name": "--assignee with [bot] suffix is accepted",
+          "cmd": "TMP=$(mktemp -d); cp self-test/fixtures/assignee-override/empty-repos.json \"$TMP/repos.json\"; mkdir \"$TMP/fake-clone\"; ( cd \"$TMP/fake-clone\" && git init -q ); NO_COLOR=1 scripts/hydra-add-repo.sh foo/bar --local-path \"$TMP/fake-clone\" --trigger assignee --assignee 'dependabot[bot]' --non-interactive --state-file \"$TMP/repos.json\" >/dev/null; got=$(jq -r '.repos[0].assignee_override' \"$TMP/repos.json\"); rm -rf \"$TMP\"; [ \"$got\" = \"dependabot[bot]\" ] && echo BOT_SUFFIX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BOT_SUFFIX_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
