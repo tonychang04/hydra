@@ -166,6 +166,47 @@
       "last_result": null
     },
     {
+      "id": "autopickup-default-on-smoke",
+      "_description": "Script-only self-test for the default-on autopickup behavior (spec: docs/specs/2026-04-16-autopickup-default-on.md, ticket #17). Verifies that a fresh setup.sh seeds state/autopickup.json with auto_enable_on_session_start=true, and that the ./hydra launcher's --no-autopickup flag exports HYDRA_NO_AUTOPICKUP=1. Runs locally; no worker spawn, no worktree. setup.sh is run non-interactively with an empty stdin so the external-memory-dir prompt accepts the default. Assumes a `claude` stub on PATH is NOT required — we do not exec the launcher, we only read the generated script and source .hydra.env.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "fresh setup.sh seeds state/autopickup.json with auto_enable_on_session_start=true",
+          "cmd": "rm -f state/autopickup.json && bash setup.sh <<<'' >/dev/null && jq -r .auto_enable_on_session_start state/autopickup.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "true"
+        },
+        {
+          "name": "fresh setup.sh seeds interval_min=30",
+          "cmd": "jq -r .interval_min state/autopickup.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "30"
+        },
+        {
+          "name": "fresh setup.sh seeds enabled=false (session-start logic flips it, not setup)",
+          "cmd": "jq -r .enabled state/autopickup.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "false"
+        },
+        {
+          "name": "HYDRA_NO_AUTOPICKUP env var is visible to the launcher's env",
+          "cmd": "HYDRA_NO_AUTOPICKUP=1 bash -c 'source .hydra.env && echo \"$HYDRA_NO_AUTOPICKUP\"'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "1"
+        },
+        {
+          "name": "generated ./hydra launcher recognizes --no-autopickup flag",
+          "cmd": "grep -q -- '--no-autopickup' hydra && echo present",
+          "expected_exit": 0,
+          "expected_stdout_contains": "present"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "memory-validators",
       "_description": "Script-only self-test: exercises scripts/parse-citations.sh, scripts/validate-learning-entry.sh, and scripts/validate-citations.sh against fixtures under self-test/fixtures/memory-validator/. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to any of those scripts or the memory schema.",
       "kind": "script",
