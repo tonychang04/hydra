@@ -1,0 +1,62 @@
+{
+  "_description": "Fixture: `merge_queue_enabled: true` exercised with every policy shape. Validates the --queue mode of scripts/merge-policy-lookup.sh introduced in ticket #154. The queue prefix only applies to `auto` and `auto_if_review_clean` policies; `human` and `never` always emit unprefixed. See docs/specs/2026-04-17-merge-queue.md.",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "fixture-org",
+      "name": "queue-auto-both",
+      "local_path": "/fixture/queue-auto-both",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": {
+        "T1": "auto",
+        "T2": "auto_if_review_clean"
+      },
+      "merge_queue_enabled": true
+    },
+    {
+      "owner": "fixture-org",
+      "name": "queue-human-t2",
+      "local_path": "/fixture/queue-human-t2",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": {
+        "T1": "auto",
+        "T2": "human"
+      },
+      "merge_queue_enabled": true
+    },
+    {
+      "owner": "fixture-org",
+      "name": "queue-off-explicit",
+      "local_path": "/fixture/queue-off-explicit",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": {
+        "T1": "auto",
+        "T2": "auto_if_review_clean"
+      },
+      "merge_queue_enabled": false
+    },
+    {
+      "owner": "fixture-org",
+      "name": "queue-absent",
+      "local_path": "/fixture/queue-absent",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": {
+        "T1": "auto",
+        "T2": "auto_if_review_clean"
+      }
+    },
+    {
+      "owner": "fixture-org",
+      "name": "queue-legacy-auto-t1",
+      "local_path": "/fixture/queue-legacy-auto-t1",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": "auto-t1",
+      "merge_queue_enabled": true
+    }
+  ]
+}

@@ -86,6 +86,10 @@
             "type": "string",
             "enum": ["claude", "codex", "auto"],
             "description": "Which worker backend commander spawns for this repo. 'claude' (default when absent) = worker-implementation. 'codex' = worker-codex-implementation (requires a working codex CLI in the runtime env; see docs/phase2-vps-runbook.md 'Configuring the Codex backend'). 'auto' = future rate-limit-aware routing, currently treated as 'claude' until ticket #97 lands. Additive / optional — absent means 'claude'. See docs/specs/2026-04-17-codex-worker-backend.md."
+          },
+          "merge_queue_enabled": {
+            "type": "boolean",
+            "description": "Optional per-repo opt-in for GitHub merge queue. When true, Commander's `merge #N` path uses `gh pr merge <N> --merge-queue --squash` instead of the legacy `--squash --auto` flow; fallback to legacy on queue failure is logged as `MERGE_QUEUE_FALLBACK`. Requires branch protection + required status checks + a merge queue configured on the repo (see `scripts/enable-merge-queue.sh`). Default false — additive, existing entries validate unchanged. See docs/specs/2026-04-17-merge-queue.md (ticket #154)."
           }
         }
       }
