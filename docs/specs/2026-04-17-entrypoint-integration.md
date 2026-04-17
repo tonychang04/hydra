@@ -1,3 +1,9 @@
+---
+status: proposed
+date: 2026-04-17
+author: hydra worker (ticket #80)
+---
+
 # Wire ensure-repo-cloned.sh + hydra-slack-bot into infra/entrypoint.sh
 
 - **Status:** proposed
