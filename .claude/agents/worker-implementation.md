@@ -70,6 +70,75 @@ If no test command is documented and none obvious from `package.json`:
 3. NEVER read real `.env*` files — use `.env.example` / `.env.template` only
 4. If real secrets are needed, STOP and emit a `QUESTION:` block
 
+## Docker isolation for parallel workers
+
+**Problem:** two workers running in parallel both invoke `docker compose up` against repos that publish the same host ports (5432 for postgres, 6379 for redis, 3000 for web, etc.). Whichever worker starts second fails with `bind: address already in use`. Spec: `docs/specs/2026-04-16-worker-port-isolation.md`.
+
+**Rule:** if the repo you're working in has a `docker-compose.yml` and you plan to `docker compose up`, you MUST apply both layers below before `up`. If you don't, another parallel worker's test run can crash yours (and vice versa).
+
+### Layer 1 — namespace the Compose project
+
+Export, ONCE, at the start of your docker work:
+
+```bash
+# Sanitize: lowercase + replace non-[a-z0-9_-] with '-'. Compose rejects uppercase.
+worker_id_raw="${HYDRA_WORKER_ID:-worker-$$}"
+export COMPOSE_PROJECT_NAME="hydra-$(printf '%s' "$worker_id_raw" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-_' '-')"
+```
+
+This namespaces container names, default network, and named volumes — no cross-worker collision on any of those.
+
+### Layer 2 — remap host ports to your worker slot
+
+For each published port in the repo's `docker-compose.yml`, allocate a slot-scoped free host port via `scripts/alloc-worker-port.sh` and write a `docker-compose.override.yml` **in your worktree root** (not inside the target repo's committed tree).
+
+Skeleton:
+
+```bash
+# Your slot number: position in state/active.json:workers[]. Default 0 if
+# commander didn't pass one via HYDRA_WORKER_SLOT.
+slot="${HYDRA_WORKER_SLOT:-0}"
+
+# Allocate one host port per published service.
+pg_port="$("$COMMANDER_ROOT/scripts/alloc-worker-port.sh" --worker-slot "$slot" --service postgres --desired-port $((40000 + slot*100 + 32)))"
+web_port="$("$COMMANDER_ROOT/scripts/alloc-worker-port.sh" --worker-slot "$slot" --service web --desired-port $((40000 + slot*100 + 80)))"
+
+# Write the override. CRITICAL: use `ports: !override` — a plain `ports:`
+# list MERGES with the base compose, so the base's 5432:5432 binding is
+# still active and the collision we're fixing reappears. `!override` (Compose
+# 2.17+) replaces the list wholesale.
+cat > docker-compose.override.yml <<YAML
+services:
+  postgres:
+    ports: !override
+      - "$pg_port:5432"
+  web:
+    ports: !override
+      - "$web_port:3000"
+YAML
+
+# Export ports so test code can reach the services.
+export HYDRA_PG_PORT="$pg_port"
+export HYDRA_WEB_PORT="$web_port"
+```
+
+### Cleanup (required)
+
+Always tear down with `-v` so named volumes go with the stack:
+
+```bash
+trap 'docker compose down -v >/dev/null 2>&1 || true' EXIT INT TERM
+```
+
+Place the trap once at the top of any script or tool invocation that calls `docker compose up`. This is the same cleanup rule as `memory/escalation-faq.md` ("I brought up docker services for testing. Do I leave them running?") — Layer 2 inherits it unchanged.
+
+### Guardrails (always follow)
+
+- **Do not commit `docker-compose.override.yml`** into the target repo. Before any `git commit` that includes the worktree root, run `git status -s docker-compose.override.yml` and either delete the file or add it to `.git/info/exclude` (local-only; not committed). If your `git status` comes back clean without intervention, the repo is already ignoring it — good.
+- **Do not modify the target repo's `docker-compose.yml` in place.** That file is part of the repo's public contract; editing it in your worktree shows up in `git diff` and will either be accidentally committed or trip the worker-review gate.
+- **If `docker compose up` fails with a port error even with Layer 2 applied,** check that your override used `!override`, not a plain list. This is the #1 failure mode.
+- **If tests in the target repo hardcode `localhost:5432`** (rather than reading a `$PG_PORT` env var), your remapped port won't be reachable. Fallback: run without Layer 2 (accept the collision risk and ask commander to serialize on that repo), or file a follow-up ticket to make the tests honor the env var. Do NOT paper over this by editing the test code without the commander's say-so.
+
 ## Hard rules
 
 - Only edit files inside your worktree

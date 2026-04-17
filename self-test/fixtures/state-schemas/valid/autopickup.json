@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "interval_min": 30,
+  "auto_enable_on_session_start": true,
+  "last_run": null,
+  "last_picked_count": 0,
+  "consecutive_rate_limit_hits": 0
+}

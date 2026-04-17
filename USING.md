@@ -2,17 +2,28 @@
 
 End-to-end walkthrough of one real session. Read `README.md` first for the concept; this is the operational how-to.
 
-## One-time setup (5 min)
+Hydra has **two operating modes**. Both run on the same framework — the same CLAUDE.md, same workers, same memory, same self-test. The only difference is where Commander lives and how work gets dispatched to it.
+
+| Mode | Commander runs on | You dispatch by | When to pick it |
+|---|---|---|---|
+| **[Local mode](#local-mode-terminal-chat-default)** (default) | Your laptop, inside a `claude` session | Typing commands in the Commander chat | Fastest start. Laptop-bound (closes the lid, work stops). |
+| **[Cloud mode](#cloud-mode-flyio--mcp-agent-driven)** | A Fly.io VM (or any Debian VPS) | Another agent calling `hydra.*` MCP tools (or GitHub webhook, once #40 lands) | 24/7 commander. Works while you sleep. Agent-driven, headless. |
+
+Sections below are self-contained — if you only care about one mode, read only that section. Everything below "Self-testing Hydra itself" applies to both modes.
+
+## Local mode (terminal chat, default)
+
+### One-time setup (5 min)
 
 Already done in Quick Start. Recap:
 1. Clone, `cp` the two `.example` files, edit paths, `gh auth status` green.
 2. Decide your default trigger: **assignee** (you assign a ticket to yourself, Hydra picks it up) or **label** (`commander-ready` on the issue). Configured per repo in `state/repos.json`.
 
-## Launching a session
+### Launching a session
 
 ```bash
 cd /path/to/hydra
-claude
+./hydra
 ```
 
 Hydra's Commander greets you:
@@ -23,9 +34,9 @@ Hydra online. 3 tickets ready across 2 repos. 0 heads active. Today: 0 done, 0 f
 
 Then it waits. It won't spawn anything until you tell it to.
 
-## Dispatching a ticket (the golden path)
+### Dispatching a ticket (the golden path)
 
-### 1. Pick a ticket to hand off
+#### 1. Pick a ticket to hand off
 
 Option A — **assignee trigger** (simplest):
 ```bash
@@ -38,7 +49,7 @@ Option B — **label trigger** (explicit):
 gh issue edit 42 --repo your-org/your-repo --add-label commander-ready
 ```
 
-### 2. Tell Hydra to take it
+#### 2. Tell Hydra to take it
 
 In the Commander chat session:
 ```
@@ -50,7 +61,7 @@ or, for a bulk run:
 pick up 3
 ```
 
-### 3. What Hydra does behind the scenes
+#### 3. What Hydra does behind the scenes
 
 ```
 Gary: pick up #42
@@ -92,7 +103,7 @@ Commander reports back in chat:
   "#42 → PR #501 opened (T2). Self-review passed. Ready for your merge."
 ```
 
-### 4. You review + merge
+#### 4. You review + merge
 
 Open the PR, read the diff, read the auto-review comment. If good:
 ```
@@ -108,7 +119,7 @@ reject #501 reason: scope was wrong, need to split into two tickets
 
 Hydra closes the PR and labels the issue for follow-up.
 
-## When Hydra asks you something
+### When Hydra asks you something
 
 When a worker hits uncertainty memory can't resolve, you'll see:
 
@@ -132,9 +143,9 @@ answer #42: install pnpm — if ticket comes up again say the same
 
 Commander `SendMessage`s the worker AND appends your answer to `memory/escalation-faq.md`. Next time, no ping needed.
 
-## Daily operations
+### Daily operations
 
-### From the Commander chat (interactive)
+#### From the Commander chat (interactive)
 
 - **Morning check-in:** `status` — see what's running, today's numbers, anything stuck
 - **See the queue:** `show me 5 ready tickets` — inspection only, no spawning
@@ -144,7 +155,7 @@ Commander `SendMessage`s the worker AND appends your answer to `memory/escalatio
 - **Emergency:** `kill <head-id>` for a runaway
 - **End of week:** `quota` / `cost today` to see usage; browse `logs/*.json` to see what shipped
 
-### From any terminal (no chat needed)
+#### From any terminal (no chat needed)
 
 Routine ops are also exposed as `./hydra <subcommand>` — no Claude session launch, no waiting for a greeting. Safe for scripts, cron, or SSH from your phone. Spec: `docs/specs/2026-04-16-hydra-cli.md` (ticket #25).
 
@@ -166,6 +177,112 @@ Routine ops are also exposed as `./hydra <subcommand>` — no Claude session lau
 ```
 
 These subcommands edit `state/repos.json` and `state/pending-dispatches.json` directly via atomic writes (tmp + mv); they never spawn a worker. `./hydra issue` appends to a queue that the Commander's autopickup tick drains first — useful when you want a specific ticket processed now but don't want to open chat. `pause` / `resume` toggle the `PAUSE` file that the Commander respects at spawn time.
+
+## Cloud mode (Fly.io + MCP, agent-driven)
+
+Cloud mode keeps Commander alive 24/7 and removes "type into a terminal" as a requirement for dispatching work. Same framework, same workers, same memory — just a different home for the Commander process and a different transport for its control surface.
+
+> Install: **[INSTALL.md Option C](INSTALL.md#option-c--agent-driven-install-phase-2-direction-agent-only-interface)**. Current status: contract + config + deploy artifacts shipped (#48 + #50). The MCP server binary and GitHub/Linear webhook receivers are separate follow-ups (#40, #41, server binary follow-up under #50).
+
+### Topology (what runs where)
+
+```
+┌─────────────────────┐                  ┌──────────────────────────────┐
+│  Your Main Agent    │                  │  Fly.io VM (or Debian VPS)   │
+│  (Claude Code on    │─── MCP ─────────▶│                              │
+│   your laptop, or   │   over stdio     │  Commander (headless)        │
+│   a supervisor bot) │   or HTTP+SSE    │    ├─ reads hydra-tools.json │
+│                     │                  │    ├─ authorizes per-agent   │
+│  Calls hydra.*      │◀───responses─────│    │   (token_hash + scope)  │
+│  tools              │                  │    ├─ spawns workers as      │
+└─────────────────────┘                  │    │   subprocesses          │
+                                          │    └─ escalates novel Qs via │
+                                          │        supervisor.resolve_*  │
+                                          │                              │
+                                          │  Persistent volume:          │
+                                          │  /hydra/data/{state,memory,  │
+                                          │   logs}                      │
+                                          └──────────────────────────────┘
+```
+
+Commander is the *same* Claude Code process running `CLAUDE.md` as its system prompt — it's just that the inputs come from MCP tool calls instead of keystrokes, and the process lives in a Docker container on Fly.io instead of a terminal on your laptop.
+
+### Deploying Commander to the cloud
+
+One-command Fly.io deploy (details + rollback in [`docs/phase2-vps-runbook.md`](docs/phase2-vps-runbook.md)):
+
+```bash
+./scripts/deploy-vps.sh
+```
+
+The script prompts for your Fly app name, region, `CLAUDE_CODE_OAUTH_TOKEN` (preferred — uses your Max subscription), and `GITHUB_TOKEN`. It then runs `fly launch --copy-config`, stages the secrets, creates a persistent volume, and deploys. ~3–5 minutes end to end.
+
+Non-Fly operators: `infra/systemd/hydra.service` has the equivalent unit-file for bare Debian VPS (Hetzner, DO). Same env contract, same entrypoint.
+
+### Validating artifacts before you deploy
+
+Two smoke scripts sanity-check the cloud + local artifacts without side effects:
+
+```bash
+./scripts/test-cloud-config.sh   # fly.toml, Dockerfile, entrypoint, deploy-vps, MCP JSON
+./scripts/test-local-config.sh   # setup.sh → .hydra.env + repos.json + ./hydra launcher
+```
+
+Both exit 0 iff every available check passes. They skip gracefully when optional prereqs (flyctl, docker, shellcheck, hadolint) aren't installed, so they're safe in CI and on bare operator laptops alike.
+
+### Dispatching a ticket from the Main Agent (agent-only interface)
+
+Once the MCP server binary ships (`./hydra mcp serve` — follow-up to #50), your Main Agent has `hydra.*` tools available. The dispatch pattern:
+
+```
+# your Main Agent invokes tools — no human chat with Commander
+hydra.get_status({})
+hydra.list_ready_tickets({limit: 5})
+hydra.pick_up({count: 2})                         # spawn up to 2 workers
+hydra.review_pr({pr_num: 501})                    # deliberate review worker
+hydra.merge_pr({pr_num: 501, caller_agent_id: "supervisor-main"})   # T1 auto / T2 gated
+hydra.answer_worker_question({worker_id: "w-7f3a", content: "Revert the lockfile."})
+```
+
+Full tool reference: [`docs/mcp-tool-contract.md`](docs/mcp-tool-contract.md). Every tool's scope, input/output shape, and refusal rules are there.
+
+### When a worker gets stuck in cloud mode
+
+Same mechanics as local mode — worker returns a `QUESTION:` block, Commander scans memory, and if there's no match:
+
+- **If `upstream_supervisor.enabled=true`** (in `state/connectors/mcp.json`): Commander calls `supervisor.resolve_question({worker_id, question, context, options, recommendation, nearest_memory_match})` on the configured supervisor agent. The supervisor answers (optionally looping its own human through its own channel — Slack, pager, voice call). Commander `SendMessage`s the answer back to the worker AND appends Q+A to `memory/escalation-faq.md` with the citation source tagged `"source": "supervisor"`.
+- **If `upstream_supervisor.enabled=false`** (default until configured): Commander labels the ticket `commander-stuck`, stops retries. Same fallback as local mode with no operator online.
+
+The supervisor agent is NOT Hydra's responsibility to implement — Hydra ships the outbound tool contract; you (or your Main Agent vendor) wire up whatever human-facing channel makes sense.
+
+### Observing a cloud Commander
+
+Attach to the Fly tmux session any time from any terminal:
+
+```bash
+fly ssh console --app <your-app> -C 'tmux attach -t commander'
+```
+
+Or tail the logs:
+
+```bash
+fly logs --app <your-app>
+```
+
+Health endpoint:
+
+```bash
+curl https://<your-app>.fly.dev/health
+# {"status":"ok","uptime_s":12345}
+```
+
+### What's NOT in cloud mode yet (follow-ups)
+
+- **GitHub webhook receiver** (#40) — when filed issue auto-dispatches Commander without you typing `hydra.pick_up` anywhere.
+- **Linear webhook receiver** (#41) — same, for Linear.
+- **MCP server binary** — follow-up under #50. Today `state/connectors/mcp.json` is read by nobody; it exists so operators can pre-configure.
+
+Until those land, cloud mode is: Commander running 24/7, you SSH-attach the tmux pane to dispatch work.
 
 ## Self-testing Hydra itself
 

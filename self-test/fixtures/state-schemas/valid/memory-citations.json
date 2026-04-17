@@ -1,0 +1,10 @@
+{
+  "citations": {
+    "learnings-CLI.md#npm install strips peer markers": {
+      "count": 4,
+      "last_cited": "2026-04-16",
+      "tickets": ["#50", "#61", "#63", "#64"],
+      "promotion_threshold_reached": true
+    }
+  }
+}

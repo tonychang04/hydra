@@ -80,6 +80,33 @@ flowchart LR
 
 Read it left-to-right. **Solid line = happy path** (no human). **Dashed = learning or escalation.** The only time the loop touches you is when memory genuinely can't answer — and that answer is then captured so it won't touch you next time for the same thing.
 
+## Where Commander lives (local vs cloud mode)
+
+The loop above is the same whether Commander runs on your laptop or on a VPS. The difference is deployment topology and how the Main Agent reaches Commander. Both are fully supported.
+
+```mermaid
+flowchart TB
+    subgraph LocalMode["🖥 Local mode (default, terminal chat)"]
+        MA1[[🤖 Main Agent]] -->|in-process| C1{{🧠 Commander<br/>on your laptop}}
+        C1 -->|spawn| W1[⚙️ Workers]
+    end
+    subgraph CloudMode["☁ Cloud mode (Fly.io + MCP, agent-driven)"]
+        MA2[[🤖 Main Agent<br/>laptop / cloud]] -->|MCP over stdio or HTTPS| C2{{🧠 Commander<br/>headless on Fly.io VM}}
+        C2 -->|spawn| W2[⚙️ Workers]
+        C2 -.->|persistent volume| V[(/hydra/data<br/>state · memory · logs)]
+    end
+
+    style MA1 fill:#fed7aa,stroke:#ea580c,color:#000
+    style MA2 fill:#fed7aa,stroke:#ea580c,color:#000
+    style C1 fill:#dbeafe,stroke:#2563eb,color:#000
+    style C2 fill:#dbeafe,stroke:#2563eb,color:#000
+    style W1 fill:#dcfce7,stroke:#16a34a,color:#000
+    style W2 fill:#dcfce7,stroke:#16a34a,color:#000
+    style V fill:#fce7f3,stroke:#db2777,color:#000
+```
+
+Local mode ships today and is what most operators start with. Cloud mode adds a 24/7 Commander that keeps working while your laptop is closed — useful for autopickup across time zones and for agent-to-agent orchestration without a human in the loop. Full walkthrough in **[USING.md § Cloud mode](USING.md#cloud-mode-flyio--mcp-agent-driven)**.
+
 ## Inside one iteration
 
 ```mermaid
@@ -168,6 +195,35 @@ The bottom row — the only layer that touches you — shrinks every week as mem
 - A plan-review gauntlet (no CEO / design / DX / eng plan reviews — use gstack for that).
 - A deploy controller (stops at merge; CI + your deploy infra handle the rest).
 - A replacement for human judgment on security or production risk (T3 = refuse).
+
+## How Hydra compares
+
+If you've used Dependabot, Aider, GitHub Copilot Workspace, or the Codex CLI, here's where Hydra fits:
+
+| | Hydra | Dependabot | Aider | Copilot Workspace | Codex CLI |
+|---|---|---|---|---|---|
+| **Scope** | general tickets (GitHub Issues, Linear next) | dependency updates only | interactive code edits | GitHub issue implementation | interactive code gen |
+| **Trigger** | auto (autopickup) or manual `pick up` | schedule or PR event | human-invoked | human-invoked | human-invoked |
+| **Parallelism** | N workers concurrently (`max_concurrent_workers`, default 3) | 1 PR per dep | 1 session | 1 issue at a time | 1 session |
+| **Autonomy** | auto-merge after review-clean (T1; T2 configurable) | auto-merge opt-in | human merges | human merges | human merges |
+| **Learns over time** | yes (memory + citations + skill promotion) | no | no | no | no |
+| **Self-hosted** | yes — your laptop or cloud VPS | SaaS (GitHub) | self (runs locally) | SaaS (GitHub) | self (runs locally) |
+| **Cost model** | subscription (Claude Max) or API (Phase 2) | free | API pay-as-you-go | subscription | API |
+| **Isolation** | git worktrees | runs on GitHub infra | none (edits your working tree) | GitHub Codespaces | none (edits your working tree) |
+| **Safety tiers** | T1 / T2 / T3-refuse (see below) | n/a | n/a | n/a | n/a |
+| **Learning from other workers** | planned ([#21](https://github.com/tonychang04/hydra/issues/21) peer help) | no | no | no | no |
+
+Competitor cells reflect the worker's understanding of each tool's documented behavior as of **2026-04-16**. Tools in this space evolve fast; expect this table to be revisited roughly every six months. If you spot a cell that's out of date, file an issue — a one-cell fix is welcome.
+
+**Where Hydra wins:** general-purpose parallel ticket clearing that learns from every PR it ships. The row that's hardest for any other tool to match is *learns over time* — the memory → citation → skill-promotion pipeline is the reason the loop gets quieter every week. Everything else in the table is table stakes or a deliberate design choice (self-hosted, isolated, tiered-safety).
+
+**Where Hydra loses:**
+
+- **Pure dependency bumps** — Dependabot is more specialized, battle-tested, and free. If all you need is `foo@1.2.3 → foo@1.2.4`, use Dependabot. (Hydra can still handle a dep bump as a T1 ticket if you prefer one tool; it just isn't the best-in-class option for that workload.)
+- **Interactive single-file edits with human in the loop at every step** — Aider and Codex CLI are better if you want to drive the edit yourself turn by turn. Hydra is built for walk-away async work, not live pair programming.
+- **Zero-config, pre-integrated with GitHub's UI** — Copilot Workspace is already inside GitHub; there's nothing to install. Hydra is self-hosted, which is power and responsibility both.
+
+The niche Hydra owns: **walk-away parallel ticket clearing that compounds a learning loop across repos**. That's not what any of the other tools are built for.
 
 ## Risk tiers (keep Hydra safe to leave running)
 
