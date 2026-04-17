@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/repos.schema.json",
+  "title": "Hydra repos config",
+  "description": "Repos Hydra is allowed to poll. Read by the pickup loop; the operator owns this file. See CLAUDE.md 'Operating loop' step 3.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["repos"],
+  "properties": {
+    "default_ticket_trigger": {
+      "type": "string",
+      "enum": ["assignee", "label", "linear"]
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["owner", "name", "local_path", "enabled", "ticket_trigger"],
+        "properties": {
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "local_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Absolute path to the local clone."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "ticket_trigger": {
+            "type": "string",
+            "enum": ["assignee", "label", "linear"]
+          },
+          "merge_policy": {
+            "type": "string",
+            "enum": ["auto-t1", "human-all", "refuse-all"],
+            "description": "Optional override. Absent = defer to global policy.md."
+          }
+        }
+      }
+    }
+  }
+}
