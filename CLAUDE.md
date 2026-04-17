@@ -142,6 +142,8 @@ Specs: `docs/specs/2026-04-16-scheduled-autopickup.md` (tick procedure, prefligh
 
 Per-ticket: parse `MEMORY_CITED:` markers → increment `state/memory-citations.json`; flag `count >= 3` across 3+ distinct tickets as promotion-ready; tag source (`"supervisor"` for Phase 2 agent-only, `"operator"` for legacy — absence = `operator`, schema at `state/schemas/memory-citations.schema.json`). Every 10 tickets (or on `compact memory`): merge near-duplicates, archive stale (30+ days, uncited last 10) → `memory/archive/`, draft skill-promotion PRs labeled `commander-skill-promotion`. Silent unless promoting.
 
+Pre-spawn: prepend a Memory Brief per docs/specs/2026-04-17-memory-preloading.md.
+
 Canonical tooling — don't roll your own: `scripts/parse-citations.sh`, `scripts/validate-learning-entry.sh`, `scripts/validate-citations.sh`. All accept `--memory-dir` and default to `$HYDRA_EXTERNAL_MEMORY_DIR` → `./memory/`. Rules: `memory/memory-lifecycle.md`. See `scripts/README.md`, `docs/specs/2026-04-16-external-memory-split.md`.
 
 ## Weekly retro (on demand + scheduled)
