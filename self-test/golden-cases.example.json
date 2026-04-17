@@ -1989,6 +1989,75 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "setup-interactive-ci-mode",
+      "_description": "Script-only self-test for the interactive setup.sh rewrite (spec: docs/specs/2026-04-17-interactive-setup.md, ticket #102). Verifies that (a) --non-interactive is accepted, (b) --ci is a working alias, (c) stdin-not-a-TTY auto-triggers the non-interactive path without hanging on `read`, (d) the .hydra.env format contract survives (all three required exports present in the right order), (e) no prompt text leaks to stdout in non-interactive mode, (f) --help prints usage without running setup, and (g) unknown flags exit 2. Each step stages a tmp HYDRA_ROOT, runs setup.sh once there, and cleans up — the live worktree is never touched. Requires claude + gh just like setup.sh itself; SKIPs cleanly on CI runners without those tools (same pattern as autopickup-default-on-smoke).",
+      "kind": "script",
+      "requires": [
+        "requires_claude_cli",
+        "requires_gh_auth"
+      ],
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "bash -n passes on setup.sh",
+          "cmd": "bash -n setup.sh && echo SYNTAX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SYNTAX_OK"
+        },
+        {
+          "name": "setup.sh --help prints usage without running setup",
+          "cmd": "NO_COLOR=1 ./setup.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./setup.sh"
+        },
+        {
+          "name": "setup.sh --bogus exits 2 with actionable hint",
+          "cmd": "NO_COLOR=1 ./setup.sh --bogus 2>&1; rc=$?; [ \"$rc\" = \"2\" ] && echo BAD_FLAG_REJECTED || { echo \"FAIL rc=$rc\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BAD_FLAG_REJECTED"
+        },
+        {
+          "name": "setup.sh --non-interactive in a tmp HYDRA_ROOT exits 0 and writes .hydra.env",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /tmp/hydra-102-ni.out 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo NI_EXIT0_ENV_WRITTEN || { echo \"FAIL rc=$rc\" >&2; cat /tmp/hydra-102-ni.out >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NI_EXIT0_ENV_WRITTEN"
+        },
+        {
+          "name": "setup.sh --ci is accepted as alias",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --ci > /dev/null 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo CI_ALIAS_OK || { echo \"FAIL rc=$rc\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CI_ALIAS_OK"
+        },
+        {
+          "name": "setup.sh with closed stdin (</dev/null) auto-triggers non-interactive path (no read hang, no set -e trip)",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh </dev/null > /tmp/hydra-102-devnull.out 2>&1 ); rc=$?; [ \"$rc\" = \"0\" ] && [ -f \"$TMP/.hydra.env\" ] && echo CLOSED_STDIN_OK || { echo \"FAIL rc=$rc\" >&2; cat /tmp/hydra-102-devnull.out >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CLOSED_STDIN_OK"
+        },
+        {
+          "name": "non-interactive .hydra.env has all three exports in the contracted order",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); grep -q '^export HYDRA_ROOT=' \"$TMP/.hydra.env\" && grep -q '^export HYDRA_EXTERNAL_MEMORY_DIR=' \"$TMP/.hydra.env\" && grep -q '^export COMMANDER_ROOT=' \"$TMP/.hydra.env\" && awk 'NR==3{if($0 ~ /^export HYDRA_ROOT=/) a=1} NR==4{if($0 ~ /^export HYDRA_EXTERNAL_MEMORY_DIR=/) b=1} NR==5{if($0 ~ /^export COMMANDER_ROOT=/) c=1} END{exit !(a && b && c)}' \"$TMP/.hydra.env\" && echo ENV_FORMAT_OK || { echo FAIL >&2; cat \"$TMP/.hydra.env\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ENV_FORMAT_OK"
+        },
+        {
+          "name": "non-interactive mode does NOT leak prompt text ('Press Enter') to stdout",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /tmp/hydra-102-noleak.out 2>&1 ); ! grep -q 'Press Enter' /tmp/hydra-102-noleak.out && echo NO_PROMPT_LEAK || { echo \"FAIL: prompt text leaked\" >&2; grep 'Press Enter' /tmp/hydra-102-noleak.out >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NO_PROMPT_LEAK"
+        },
+        {
+          "name": "second run on a populated tree is a no-op byte-identical to the first",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/.claude\" \"$TMP/state\"; cp setup.sh \"$TMP/\"; cp .claude/settings.local.json.example \"$TMP/.claude/\"; cp state/repos.example.json \"$TMP/state/\"; chmod +x \"$TMP/setup.sh\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); cp \"$TMP/.hydra.env\" \"$TMP/.env.first\"; cp \"$TMP/hydra\" \"$TMP/hydra.first\"; ( cd \"$TMP\" && env -u HYDRA_EXTERNAL_MEMORY_DIR -u HYDRA_ROOT -u COMMANDER_ROOT NO_COLOR=1 ./setup.sh --non-interactive > /dev/null 2>&1 ); diff -q \"$TMP/.env.first\" \"$TMP/.hydra.env\" > /dev/null && diff -q \"$TMP/hydra.first\" \"$TMP/hydra\" > /dev/null && echo IDEMPOTENT_OK || { echo FAIL >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "IDEMPOTENT_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
