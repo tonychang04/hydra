@@ -1,0 +1,9 @@
+{
+  "ticket": "hydra#77",
+  "repo": "fixture-org/hydra",
+  "tier": "T2",
+  "result": "commander-stuck",
+  "pr_url": "https://github.com/fixture-org/hydra/pull/91",
+  "wall_clock_minutes": 18,
+  "subagent_type": "worker-implementation"
+}

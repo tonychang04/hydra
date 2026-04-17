@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "interval_min": 30,
+  "auto_enable_on_session_start": true,
+  "last_run": "2026-04-17T14:00:00Z",
+  "last_picked_count": 1,
+  "consecutive_rate_limit_hits": 0
+}

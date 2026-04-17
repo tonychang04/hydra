@@ -1,0 +1,9 @@
+{
+  "ticket": "hydra#51",
+  "repo": "fixture-org/hydra",
+  "tier": "T1",
+  "result": "merged",
+  "pr_url": "https://github.com/fixture-org/hydra/pull/70",
+  "wall_clock_minutes": 8,
+  "subagent_type": "worker-implementation"
+}

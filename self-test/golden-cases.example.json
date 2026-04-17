@@ -2458,6 +2458,59 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "hydra-watch-smoke",
+      "_description": "Script-only self-test for scripts/hydra-watch.sh (spec: docs/specs/2026-04-17-hydra-watch.md, ticket #130). Live dashboard in pure bash + tput. Exercises --help, rejects unknown flags, rejects out-of-range --interval values, then runs the smoke fixture under self-test/fixtures/hydra-watch/ which invokes `./hydra watch --once` against a seeded state dir (2 running workers, 3 completed logs, autopickup on, budget counters 4/0). Asserts all 3 panes render with expected substrings, then also exercises corrupt-state (truncated active.json) and missing-logs paths to prove the read-only defensive-read invariant. No network, no gh, no Claude auth — runs anywhere bash + jq + tput is installed.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "bash -n passes on hydra-watch.sh",
+          "cmd": "bash -n scripts/hydra-watch.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-watch.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-watch.sh --help | grep -q \"Usage: ./hydra watch\" && echo HELP_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HELP_OK"
+        },
+        {
+          "name": "hydra-watch.sh rejects an unknown flag",
+          "cmd": "NO_COLOR=1 scripts/hydra-watch.sh --bogus 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BADFLAG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADFLAG_OK"
+        },
+        {
+          "name": "hydra-watch.sh rejects --interval below min",
+          "cmd": "NO_COLOR=1 scripts/hydra-watch.sh --interval 0 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BADINTERVAL_LOW_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADINTERVAL_LOW_OK"
+        },
+        {
+          "name": "hydra-watch.sh rejects --interval above max",
+          "cmd": "NO_COLOR=1 scripts/hydra-watch.sh --interval 999 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BADINTERVAL_HIGH_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADINTERVAL_HIGH_OK"
+        },
+        {
+          "name": "watch smoke harness (--once + corrupt-JSON + missing-logs)",
+          "cmd": "self-test/fixtures/hydra-watch/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        },
+        {
+          "name": "setup.sh heredoc launcher still bash -n clean after watch wiring",
+          "cmd": "awk \"/cat > hydra <<.EOF./,/^EOF$/\" setup.sh | sed \"1d;\\$d\" > /tmp/launcher-130.sh && bash -n /tmp/launcher-130.sh && rm -f /tmp/launcher-130.sh && echo LAUNCHER_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "LAUNCHER_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

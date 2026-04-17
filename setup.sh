@@ -337,6 +337,15 @@ else
 #                                            snapshot + top memory citations
 #                                            (spec: docs/specs/2026-04-17-hydra-activity.md,
 #                                            ticket #19).
+#   ./hydra watch [--once] [--interval N]    Live auto-refreshing terminal
+#                                            dashboard. Three panes: commander
+#                                            state / active workers / recent
+#                                            completions. --once prints a
+#                                            single snapshot (for scripts).
+#                                            Pure bash + tput (no external
+#                                            deps; works over SSH). Spec:
+#                                            docs/specs/2026-04-17-hydra-watch.md,
+#                                            ticket #130.
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -393,6 +402,9 @@ Subcommands:
                                Queue a specific issue for next tick.
   activity [--json]            Text-based observability: last 24h of log
                                activity + live workers + top memory citations.
+  watch [--once] [--interval N]
+                               Live auto-refreshing dashboard (3 panes).
+                               --once for scripts, default refresh 2s.
   doctor [--fix|--fix-safe]    Install sanity check. --fix walks the operator
                                through each fixable issue interactively.
   mcp <serve|register-agent>   MCP server subcommands (agent-only interface).
@@ -422,6 +434,7 @@ HYDRAHELP
   resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
   activity)     shift; hydra_exec_helper scripts/hydra-activity.sh "$@" ;;
+  watch)        shift; hydra_exec_helper scripts/hydra-watch.sh "$@" ;;
   mcp)
     shift
     case "${1:-}" in
