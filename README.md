@@ -68,6 +68,53 @@ flowchart TB
 
 Every box that ends an arrow is a terminal state: **refused**, **ping operator** (rare), or **merged**. The `FAQ` loop is the learning heart — if Commander has seen a similar question before, it answers itself.
 
+## The learning loop (TL;DR — this is the magic)
+
+Every time Hydra gets stuck, it learns once and never asks again.
+
+```
+Worker hits a gotcha mid-ticket
+        │
+        ▼
+  QUESTION: block
+        │
+        ▼
+Commander checks memory/escalation-faq.md
+        │
+    ┌───┴───┐
+    │       │
+  MATCH?   no match
+    │       │
+    │       ▼
+    │   Calls SUPERVISOR agent (main agent / you)
+    │       │
+    │       ▼
+    │   Supervisor answers
+    │       │
+    │       ▼
+    │   Commander appends Q+A to memory/escalation-faq.md
+    │       │
+    ▼       ▼
+Commander SendMessage(worker, answer) — worker resumes
+        │
+        ▼
+Ticket ships, PR merges
+```
+
+**The second time any worker hits the same gotcha, Commander answers in milliseconds from memory. The supervisor never sees it. You never see it.**
+
+Concrete: `npm test hangs with no output` fires once → supervisor says `add a postcss.config.cjs stub, delete before commit` → captured → from that moment on, every worker across every repo that hits the same thing auto-resolves without human attention. The loop gets quieter every day.
+
+Three kinds of things "ask back":
+
+| Who asks | Who answers | When | Frequency over time |
+|---|---|---|---|
+| Worker | Commander | Mid-ticket uncertainty | Per-ticket (constant) |
+| Commander | Your main agent (MCP) | Memory can't match | Goes down as memory grows |
+| Main agent | You (human) | Main agent can't decide | Rare, getting rarer |
+
+The bottom row — the only layer that touches you — shrinks every week as memory compounds. That's the point.
+
 ## What Hydra IS
 
 - **An auto-machine.** Default mode is hands-off. Autopickup polls GitHub every N minutes. You chat with Commander only to steer, not to dispatch.
