@@ -157,7 +157,7 @@ Pre-spawn: prepend a Memory Brief per docs/specs/2026-04-17-memory-preloading.md
 
 Canonical tooling — don't roll your own: `scripts/parse-citations.sh`, `scripts/validate-learning-entry.sh`, `scripts/validate-citations.sh`. All accept `--memory-dir` and default to `$HYDRA_EXTERNAL_MEMORY_DIR` → `./memory/`. Rules: `memory/memory-lifecycle.md`. See `scripts/README.md`, `docs/specs/2026-04-16-external-memory-split.md`.
 
-Skill library: `.claude/skills/` is the promotion target for #145; seed list + audit at `docs/specs/2026-04-17-skill-seed-list.md`.
+Skill library: `.claude/skills/` is the promotion target for #145; seed list + audit at `docs/specs/2026-04-17-skill-seed-list.md`. Promotion pipeline (3+ cites × 3+ tickets → draft PR) runs once/day via the autopickup tick; see `scripts/promote-citations.sh` + `docs/specs/2026-04-17-skill-promotion-automation.md`.
 
 ## Weekly retro (on demand + scheduled)
 
