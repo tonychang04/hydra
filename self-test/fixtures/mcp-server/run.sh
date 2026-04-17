@@ -7,7 +7,7 @@
 # a real running server on a random free port:
 #
 #   1. Starts the server in the background with a fixture mcp.json.
-#   2. Sends tools/list with a valid bearer → expects 13 tools.
+#   2. Sends tools/list with a valid bearer → expects 14 tools.
 #   3. Sends tools/call hydra.get_status → expects the documented shape.
 #   4. Sends with a bad bearer → expects HTTP 401.
 #   5. Sends tools/call hydra.pause with a read-only bearer → expects HTTP 403.
@@ -92,8 +92,8 @@ status_code() {
 # --- 1) tools/list ----------------------------------------------------------
 RESP=$(post "$ADMIN_TOKEN" '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
 COUNT=$(printf '%s' "$RESP" > "$TMP/tools-list.json" && python3 -c "import json; print(len(json.load(open('$TMP/tools-list.json'))['result']['tools']))")
-if [[ "$COUNT" != "13" ]]; then
-  echo "FAIL: tools/list returned $COUNT tools (expected 13)"
+if [[ "$COUNT" != "14" ]]; then
+  echo "FAIL: tools/list returned $COUNT tools (expected 14)"
   echo "body: $RESP"
   exit 1
 fi

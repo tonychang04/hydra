@@ -389,6 +389,45 @@
       }
     },
     {
+      "name": "hydra.file_ticket",
+      "description": "File a new GitHub issue in an enabled repo and queue it for autopickup. Primary use case: Main Agent (the operator's Claude Code session on their laptop) turns a spoken complaint — 'the settings page needs an icon' — into a Hydra ticket with one call, shrinking 'human notices something' → 'Commander is on it' from ~90 seconds to ~3 seconds. Rate-limited to 10 calls/hour per authorized agent (anti-spam / runaway-loop cap). T3 proposed tier is filed but labeled commander-stuck instead of commander-ready — Commander will not pick it up automatically. See docs/specs/2026-04-17-main-agent-filing.md.",
+      "scope": "spawn",
+      "input_schema": {
+        "type": "object",
+        "required": ["repo", "title", "body"],
+        "properties": {
+          "repo": {"type": "string", "description": "owner/name — must be present and enabled=true in state/repos.json."},
+          "title": {"type": "string", "minLength": 1, "maxLength": 120},
+          "body": {"type": "string", "description": "Markdown body. title + body combined must be ≥ 20 characters (anti-spam)."},
+          "proposed_tier": {"type": "string", "enum": ["T1", "T2", "T3"], "description": "Caller's best-guess tier. Commander still re-classifies per policy.md before spawning. T3 is filed but auto-refused — body is prefixed with a T3 notice and commander-stuck replaces commander-ready."},
+          "labels": {"type": "array", "items": {"type": "string"}, "description": "Additional labels to apply. commander-auto-filed and commander-ready (or commander-stuck for T3) are always added."},
+          "auto_pickup": {"type": "boolean", "default": true, "description": "If false, the issue is filed without the commander-ready label so autopickup skips it. Useful for draft tickets."}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["issue_number", "issue_url", "will_autopickup"],
+        "properties": {
+          "issue_number": {"type": "integer", "minimum": 1},
+          "issue_url": {"type": "string"},
+          "will_autopickup": {"type": "boolean"},
+          "reason": {"type": ["string", "null"], "description": "If will_autopickup is false, the reason (e.g. 'proposed_tier=T3', 'auto_pickup=false', 'commander-paused')."}
+        }
+      },
+      "example_request": {
+        "repo": "tonychang04/hydra",
+        "title": "Add icon to settings page",
+        "body": "The settings page header has no icon next to each section title. Small visual-polish task — should be T1 or T2."
+      },
+      "example_response": {
+        "issue_number": 142,
+        "issue_url": "https://github.com/tonychang04/hydra/issues/142",
+        "will_autopickup": true,
+        "reason": null
+      }
+    },
+    {
       "name": "hydra.kill_worker",
       "description": "Forcibly stop a running worker via TaskStop. Updates state/active.json and labels the ticket `commander-stuck`. Irreversible for that worker — a retry requires hydra.pick_up_specific on the same issue.",
       "scope": "admin",
