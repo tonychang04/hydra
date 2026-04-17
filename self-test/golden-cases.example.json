@@ -754,6 +754,71 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "mcp-server-starts",
+      "_description": "Script-only self-test for scripts/hydra-mcp-server.py — the agent-only interface server binary landed in ticket #72. Spins the server up in a subprocess on a random free port against a fixture mcp.json, exercises auth (valid token, bad token, scope mismatch), dispatches to implemented tools (get_status, pause), verifies t3-refused on merge_pr, verifies NotImplemented on a scaffolded tool (resume), and asserts the audit log received one line per call. Smoke-test fixture lives at self-test/fixtures/mcp-server/run.sh — same pattern as linear-mcp-contract and release-script-smoke. Runs locally in <5s; no worker spawn, no network, no external auth. Commander runs this before committing changes to scripts/hydra-mcp-server.py, scripts/hydra-mcp-serve.sh, or the launcher dispatch in setup.sh.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-mcp-server.py bash syntax-equivalent (python ast parse)",
+          "cmd": "python3 -c 'import ast; ast.parse(open(\"scripts/hydra-mcp-server.py\").read())' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-mcp-serve.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-mcp-serve.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-mcp-serve.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-mcp-serve.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra mcp serve"
+        },
+        {
+          "name": "--check refuses with no config (exit 1)",
+          "cmd": "HYDRA_MCP_CONFIG=/nonexistent/mcp.json python3 scripts/hydra-mcp-server.py --check 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo NOCFG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NOCFG_OK"
+        },
+        {
+          "name": "--check refuses placeholder config (exit 1)",
+          "cmd": "HYDRA_MCP_CONFIG=state/connectors/mcp.json.example python3 scripts/hydra-mcp-server.py --check 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo PLACEHOLDER_REFUSED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PLACEHOLDER_REFUSED"
+        },
+        {
+          "name": "--transport stdio is a Phase 1 non-goal (exit 2)",
+          "cmd": "python3 scripts/hydra-mcp-server.py --transport stdio 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo STDIO_REFUSED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STDIO_REFUSED"
+        },
+        {
+          "name": "integration smoke (start server, run 7 calls, assert audit + shapes)",
+          "cmd": "self-test/fixtures/mcp-server/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "mcp/hydra-tools.json is valid JSON + has 13 tools",
+          "cmd": "jq -e '(.tools | length) == 13' mcp/hydra-tools.json >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "every tool in the contract has a handler registered in the server",
+          "cmd": "jq -r '.tools[].name' mcp/hydra-tools.json | sort > /tmp/contract-tools-$$ && grep -oE 'hydra\\.[a-z_]+' scripts/hydra-mcp-server.py | grep -v 'hydra\\.' | head -0; grep -oE '\"hydra\\.[a-z_]+\"' scripts/hydra-mcp-server.py | tr -d '\"' | sort -u > /tmp/server-tools-$$ && diff /tmp/contract-tools-$$ /tmp/server-tools-$$ && echo HANDLERS_COMPLETE; rm -f /tmp/contract-tools-$$ /tmp/server-tools-$$",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HANDLERS_COMPLETE"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
