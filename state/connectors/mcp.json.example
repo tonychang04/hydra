@@ -1,0 +1,65 @@
+{
+  "_description": "Copy to state/connectors/mcp.json and fill in. Controls Hydra's agent-only interface (MCP surface). This PR lands the contract + config template only — the actual MCP server binary is a follow-up ticket. Nothing in Commander reads this file yet; it exists so operators can prepare their connector config alongside the tool contract (mcp/hydra-tools.json + docs/mcp-tool-contract.md). When the server lands, it will read this path on start and refuse to serve until at least one authorized_agent is configured.",
+  "_canonical_term": "agent-only interface",
+  "_related_docs": [
+    "mcp/hydra-tools.json",
+    "docs/mcp-tool-contract.md",
+    "docs/specs/2026-04-16-mcp-agent-interface.md"
+  ],
+  "server": {
+    "_description": "Inbound surface — how authorized agents reach Hydra. Two transports: stdio (local, one client per Commander session) or http (network-reachable, multi-client).",
+    "enabled": false,
+    "transport": "stdio",
+    "_transport_options": {
+      "stdio": "One client per Commander session, launched by that client via `claude mcp add hydra <command>`. Simplest; recommended for single-operator setups.",
+      "http": "HTTP + SSE transport. Required if the orchestrating agent runs out-of-process or on a different host (cloud VM, laptop reaching a VPS Commander)."
+    },
+    "http_port": 8765,
+    "bind_address": "127.0.0.1",
+    "_bind_note": "Keep on loopback for local dev. Exposing Hydra's MCP surface to the internet requires a reverse proxy with TLS and rate limiting in front — never bind 0.0.0.0 directly."
+  },
+  "authorized_agents": [
+    {
+      "_comment": "Each entry authorizes one agent to call Hydra tools. `id` is a free-form label you choose. `token_hash` is the SHA-256 hex digest of the bearer token the agent will present. Never commit the raw token — only the hash.",
+      "id": "your-supervisor-agent",
+      "token_hash": "SHA256:REPLACE_WITH_SHA256_HEX_OF_YOUR_TOKEN",
+      "scope": ["read", "spawn", "merge", "admin"],
+      "_scope_levels": {
+        "read": "Non-mutating calls: hydra.get_status, hydra.list_ready_tickets, hydra.get_log, hydra.retro.",
+        "spawn": "Triggers worker spawns: hydra.pick_up, hydra.pick_up_specific, hydra.review_pr, hydra.answer_worker_question.",
+        "merge": "PR disposition: hydra.merge_pr, hydra.reject_pr. (T3 is always refused regardless of scope.)",
+        "admin": "Lifecycle: hydra.pause, hydra.resume, hydra.kill_worker."
+      }
+    },
+    {
+      "_comment": "Example of a read-only viewer agent (dashboard or monitoring agent). Cannot mutate state.",
+      "id": "dashboard-agent",
+      "token_hash": "SHA256:REPLACE_WITH_SHA256_HEX_OF_DASHBOARD_TOKEN",
+      "scope": ["read"]
+    }
+  ],
+  "upstream_supervisor": {
+    "_description": "Outbound channel — when Commander can't resolve a worker's QUESTION: block from memory, it calls this supervisor agent's resolve_question tool. The supervisor agent (NOT Hydra) decides whether to answer from its own context or loop a human via its own channel. Leave enabled=false until you have a supervisor agent wired up; without upstream, novel questions fall back to logging the block and labeling the ticket commander-stuck.",
+    "enabled": false,
+    "name": "your-supervisor",
+    "transport": "stdio",
+    "connect_url": "REPLACE_WITH_STDIO_COMMAND_OR_HTTP_URL",
+    "_connect_url_examples": {
+      "stdio": "/usr/local/bin/your-supervisor-mcp --serve",
+      "http": "https://supervisor.you.dev/mcp"
+    },
+    "auth_token_env": "HYDRA_SUPERVISOR_TOKEN",
+    "_auth_token_env_note": "Name of an env var Commander reads at runtime to get the bearer token to present to the supervisor. Never embed the token in this file.",
+    "scope_granted": ["resolve_question"],
+    "_scope_granted_options": {
+      "resolve_question": "Commander may call supervisor.resolve_question({worker_id, question, context, options, recommendation, nearest_memory_match}) → {answer, confidence, human_involved}."
+    },
+    "timeout_sec": 300,
+    "_timeout_note": "If the supervisor doesn't respond within timeout_sec, Commander labels the ticket commander-stuck and stops retrying for that worker. The supervisor can still answer later; the ticket is picked up again via retry."
+  },
+  "audit": {
+    "_description": "Every MCP tool call is logged to logs/mcp-audit.jsonl with caller_agent_id, tool name, scope check result, and timestamp. No request/response bodies (they may contain secrets) — just the call envelope.",
+    "enabled": true,
+    "path_override": null
+  }
+}

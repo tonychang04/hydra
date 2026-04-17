@@ -1,0 +1,415 @@
+{
+  "_description": "Canonical MCP tool schema registry for Hydra's agent-only interface. Every public verb Commander exposes to an authorized client agent is declared here. This file is the single source of truth — docs/mcp-tool-contract.md mirrors it in prose, and a future MCP server binary reads it to serve tool definitions. Do NOT add tools here without a matching section in docs/mcp-tool-contract.md.",
+  "_version": "0.1.0-contract",
+  "_scopes": {
+    "read": "Non-mutating observation — status, lists, logs. Safe to grant any orchestration agent.",
+    "spawn": "Triggers worker spawns and PR reviews. Counts against concurrency + daily caps. Grant to agents that plan work.",
+    "merge": "Merges or rejects PRs (T1 auto / T2 with confirm / T3 always refused). Grant only to agents cleared for merge authority.",
+    "admin": "Lifecycle controls — pause, kill, resume. Grant to human-supervisor-proxy agents only."
+  },
+  "tools": [
+    {
+      "name": "hydra.get_status",
+      "description": "Return Commander's current runtime state — active workers, today's counters, pause/autopickup flags. Idempotent, cheap, safe to poll. Use this before any spawn decision and when surfacing dashboard views.",
+      "scope": "read",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["active_workers", "today", "paused", "autopickup"],
+        "properties": {
+          "active_workers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "ticket", "repo", "tier", "subagent_type", "started_at"],
+              "properties": {
+                "id": {"type": "string"},
+                "ticket": {"type": "string", "description": "e.g. 'owner/repo#123'"},
+                "repo": {"type": "string"},
+                "tier": {"type": "string", "enum": ["T1", "T2", "T3"]},
+                "subagent_type": {"type": "string", "enum": ["worker-implementation", "worker-review", "worker-test-discovery"]},
+                "started_at": {"type": "string", "format": "date-time"},
+                "state": {"type": "string", "enum": ["running", "paused-on-question", "awaiting-review", "finishing"]}
+              }
+            }
+          },
+          "today": {
+            "type": "object",
+            "properties": {
+              "done": {"type": "integer", "minimum": 0},
+              "failed": {"type": "integer", "minimum": 0},
+              "wall_clock_min": {"type": "number", "minimum": 0}
+            }
+          },
+          "paused": {"type": "boolean"},
+          "autopickup": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "interval_min": {"type": "integer"},
+              "last_run": {"type": ["string", "null"], "format": "date-time"}
+            }
+          },
+          "quota_health": {
+            "type": "object",
+            "properties": {
+              "github_rate_limit_ok": {"type": "boolean"},
+              "linear_rate_limit_ok": {"type": "boolean"}
+            }
+          }
+        }
+      },
+      "example_request": {},
+      "example_response": {
+        "active_workers": [
+          {"id": "w-7f3a", "ticket": "tonychang04/hydra#50", "repo": "tonychang04/hydra", "tier": "T2", "subagent_type": "worker-implementation", "started_at": "2026-04-16T20:10:00Z", "state": "running"}
+        ],
+        "today": {"done": 3, "failed": 0, "wall_clock_min": 42},
+        "paused": false,
+        "autopickup": {"enabled": true, "interval_min": 30, "last_run": "2026-04-16T19:45:00Z"},
+        "quota_health": {"github_rate_limit_ok": true, "linear_rate_limit_ok": true}
+      }
+    },
+    {
+      "name": "hydra.list_ready_tickets",
+      "description": "List tickets currently eligible for pickup across all enabled repos (respects each repo's ticket_trigger). Does NOT spawn workers — purely inspection. Use to preview the queue before calling hydra.pick_up.",
+      "scope": "read",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
+          "repo": {"type": "string", "description": "Optional 'owner/name' filter. Omit to list across all enabled repos."}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["tickets"],
+        "properties": {
+          "tickets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["repo", "num", "title", "tier_guess"],
+              "properties": {
+                "repo": {"type": "string"},
+                "num": {"type": "integer"},
+                "title": {"type": "string"},
+                "tier_guess": {"type": "string", "enum": ["T1", "T2", "T3", "unknown"]},
+                "labels": {"type": "array", "items": {"type": "string"}},
+                "source": {"type": "string", "enum": ["github", "linear"]}
+              }
+            }
+          }
+        }
+      },
+      "example_request": {"limit": 5, "repo": "tonychang04/hydra"},
+      "example_response": {
+        "tickets": [
+          {"repo": "tonychang04/hydra", "num": 50, "title": "Hydra as MCP server: agent-only interface", "tier_guess": "T2", "labels": [], "source": "github"}
+        ]
+      }
+    },
+    {
+      "name": "hydra.pick_up",
+      "description": "Spawn up to `count` worker-implementation agents on ready tickets. Honors preflight (PAUSE, concurrency cap, daily cap, quota health). Returns the worker IDs spawned — an empty list means preflight blocked or no ready tickets.",
+      "scope": "spawn",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "count": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1},
+          "filter": {
+            "type": "object",
+            "properties": {
+              "repo": {"type": "string"},
+              "tier_max": {"type": "string", "enum": ["T1", "T2"]}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["spawned"],
+        "properties": {
+          "spawned": {"type": "array", "items": {"type": "string"}, "description": "Worker IDs"},
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ticket": {"type": "string"},
+                "reason": {"type": "string"}
+              }
+            }
+          },
+          "preflight_blocked_reason": {"type": ["string", "null"]}
+        }
+      },
+      "example_request": {"count": 2},
+      "example_response": {
+        "spawned": ["w-7f3a", "w-8b21"],
+        "skipped": [],
+        "preflight_blocked_reason": null
+      }
+    },
+    {
+      "name": "hydra.pick_up_specific",
+      "description": "Spawn a worker-implementation on one specific ticket by repo + issue number. Still respects tier (T3 refused) and preflight. Use this when the supervisor agent wants to prioritize a known ticket over whatever the default poll would select.",
+      "scope": "spawn",
+      "input_schema": {
+        "type": "object",
+        "required": ["repo", "issue_num"],
+        "properties": {
+          "repo": {"type": "string", "description": "owner/name"},
+          "issue_num": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["worker_id"],
+        "properties": {
+          "worker_id": {"type": ["string", "null"]},
+          "tier": {"type": "string", "enum": ["T1", "T2", "T3"]},
+          "refused_reason": {"type": ["string", "null"], "description": "If worker_id is null, why (T3 refusal, preflight block, already-in-flight)."}
+        }
+      },
+      "example_request": {"repo": "tonychang04/hydra", "issue_num": 50},
+      "example_response": {"worker_id": "w-7f3a", "tier": "T2", "refused_reason": null}
+    },
+    {
+      "name": "hydra.review_pr",
+      "description": "Spawn a worker-review subagent against an existing PR. This is Commander's review gate — the reviewer is deliberately separate from the implementer so context bias doesn't leak in. Returns the structured review when the worker completes.",
+      "scope": "spawn",
+      "input_schema": {
+        "type": "object",
+        "required": ["pr_num"],
+        "properties": {
+          "pr_num": {"type": "integer", "minimum": 1},
+          "repo": {"type": "string", "description": "owner/name; required if the PR is not in the sole enabled repo."}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["review"],
+        "properties": {
+          "review": {
+            "type": "object",
+            "properties": {
+              "verdict": {"type": "string", "enum": ["clean", "blockers", "security-blocker"]},
+              "blockers": {"type": "array", "items": {"type": "string"}},
+              "concerns": {"type": "array", "items": {"type": "string"}},
+              "nits": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+          "worker_id": {"type": "string"}
+        }
+      },
+      "example_request": {"pr_num": 501, "repo": "tonychang04/hydra"},
+      "example_response": {
+        "review": {"verdict": "clean", "blockers": [], "concerns": [], "nits": ["redundant import"]},
+        "worker_id": "w-rev-9c02"
+      }
+    },
+    {
+      "name": "hydra.merge_pr",
+      "description": "Merge a PR subject to Commander's tier-aware merge policy. T1 auto-merges on CI green. T2 requires the caller agent to pass caller_agent_id (logged as the merge authorizer). T3 is ALWAYS refused at this layer — Commander does not merge T3. Mutates GitHub state.",
+      "scope": "merge",
+      "input_schema": {
+        "type": "object",
+        "required": ["pr_num", "caller_agent_id"],
+        "properties": {
+          "pr_num": {"type": "integer", "minimum": 1},
+          "repo": {"type": "string"},
+          "caller_agent_id": {"type": "string", "description": "The authorized-agent id (from state/connectors/mcp.json). Recorded in logs/<ticket>.json as the merge authorizer."}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["merged"],
+        "properties": {
+          "merged": {"type": "boolean"},
+          "merged_at": {"type": ["string", "null"], "format": "date-time"},
+          "sha": {"type": ["string", "null"]},
+          "refused_reason": {"type": ["string", "null"]}
+        }
+      },
+      "example_request": {"pr_num": 501, "caller_agent_id": "supervisor-main", "repo": "tonychang04/hydra"},
+      "example_response": {"merged": true, "merged_at": "2026-04-16T21:00:00Z", "sha": "abc1234", "refused_reason": null}
+    },
+    {
+      "name": "hydra.reject_pr",
+      "description": "Close a draft PR as rejected and label `commander-rejected`. Supplies a reason that lands in the PR close comment. Use when a review verdict or an outside signal (supervisor override) decides the work should not ship.",
+      "scope": "merge",
+      "input_schema": {
+        "type": "object",
+        "required": ["pr_num", "reason"],
+        "properties": {
+          "pr_num": {"type": "integer", "minimum": 1},
+          "repo": {"type": "string"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 2000}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["closed"],
+        "properties": {
+          "closed": {"type": "boolean"},
+          "closed_at": {"type": ["string", "null"], "format": "date-time"}
+        }
+      },
+      "example_request": {"pr_num": 501, "reason": "Duplicates #498; closing in favor of that branch.", "repo": "tonychang04/hydra"},
+      "example_response": {"closed": true, "closed_at": "2026-04-16T21:05:00Z"}
+    },
+    {
+      "name": "hydra.answer_worker_question",
+      "description": "Resolve a worker that paused with a QUESTION: block. Commander forwards `content` to the worker via SendMessage and appends Q+A to memory/escalation-faq.md so the same question auto-resolves next time. This is the MCP-surface equivalent of the operator's `answer #42: <guidance>` command.",
+      "scope": "spawn",
+      "input_schema": {
+        "type": "object",
+        "required": ["worker_id", "content"],
+        "properties": {
+          "worker_id": {"type": "string"},
+          "content": {"type": "string", "minLength": 1, "maxLength": 8000}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["acknowledged"],
+        "properties": {
+          "acknowledged": {"type": "boolean"},
+          "appended_to_faq": {"type": "boolean"}
+        }
+      },
+      "example_request": {"worker_id": "w-7f3a", "content": "Revert the lockfile changes; they are baseline drift, not part of your ticket."},
+      "example_response": {"acknowledged": true, "appended_to_faq": true}
+    },
+    {
+      "name": "hydra.pause",
+      "description": "Create the `PAUSE` sentinel file. New spawns are blocked until resumed. In-flight workers finish normally. Safe to call idempotently — repeated pauses are no-ops.",
+      "scope": "admin",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reason": {"type": "string", "maxLength": 500}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["paused_at"],
+        "properties": {
+          "paused_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "example_request": {"reason": "Investigating rate-limit anomaly."},
+      "example_response": {"paused_at": "2026-04-16T21:10:00Z"}
+    },
+    {
+      "name": "hydra.resume",
+      "description": "Remove the `PAUSE` sentinel and allow new spawns. Does NOT automatically trigger a pickup — use hydra.pick_up after resume if you want immediate work.",
+      "scope": "admin",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["resumed_at"],
+        "properties": {
+          "resumed_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "example_request": {},
+      "example_response": {"resumed_at": "2026-04-16T21:15:00Z"}
+    },
+    {
+      "name": "hydra.retro",
+      "description": "Produce the weekly retrospective markdown for a given ISO year-week (defaults to current week). Writes memory/retros/YYYY-WW.md and returns the full markdown body. Overwrites on re-run in the same week — retros are cumulative within a week.",
+      "scope": "read",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "week": {"type": "string", "pattern": "^\\d{4}-W\\d{2}$", "description": "ISO year-week, e.g. '2026-W16'. Omit for the current week."}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["markdown", "week"],
+        "properties": {
+          "markdown": {"type": "string"},
+          "week": {"type": "string"},
+          "path": {"type": "string", "description": "Absolute path of the retro file on disk."}
+        }
+      },
+      "example_request": {"week": "2026-W16"},
+      "example_response": {
+        "markdown": "# Hydra Retro — Week of 2026-W16\n\n## Shipped\n...",
+        "week": "2026-W16",
+        "path": "/Users/you/hydra/memory/retros/2026-W16.md"
+      }
+    },
+    {
+      "name": "hydra.get_log",
+      "description": "Return the per-ticket audit log. Resolved by either the GitHub issue number + repo or by worker_id. Useful for supervisor agents deciding whether to retry or escalate after a failure.",
+      "scope": "read",
+      "input_schema": {
+        "type": "object",
+        "oneOf": [
+          {"required": ["ticket_num", "repo"], "properties": {"ticket_num": {"type": "integer"}, "repo": {"type": "string"}}},
+          {"required": ["worker_id"], "properties": {"worker_id": {"type": "string"}}}
+        ]
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["log"],
+        "properties": {
+          "log": {
+            "type": "object",
+            "description": "Contents of logs/<ticket>.json. Shape is stable across Hydra versions — see state/schemas/log.schema.json once that lands (follow-up)."
+          }
+        }
+      },
+      "example_request": {"ticket_num": 50, "repo": "tonychang04/hydra"},
+      "example_response": {
+        "log": {"ticket": "tonychang04/hydra#50", "worker_id": "w-7f3a", "result": "pr-opened", "pr": 123}
+      }
+    },
+    {
+      "name": "hydra.kill_worker",
+      "description": "Forcibly stop a running worker via TaskStop. Updates state/active.json and labels the ticket `commander-stuck`. Irreversible for that worker — a retry requires hydra.pick_up_specific on the same issue.",
+      "scope": "admin",
+      "input_schema": {
+        "type": "object",
+        "required": ["worker_id"],
+        "properties": {
+          "worker_id": {"type": "string"},
+          "reason": {"type": "string", "maxLength": 500}
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["killed"],
+        "properties": {
+          "killed": {"type": "boolean"},
+          "killed_at": {"type": ["string", "null"], "format": "date-time"}
+        }
+      },
+      "example_request": {"worker_id": "w-7f3a", "reason": "Wall-clock runaway on infra probe."},
+      "example_response": {"killed": true, "killed_at": "2026-04-16T21:20:00Z"}
+    }
+  ]
+}

@@ -87,7 +87,9 @@ The `worker-test-discovery` subagent exists so workers never have to re-discover
 
 **First execution:** currently only wired at the commander decision layer. The self-test case `test-discovery-dormant-to-active` (see `self-test/golden-cases.example.json`, kind `worker-subagent`) documents the expected artifact. It is SKIP'd today pending the `worker-implementation` SKIP-path executor (ticket #15 follow-up); once that lands, this auto-dispatch path is live.
 
-## When to involve the human (memorize this)
+## When Commander can't resolve from memory — escalate to supervisor agent (memorize this)
+
+Commander does not talk to humans directly in the agent-only interface model. There is a **supervisor agent** one hop upstream; the supervisor agent wraps whatever human-facing channel exists (Slack DM, pager, voice call — none of that is Hydra's concern). In legacy direct-drive mode (`./hydra` in a terminal, operator typing at the prompt), the supervisor is effectively the operator themselves — same flow, different transport.
 
 **Don't escalate:**
 - Pre-existing lint/typecheck failures on baseline (worker baseline-compares)
@@ -97,7 +99,7 @@ The `worker-test-discovery` subagent exists so workers never have to re-discover
 - Any recurring question that matches `memory/escalation-faq.md`
 
 **Do escalate:**
-- T2 or T3 PR ready for merge (humans gate merges always)
+- T2 or T3 PR ready for merge (merges are always gated — T1 auto, T2 needs supervisor attestation, T3 refused)
 - Worker returns `QUESTION:` with no match in memory
 - A `worker-review` finds a `SECURITY:` blocker
 - Self-test regression after a commander change
@@ -115,14 +117,19 @@ Worker returns with QUESTION: block + agentId
    ↓
 Commander scans memory/escalation-faq.md + learnings-<repo>.md
    ↓
-   ├─ Match found → SendMessage(agentId, answer) — worker continues, the operator not pinged
-   └─ No match   → surface to the operator in chat with nearest precedent, wait for answer
-                   then SendMessage(agentId, answer) AND append Q+A to escalation-faq.md
+   ├─ Match found  → SendMessage(agentId, answer) — worker continues, no upstream call
+   └─ No match     → call supervisor.resolve_question(...) with nearest_memory_match
+                     ↓
+                     supervisor returns {answer, confidence, human_involved}
+                     ↓
+                     SendMessage(agentId, answer) AND append Q+A to escalation-faq.md
 ```
 
-Memory gets smarter over time. the operator gets pinged only for genuinely novel questions.
+Memory gets smarter over time. The supervisor gets pinged only for genuinely novel questions; when configured, the supervisor handles its own decision of whether to loop a human. Hydra doesn't know or care.
 
-**Surfacing format:**
+**Upstream supervisor configuration** lives in `state/connectors/mcp.json:upstream_supervisor`. When `enabled=false` (default until an operator wires it up), the "no match" branch falls back to labeling the ticket `commander-stuck` and stopping retries — this is the legacy behavior. When `enabled=true`, Commander calls `supervisor.resolve_question` with timeout `upstream_supervisor.timeout_sec` (default 300). Contract and handshake: `docs/mcp-tool-contract.md` (escalation flow section) and `docs/specs/2026-04-16-mcp-agent-interface.md`.
+
+**Legacy direct-drive surfacing** (when the operator is live in a terminal and there's no supervisor agent configured):
 ```
 ⏸  Worker on <repo>#<n> is paused.
 
@@ -133,6 +140,8 @@ Nearest precedent in memory: <closest match or "none">
 
 Your call? (answer, or "kill" to abandon, or "split")
 ```
+
+In agent-only interface mode, the same envelope is sent as a `supervisor.resolve_question` call — the fields are the same, only the transport differs.
 
 ## Commander review gate (before surfacing a PR to the operator for merge)
 
