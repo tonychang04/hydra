@@ -48,6 +48,18 @@
 
 set -euo pipefail
 
+# --- cleanup (aggregate temp files via EXIT trap) ---------------------------
+
+_tmp_files=()
+_cleanup() {
+  # ${arr[@]:+...} guards against the set -u "unbound variable" error on
+  # bash 3.2 (macOS default) when the array is empty.
+  for f in "${_tmp_files[@]:+${_tmp_files[@]}}"; do
+    [[ -n "$f" && -e "$f" ]] && rm -f "$f"
+  done
+}
+trap _cleanup EXIT
+
 # --- resolve paths ----------------------------------------------------------
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -267,8 +279,13 @@ _classify_tier() {
       return
     fi
   done
+  # Spec: T1 prefixes are matched at the START of the summary (case-insensitive).
+  # See docs/specs/2026-04-17-retro-auto-file.md ("T1 prefixes … at the START").
+  # A mid-sentence match (e.g. `*" $kw"*`) would mis-classify a T2 bullet like
+  # "Improve testing coverage for docs: the retro flow" as T1, loosening
+  # the auto-merge gate on repos with `merge_policy: auto`.
   for kw in "${T1_PREFIXES[@]}"; do
-    if [[ "$text_lc" == "$kw"* || "$text_lc" == *" $kw"* ]]; then
+    if [[ "$text_lc" == "$kw"* ]]; then
       echo "T1"
       return
     fi
@@ -386,9 +403,10 @@ for bullet in "${bullets[@]}"; do
   done
 
   # Attempt create. Capture stdout (url) + stderr (for deprecation marker).
+  # Aggregate temp file into the EXIT-trap cleanup list; bash has no
+  # loop-body trap scope, so we can't use a per-iteration RETURN trap.
   tmp_stderr="$(mktemp)"
-  # shellcheck disable=SC2064
-  trap "rm -f '$tmp_stderr'" RETURN
+  _tmp_files+=("$tmp_stderr")
   set +e
   url="$("$GH_BIN" issue create \
     --repo "$repo" \

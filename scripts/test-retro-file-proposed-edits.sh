@@ -247,6 +247,31 @@ case3() {
 }
 
 # -----------------------------------------------------------------------------
+# Case 3b: T1-prefix mid-sentence → T2 (spec says prefixes match at START only)
+# Regression for PR #169 review concern #2. Was incorrectly T1 before fix.
+# -----------------------------------------------------------------------------
+
+case3b() {
+  say "case 3b: T1 keyword mid-sentence → T2 (not T1)"
+  local dir="$tmpdir/c3b"
+  _write_retro "$dir" "2026-02" '
+## Proposed edits
+
+- Improve testing coverage for docs: the retro flow
+'
+  STUB="$tmpdir/c3b-gh"; _write_stub "$STUB"
+  STUB_LOG="$tmpdir/c3b-log"; : >"$STUB_LOG"
+
+  _run_subject "$dir" "2026-02" >/dev/null
+
+  if grep -q -- '--label T2' "$STUB_LOG" && ! grep -q -- '--label T1' "$STUB_LOG"; then
+    ok "T2 applied, T1 not applied"
+  else
+    bad "tier label wrong (expected T2, not T1); log: $(cat "$STUB_LOG")"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Case 4: T3 tripwire (auth) → SURFACE, no gh issue create
 # -----------------------------------------------------------------------------
 
@@ -444,6 +469,7 @@ case10() {
 case1
 case2
 case3
+case3b
 case4
 case5
 case6
