@@ -1,0 +1,4 @@
+{
+  "_comment": "BROKEN fixture for active.schema.json. Violation: missing required top-level key 'workers'. The minimal validator (validate-state.sh) checks required top-level keys and MUST reject this. Expected validator error includes the keyword 'workers'.",
+  "last_updated": "2026-04-16T10:31:00Z"
+}

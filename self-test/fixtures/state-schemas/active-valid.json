@@ -1,0 +1,24 @@
+{
+  "_comment": "VALID fixture for active.schema.json. Two workers with all required fields (id, ticket, repo, tier, started_at, subagent_type, status), plus last_updated. Used by self-test case state-schema-validators. Runs against scripts/validate-state.sh --schema state/schemas/active.schema.json — should exit 0.",
+  "workers": [
+    {
+      "id": "w-0001",
+      "ticket": "tonychang04/hydra#42",
+      "repo": "tonychang04/hydra",
+      "tier": "T1",
+      "started_at": "2026-04-16T10:15:00Z",
+      "subagent_type": "worker-implementation",
+      "status": "running"
+    },
+    {
+      "id": "w-0002",
+      "ticket": "tonychang04/hydra#43",
+      "repo": "tonychang04/hydra",
+      "tier": "T2",
+      "started_at": "2026-04-16T10:30:00Z",
+      "subagent_type": "worker-review",
+      "status": "done"
+    }
+  ],
+  "last_updated": "2026-04-16T10:31:00Z"
+}

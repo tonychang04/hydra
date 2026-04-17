@@ -1,0 +1,9 @@
+{
+  "_comment": "VALID fixture for autopickup.schema.json. All required fields present: enabled, interval_min, last_run, last_picked_count, consecutive_rate_limit_hits. auto_enable_on_session_start is optional.",
+  "enabled": false,
+  "interval_min": 30,
+  "auto_enable_on_session_start": true,
+  "last_run": null,
+  "last_picked_count": 0,
+  "consecutive_rate_limit_hits": 0
+}

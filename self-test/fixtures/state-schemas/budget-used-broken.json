@@ -1,0 +1,7 @@
+{
+  "_comment": "BROKEN fixture for budget-used.schema.json. Violation: missing required top-level key 'rate_limit_hits_today'. Expected validator error includes the keyword 'rate_limit_hits_today'.",
+  "date": "2026-04-16",
+  "tickets_completed_today": 3,
+  "tickets_failed_today": 1,
+  "total_worker_wall_clock_minutes_today": 42.5
+}

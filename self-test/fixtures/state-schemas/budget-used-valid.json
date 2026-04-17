@@ -1,0 +1,8 @@
+{
+  "_comment": "VALID fixture for budget-used.schema.json. All required counters present. Used by self-test case state-schema-validators.",
+  "date": "2026-04-16",
+  "tickets_completed_today": 3,
+  "tickets_failed_today": 1,
+  "total_worker_wall_clock_minutes_today": 42.5,
+  "rate_limit_hits_today": 0
+}

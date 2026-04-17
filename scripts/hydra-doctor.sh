@@ -409,6 +409,27 @@ check_runtime() {
       check_warn "logs/ exists" "missing (rerun with --fix-safe or mkdir logs)"
     fi
   fi
+
+  # validate-state-all.sh — each state/*.json against its schema in state/schemas/.
+  # Any schema mismatch is surfaced per-file in the doctor output.
+  local vsa="$ROOT_DIR/scripts/validate-state-all.sh"
+  if [[ -x "$vsa" ]]; then
+    local vsa_out vsa_ec
+    vsa_out="$(NO_COLOR=1 "$vsa" --state-dir "$ROOT_DIR/state" 2>&1)" || vsa_ec=$?
+    vsa_ec="${vsa_ec:-0}"
+    if [[ "$vsa_ec" -eq 0 ]]; then
+      local sum
+      sum="$(printf '%s\n' "$vsa_out" | grep -E '^Summary:' | head -1 || true)"
+      check_pass "validate-state-all.sh" "${sum:-all state/*.json match their schemas}"
+    else
+      # Print each per-file mismatch individually so operators see the specific
+      # schema drift without re-running the tool.
+      check_fail "validate-state-all.sh" "one or more state files failed schema check"
+      printf '%s\n' "$vsa_out" | grep -E '^  ✗|^      ✗' | sed 's/^/    /'
+    fi
+  else
+    check_warn "scripts/validate-state-all.sh executable" "missing or not executable"
+  fi
 }
 
 # -----------------------------------------------------------------------------

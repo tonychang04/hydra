@@ -1,0 +1,13 @@
+{
+  "_comment": "VALID fixture for repos.schema.json. Required top-level 'repos' array present; each entry carries all required fields (owner, name, local_path, enabled, ticket_trigger).",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "tonychang04",
+      "name": "hydra",
+      "local_path": "/tmp/hydra-fixture",
+      "enabled": true,
+      "ticket_trigger": "assignee"
+    }
+  ]
+}

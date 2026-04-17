@@ -659,6 +659,107 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "state-schema-validators",
+      "_description": "Script-only self-test for the state-schema validator layer (spec: docs/specs/2026-04-16-state-schemas-complete.md, ticket #30). Exercises scripts/validate-state.sh (with --schema override) against every valid + broken fixture under self-test/fixtures/state-schemas/, then runs scripts/validate-state-all.sh against a staged tmp state/ dir containing all five valid fixtures. Guarantees the minimal bash+jq validator catches the specific missing-required-key violation documented in each broken fixture's _comment field. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to scripts/validate-state.sh, scripts/validate-state-all.sh, or state/schemas/*.schema.json.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "validate-state-all.sh bash -n clean",
+          "cmd": "bash -n scripts/validate-state-all.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "all 10 fixtures are valid JSON",
+          "cmd": "for f in self-test/fixtures/state-schemas/*.json; do jq empty \"$f\" || exit 1; done; echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "active-valid fixture passes",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/active.schema.json self-test/fixtures/state-schemas/active-valid.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes minimal validation"
+        },
+        {
+          "name": "active-broken fixture fails with 'workers' keyword",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/active.schema.json self-test/fixtures/state-schemas/active-broken.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "workers"
+        },
+        {
+          "name": "budget-used-valid fixture passes",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/budget-used.schema.json self-test/fixtures/state-schemas/budget-used-valid.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes minimal validation"
+        },
+        {
+          "name": "budget-used-broken fixture fails with 'rate_limit_hits_today' keyword",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/budget-used.schema.json self-test/fixtures/state-schemas/budget-used-broken.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "rate_limit_hits_today"
+        },
+        {
+          "name": "memory-citations-valid fixture passes",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/memory-citations.schema.json self-test/fixtures/state-schemas/memory-citations-valid.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes minimal validation"
+        },
+        {
+          "name": "memory-citations-broken fixture fails with 'citations' keyword",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/memory-citations.schema.json self-test/fixtures/state-schemas/memory-citations-broken.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "citations"
+        },
+        {
+          "name": "repos-valid fixture passes",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/repos.schema.json self-test/fixtures/state-schemas/repos-valid.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes minimal validation"
+        },
+        {
+          "name": "repos-broken fixture fails with 'repos' keyword",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/repos.schema.json self-test/fixtures/state-schemas/repos-broken.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "repos"
+        },
+        {
+          "name": "autopickup-valid fixture passes",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/autopickup.schema.json self-test/fixtures/state-schemas/autopickup-valid.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes minimal validation"
+        },
+        {
+          "name": "autopickup-broken fixture fails with 'consecutive_rate_limit_hits' keyword",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/autopickup.schema.json self-test/fixtures/state-schemas/autopickup-broken.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "consecutive_rate_limit_hits"
+        },
+        {
+          "name": "validate-state-all.sh on staged all-valid fixture dir exits 0",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/schemas\" && cp state/schemas/*.json \"$tmp/schemas/\" && for fix in active budget-used memory-citations repos autopickup; do cp self-test/fixtures/state-schemas/${fix}-valid.json \"$tmp/${fix}.json\"; done && NO_COLOR=1 scripts/validate-state-all.sh --state-dir \"$tmp\"; ec=$?; rm -rf \"$tmp\"; [ \"$ec\" -eq 0 ] && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state-all.sh on staged mixed-broken fixture dir exits 1",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/schemas\" && cp state/schemas/*.json \"$tmp/schemas/\" && cp self-test/fixtures/state-schemas/active-broken.json \"$tmp/active.json\" && cp self-test/fixtures/state-schemas/repos-valid.json \"$tmp/repos.json\" && NO_COLOR=1 scripts/validate-state-all.sh --state-dir \"$tmp\" >/dev/null 2>&1; ec=$?; rm -rf \"$tmp\"; [ \"$ec\" -eq 1 ] && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state-all.sh --fail-fast bails on first failure",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/schemas\" && cp state/schemas/*.json \"$tmp/schemas/\" && cp self-test/fixtures/state-schemas/active-broken.json \"$tmp/active.json\" && cp self-test/fixtures/state-schemas/budget-used-broken.json \"$tmp/budget-used.json\" && out=$(NO_COLOR=1 scripts/validate-state-all.sh --state-dir \"$tmp\" --fail-fast 2>&1); ec=$?; rm -rf \"$tmp\"; [ \"$ec\" -eq 1 ] && echo \"$out\" | grep -Fq 'Summary: 0 passed · 1 failed' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

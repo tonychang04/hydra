@@ -1,0 +1,4 @@
+{
+  "_comment": "BROKEN fixture for memory-citations.schema.json. Violation: missing required top-level key 'citations'. Expected validator error includes the keyword 'citations'.",
+  "note": "This file intentionally omits the 'citations' object so the schema's required-key check rejects it."
+}

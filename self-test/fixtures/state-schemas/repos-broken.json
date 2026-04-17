@@ -1,0 +1,4 @@
+{
+  "_comment": "BROKEN fixture for repos.schema.json. Violation: missing required top-level key 'repos'. Expected validator error includes the keyword 'repos'.",
+  "default_ticket_trigger": "assignee"
+}

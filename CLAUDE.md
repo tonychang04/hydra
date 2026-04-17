@@ -213,6 +213,8 @@ For plain issues, `gh issue edit <n> --add-label <label>` is still fine (it does
 - `memory/memory-lifecycle.md` — compaction + promotion rules
 - `logs/<ticket>.json` — completed work audit
 
+Schemas live at `state/schemas/`; run `scripts/validate-state-all.sh` to verify runtime state conforms. Called by `hydra doctor` automatically.
+
 ## Scheduled autopickup (runs silently)
 
 `autopickup every N min` turns commander into a cron-like ticket-clearing machine while the operator is away. Built on the existing `/loop` skill — no cron daemon, no remote agent. One scheduler per commander session. Spec: `docs/specs/2026-04-16-scheduled-autopickup.md`.

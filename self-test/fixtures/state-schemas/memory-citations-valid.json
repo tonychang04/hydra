@@ -1,0 +1,17 @@
+{
+  "_comment": "VALID fixture for memory-citations.schema.json. Required top-level 'citations' object present. Used by self-test case state-schema-validators.",
+  "citations": {
+    "learnings-CLI.md#npm install strips peer markers": {
+      "count": 4,
+      "last_cited": "2026-04-16",
+      "tickets": ["#50", "#61", "#63", "#64"],
+      "promotion_threshold_reached": true
+    },
+    "learnings-hydra.md#gh pr edit --add-label hits deprecated GraphQL": {
+      "count": 2,
+      "last_cited": "2026-04-15",
+      "tickets": ["#30", "#44"],
+      "promotion_threshold_reached": false
+    }
+  }
+}

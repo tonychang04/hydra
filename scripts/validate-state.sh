@@ -3,14 +3,22 @@
 # Minimal bash+jq implementation. Full ajv-cli support is a follow-up.
 # Usage:  scripts/validate-state.sh <state-file>
 #         scripts/validate-state.sh state/active.json
+#         scripts/validate-state.sh --schema <schema-path> <state-file>
 set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: $0 <state-file>
+Usage: $0 [--schema <schema-path>] <state-file>
 
 Validates a state/*.json file against its schema in state/schemas/.
-Auto-detects which schema to apply from the filename:
+
+Options:
+  --schema <path>   Validate against an explicit schema file (for fixtures with
+                    non-standard names). Default: auto-detect from the state
+                    file's basename.
+  -h, --help        Show this help.
+
+Auto-detection maps state filename to schema:
   state/active.json          → state/schemas/active.schema.json
   state/budget-used.json     → state/schemas/budget-used.schema.json
   state/repos.json           → state/schemas/repos.schema.json
@@ -22,14 +30,53 @@ Full JSON Schema validation is a follow-up (requires ajv-cli as optional dep).
 EOF
 }
 
-[[ $# -ne 1 || "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 1; }
+schema_override=""
+state_file=""
 
-state_file="$1"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --schema)
+      [[ $# -ge 2 ]] || { echo "validate-state: --schema needs a value" >&2; usage >&2; exit 2; }
+      schema_override="$2"; shift 2
+      ;;
+    --schema=*)
+      schema_override="${1#--schema=}"; shift
+      ;;
+    -h|--help)
+      usage; exit 0
+      ;;
+    --)
+      shift; break
+      ;;
+    -*)
+      echo "validate-state: unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$state_file" ]]; then
+        echo "validate-state: only one state-file argument allowed" >&2
+        exit 2
+      fi
+      state_file="$1"; shift
+      ;;
+  esac
+done
+
+if [[ -z "$state_file" ]]; then
+  usage >&2
+  exit 1
+fi
+
 [[ -f "$state_file" ]] || { echo "✗ $state_file not found" >&2; exit 2; }
 
-# Derive schema name from state file basename (active.json → active.schema.json)
-base="$(basename "$state_file" .json)"
-schema_file="$(dirname "$state_file")/schemas/${base}.schema.json"
+if [[ -n "$schema_override" ]]; then
+  schema_file="$schema_override"
+else
+  # Derive schema name from state file basename (active.json → active.schema.json)
+  base="$(basename "$state_file" .json)"
+  schema_file="$(dirname "$state_file")/schemas/${base}.schema.json"
+fi
 [[ -f "$schema_file" ]] || { echo "✗ schema $schema_file not found" >&2; exit 2; }
 
 # JSON validity
