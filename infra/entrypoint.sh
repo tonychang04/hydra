@@ -241,6 +241,39 @@ else
   log "state/repos.json absent — skipping repo-clone loop"
 fi
 
+# ---------- 5c. Launch Slack bot if configured ----------
+# bin/hydra-slack-bot speaks to Slack via socket mode (outbound WebSocket)
+# so no new port / ingress / secret exposure is required. The bot has its
+# own refuse-to-start gate: missing config exits 1, enabled=false exits 0,
+# missing token env-vars exit 1. So a misconfigured slack.json at worst
+# spawns a short-lived process; commander keeps running either way.
+#
+# Spec: docs/specs/2026-04-17-entrypoint-integration.md (#80)
+SLACK_CFG="${HYDRA_ROOT}/state/connectors/slack.json"
+SLACK_PID=""
+if [[ -f "${SLACK_CFG}" ]] && [[ "$(jq -r .enabled "${SLACK_CFG}" 2>/dev/null)" == "true" ]]; then
+  if [[ "${HYDRA_DRY_RUN:-0}" == "1" ]]; then
+    log "DRY RUN: would launch hydra-slack-bot"
+  else
+    log "Starting hydra-slack-bot (socket mode, outbound only)"
+    ( cd "${HYDRA_ROOT}" && ./bin/hydra-slack-bot >>"${HYDRA_ROOT}/logs/slack-bot.log" 2>&1 ) &
+    SLACK_PID=$!
+    log "hydra-slack-bot pid=${SLACK_PID}"
+  fi
+else
+  log "Slack bot: state/connectors/slack.json missing or enabled=false — skipping"
+fi
+
+# ---------- 5d. Dry-run short-circuit ----------
+# HYDRA_DRY_RUN=1 is for self-tests and operator pre-deploy sanity. We've
+# already logged the repo-clone and slack-bot decisions above; tmux +
+# claude launch are side-effectful enough that running them in a test
+# context isn't useful. Exit 0 tears down the health-server process group.
+if [[ "${HYDRA_DRY_RUN:-0}" == "1" ]]; then
+  log "HYDRA_DRY_RUN=1 — exiting after stanza 5c (pre-tmux) for self-test"
+  exit 0
+fi
+
 # ---------- 6. Launch claude under tmux ----------
 COMMANDER_LOG="${HYDRA_ROOT}/logs/commander.log"
 : > "${COMMANDER_LOG}" || true
@@ -274,6 +307,7 @@ trap '
   log "shutdown signal received"
   tmux kill-session -t '"${HYDRA_TMUX_SESSION}"' 2>/dev/null || true
   [[ -n "${MCP_PID}" ]] && kill "${MCP_PID}" 2>/dev/null || true
+  [[ -n "${SLACK_PID}" ]] && kill "${SLACK_PID}" 2>/dev/null || true
   kill '"${HEALTH_PID}"' 2>/dev/null || true
   exit 0
 ' TERM INT
@@ -291,8 +325,9 @@ TAIL_PID=$!
 # server is intentionally NOT in this wait set — we don't want a crash in
 # the sidecar to kill the core commander loop.)
 wait "${HEALTH_PID}" || true
-log "health server exited — killing tail + tmux + mcp and shutting down"
+log "health server exited — killing tail + tmux + mcp + slack and shutting down"
 kill "${TAIL_PID}" 2>/dev/null || true
 [[ -n "${MCP_PID}" ]] && kill "${MCP_PID}" 2>/dev/null || true
+[[ -n "${SLACK_PID}" ]] && kill "${SLACK_PID}" 2>/dev/null || true
 tmux kill-session -t "${HYDRA_TMUX_SESSION}" 2>/dev/null || true
 exit 1
