@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/mcp.schema.json",
+  "title": "Hydra MCP connector config",
+  "description": "state/connectors/mcp.json — Hydra's inbound MCP server surface (authorized_agents) + outbound upstream_supervisor channel + audit log config. See docs/specs/2026-04-16-mcp-agent-interface.md + docs/specs/2026-04-17-mcp-register-agent.md + docs/specs/2026-04-17-connector-wizard.md.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["server", "authorized_agents", "upstream_supervisor", "audit"],
+  "properties": {
+    "server": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["enabled", "transport"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "transport": {
+          "type": "string",
+          "enum": ["stdio", "http"]
+        },
+        "http_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "bind_address": {
+          "type": "string",
+          "minLength": 1,
+          "description": "IP to bind the HTTP server to. Keep on loopback (127.0.0.1) unless you have a reverse proxy with TLS in front."
+        }
+      }
+    },
+    "authorized_agents": {
+      "type": "array",
+      "description": "Each entry authorizes one external agent to call Hydra MCP tools. Populated by ./hydra mcp register-agent — raw tokens never live here, only SHA-256 hashes.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "token_hash", "scope"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "token_hash": {
+            "type": "string",
+            "pattern": "^SHA256:[0-9a-f]{64}$"
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["read", "spawn", "merge", "admin"]
+            },
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "upstream_supervisor": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Outbound channel — when Commander can't resolve a worker's QUESTION: from memory, it calls this supervisor's resolve_question MCP tool. See docs/specs/2026-04-17-supervisor-escalate-client.md.",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "name": { "type": "string" },
+        "transport": {
+          "type": "string",
+          "enum": ["stdio", "http"]
+        },
+        "connect_url": {
+          "type": "string",
+          "description": "stdio command OR https URL. Required when enabled=true."
+        },
+        "auth_token_env": {
+          "type": "string",
+          "description": "Env var holding the bearer token presented to the supervisor. Token itself is never persisted here."
+        },
+        "scope_granted": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["resolve_question"]
+          },
+          "description": "Hydra invariant: exactly [\"resolve_question\"]. Widening without spec review is forbidden."
+        },
+        "timeout_sec": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path_override": {
+          "type": ["string", "null"],
+          "description": "Override audit log path. Null = logs/mcp-audit.jsonl."
+        }
+      }
+    }
+  }
+}

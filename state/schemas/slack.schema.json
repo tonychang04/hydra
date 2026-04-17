@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/slack.schema.json",
+  "title": "Hydra Slack bot config",
+  "description": "Controls bin/hydra-slack-bot — a Socket-Mode bot that DMs the operator on PR review-clean and accepts DMs from exactly one allowlisted Slack user. See docs/specs/2026-04-17-slack-bot.md and state/connectors/slack.json.example.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "enabled",
+    "bot_token_env",
+    "app_token_env",
+    "allowed_user_id",
+    "default_channel",
+    "notification_poll_interval_sec",
+    "repos",
+    "seen_prs_state_path"
+  ],
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Master switch. When false the bot exits 0 on start with a clear log line — safe default."
+    },
+    "bot_token_env": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the env var holding the Slack bot user OAuth token (xoxb-). Token itself never lives in this file."
+    },
+    "app_token_env": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the env var holding the Slack app-level token (xapp-) required for Socket Mode."
+    },
+    "allowed_user_id": {
+      "type": "string",
+      "pattern": "^U[A-Z0-9]+$",
+      "description": "Exactly ONE Slack user ID (U…). DMs from any other user are silently refused."
+    },
+    "default_channel": {
+      "type": "string",
+      "pattern": "^[CDG][A-Z0-9]+$",
+      "description": "Fallback Slack channel ID (C… D… G…) for proactive notifications when DMing the user directly fails."
+    },
+    "notification_poll_interval_sec": {
+      "type": "integer",
+      "minimum": 30,
+      "description": "Seconds between polls for commander-review-clean PRs. Minimum 30 to respect GitHub rate limits."
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+      },
+      "description": "Which <owner>/<repo> slugs to poll for the commander-review-clean label."
+    },
+    "seen_prs_state_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Where to persist the PR-IDs-already-notified set. LRU-capped at 500 entries."
+    }
+  }
+}
