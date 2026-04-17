@@ -17,9 +17,17 @@
       "tier": "T2",
       "ticket_body_summary": "Short description of what the ticket asked for, as you'd write it if re-opening the issue today",
       "assertions": {
-        "must_touch_paths": ["src/path/to/expected/file.ts"],
-        "must_not_touch_paths": ["package-lock.json", ".github/**"],
-        "must_include_patterns": ["ExpectedClassName", "specificKeyword"],
+        "must_touch_paths": [
+          "src/path/to/expected/file.ts"
+        ],
+        "must_not_touch_paths": [
+          "package-lock.json",
+          ".github/**"
+        ],
+        "must_include_patterns": [
+          "ExpectedClassName",
+          "specificKeyword"
+        ],
         "tests_expected": true,
         "build_must_pass": true,
         "lint_must_pass": true,
@@ -102,10 +110,19 @@
             "active_workers": 0,
             "pause_file_exists": false,
             "quota_health": "ok",
-            "ready_tickets": ["repoA#10", "repoA#11"],
-            "tiers": {"repoA#10": "T1", "repoA#11": "T2"},
+            "ready_tickets": [
+              "repoA#10",
+              "repoA#11"
+            ],
+            "tiers": {
+              "repoA#10": "T1",
+              "repoA#11": "T2"
+            },
             "expected_spawn_count": 2,
-            "expected_spawns": ["worker-implementation:repoA#10", "worker-implementation:repoA#11"],
+            "expected_spawns": [
+              "worker-implementation:repoA#10",
+              "worker-implementation:repoA#11"
+            ],
             "expected_chat_surface": true,
             "expected_state_after": {
               "enabled": true,
@@ -119,8 +136,12 @@
             "active_workers": 2,
             "pause_file_exists": false,
             "quota_health": "rate_limited",
-            "ready_tickets": ["repoA#12"],
-            "tiers": {"repoA#12": "T1"},
+            "ready_tickets": [
+              "repoA#12"
+            ],
+            "tiers": {
+              "repoA#12": "T1"
+            },
             "expected_spawn_count": 0,
             "expected_spawns": [],
             "expected_chat_surface": false,
@@ -136,8 +157,12 @@
             "active_workers": 2,
             "pause_file_exists": false,
             "quota_health": "rate_limited",
-            "ready_tickets": ["repoA#12"],
-            "tiers": {"repoA#12": "T1"},
+            "ready_tickets": [
+              "repoA#12"
+            ],
+            "tiers": {
+              "repoA#12": "T1"
+            },
             "expected_spawn_count": 0,
             "expected_spawns": [],
             "expected_chat_surface": true,
@@ -174,7 +199,9 @@
       "id": "autopickup-default-on-smoke",
       "_description": "Script-only self-test for the default-on autopickup behavior (spec: docs/specs/2026-04-16-autopickup-default-on.md, ticket #17). Verifies that a fresh setup.sh seeds state/autopickup.json with auto_enable_on_session_start=true, and that the ./hydra launcher's --no-autopickup flag exports HYDRA_NO_AUTOPICKUP=1. Runs locally; no worker spawn, no worktree. setup.sh is run non-interactively with an empty stdin so the external-memory-dir prompt accepts the default. setup.sh hard-fails its prereq check if `claude` is not on PATH, so this case is marked requires_claude_cli — it SKIPs on CI runners where the Claude Code CLI isn't installed.",
       "kind": "script",
-      "requires": ["requires_claude_cli"],
+      "requires": [
+        "requires_claude_cli"
+      ],
       "worker_type": null,
       "tier": "T1",
       "steps": [
@@ -343,6 +370,13 @@
           "cmd": "set -euo pipefail; TMP=$(mktemp -d); trap 'rm -rf \"$TMP\"' EXIT; printf '{\"repos\":[{\"owner\":\"octocat\",\"name\":\"Hello-World\",\"local_path\":\"/tmp/unused\",\"enabled\":true,\"ticket_trigger\":\"assignee\",\"cloud_local_path\":\"%s/clone\"}]}\\n' \"$TMP\" > \"$TMP/repos.json\"; export HYDRA_REPOS_JSON=\"$TMP/repos.json\"; export HYDRA_CLONE_DEPTH=5; scripts/ensure-repo-cloned.sh octocat/Hello-World >/dev/null 2>&1; test -d \"$TMP/clone/.git\" || { echo FAIL_NO_GIT; exit 1; }; sha1=$(git -C \"$TMP/clone\" rev-parse HEAD); inode1=$(ls -di \"$TMP/clone/.git/config\" | awk '{print $1}'); scripts/ensure-repo-cloned.sh octocat/Hello-World >/dev/null 2>&1; sha2=$(git -C \"$TMP/clone\" rev-parse HEAD); inode2=$(ls -di \"$TMP/clone/.git/config\" | awk '{print $1}'); [ \"$sha1\" = \"$sha2\" ] || { echo FAIL_SHA_DIVERGED; exit 1; }; [ \"$inode1\" = \"$inode2\" ] || { echo FAIL_INODE_DIVERGED; exit 1; }; echo IDEMPOTENT_OK",
           "expected_exit": 0,
           "expected_stdout_contains": "IDEMPOTENT_OK"
+        },
+        {
+          "name": "no GITHUB_TOKEN leaked into .git/config on first clone",
+          "cmd": "TMPDIR=$(mktemp -d); cat > \"$TMPDIR/repos.json\" <<CFG\n{\"repos\": [{\"owner\": \"octocat\", \"name\": \"Hello-World\", \"local_path\": \"/tmp/unused\", \"enabled\": true, \"git_url\": \"https://github.com/octocat/Hello-World.git\", \"cloud_local_path\": \"$TMPDIR/clone\"}]}\nCFG\nGITHUB_TOKEN=FAKE_TOKEN_LEAK_SENTINEL HYDRA_REPOS_JSON=\"$TMPDIR/repos.json\" bash scripts/ensure-repo-cloned.sh octocat/Hello-World > /dev/null 2>&1 && ! grep -q FAKE_TOKEN_LEAK_SENTINEL \"$TMPDIR/clone/.git/config\" && echo NO_TOKEN_LEAK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NO_TOKEN_LEAK",
+          "timeout_sec": 30
         }
       ],
       "requires": [],
@@ -599,7 +633,9 @@
       "id": "s3-backend-roundtrip",
       "_description": "Script-only self-test for scripts/state-get.sh + scripts/state-put.sh against a localstack-backed DynamoDB (Phase 2 adapter — see docs/specs/2026-04-16-s3-knowledge-store.md and ticket #13). Spins up localstack via docker compose, creates the bucket + commander-* tables, puts a JSON blob via state-put.sh (dynamodb backend, localstack endpoint), reads it back via state-get.sh, compares bit-for-bit, tears down. Marked requires_docker: skipped on machines where `docker info` fails.",
       "kind": "script",
-      "requires": ["requires_docker"],
+      "requires": [
+        "requires_docker"
+      ],
       "worker_type": null,
       "tier": "T1",
       "steps": [
@@ -635,7 +671,9 @@
       "fixture_dir": "self-test/fixtures/conflict-resolver",
       "ticket_body_summary": "Two open PRs both add a new row to the same markdown commands table in CLAUDE.md. Commander invokes worker-conflict-resolver to merge them deterministically into one superseding PR.",
       "assertions": {
-        "must_touch_paths": ["CLAUDE.md"],
+        "must_touch_paths": [
+          "CLAUDE.md"
+        ],
         "must_not_touch_paths": [
           "policy.md",
           "budget.json",
@@ -665,7 +703,9 @@
       "fixture_repo_path": "self-test/fixtures/test-discovery/fixture-repo",
       "ticket_body_summary": "Worker-implementation has asked 'test procedure unclear' twice on this repo. Commander auto-dispatched worker-test-discovery to document how to run + verify the service.",
       "assertions": {
-        "must_touch_paths": ["TESTING.md"],
+        "must_touch_paths": [
+          "TESTING.md"
+        ],
         "must_not_touch_paths": [
           "package.json",
           "docker-compose.yml",

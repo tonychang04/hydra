@@ -151,6 +151,9 @@ if [[ ! -d "$target_path/.git" ]]; then
   if ! git clone --depth "$CLONE_DEPTH" "$auth_url" "$target_path"; then
     fail "git clone failed for $owner/$name" 2
   fi
+  # SECURITY: strip token from .git/config by setting origin to the clean URL.
+  # Without this, GITHUB_TOKEN is persisted on disk and shows up in `git remote -v`.
+  git -C "$target_path" remote set-url origin "$git_url" >/dev/null 2>&1 || true
   # Record the resolved default branch for observability.
   default_ref="$(git -C "$target_path" symbolic-ref --quiet --short HEAD || echo unknown)"
   log "cloned at $target_path (HEAD=$default_ref, sha=$(git -C "$target_path" rev-parse --short HEAD))"
@@ -174,17 +177,16 @@ log "re-fetching $owner/$name"
 # Keep auth fresh on fetch in case the entry's git_url has no embedded token
 # but GITHUB_TOKEN is available.
 if [[ -n "${GITHUB_TOKEN:-}" ]] && [[ "$git_url" =~ ^https://github\.com/ ]]; then
-  # Temporarily override origin URL to include auth, fetch, then restore.
-  orig_remote="$(git -C "$target_path" remote get-url origin 2>/dev/null || echo "")"
+  # SECURITY: always restore to the clean URL ($git_url), not whatever was
+  # previously configured — a prior buggy clone may have left the token baked
+  # in, and "restoring" to that value would perpetuate the leak. $git_url is
+  # the operator-provided canonical remote, with no embedded credentials.
   git -C "$target_path" remote set-url origin "$auth_url" >/dev/null 2>&1 || true
   set +e
   git -C "$target_path" fetch --depth "$CLONE_DEPTH" origin
   fetch_ec=$?
   set -e
-  # Restore the non-auth URL so the token doesn't end up in `git remote -v` output.
-  if [[ -n "$orig_remote" ]]; then
-    git -C "$target_path" remote set-url origin "$orig_remote" >/dev/null 2>&1 || true
-  fi
+  git -C "$target_path" remote set-url origin "$git_url" >/dev/null 2>&1 || true
   [[ "$fetch_ec" -eq 0 ]] || fail "git fetch failed for $owner/$name" 2
 else
   run_git -C "$target_path" fetch --depth "$CLONE_DEPTH" origin
