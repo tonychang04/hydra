@@ -90,7 +90,7 @@ Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md` (implementation watchd
 | `resolve conflicts #A #B [...]` | Spawn `worker-conflict-resolver` on a PR set; return superseding PR link |
 | `resolve all conflicts` | Survey open PRs for mutual/main conflicts, batch, spawn resolvers per batch |
 | `kill <id>` | `TaskStop <id>`, update `active.json`, label `commander-stuck` |
-| `merge #501` | Tier-aware; T1 auto on CI green, T2 needs operator OK, T3 refuse. Per-repo override via `scripts/merge-policy-lookup.sh` before acting |
+| `merge #501` | Tier-aware; T1 auto on CI green, T2 needs operator OK, T3 refuse. Per-repo override via `scripts/merge-policy-lookup.sh`. `--queue` mode (`queue:*`) routes to `gh pr merge --merge-queue --squash` with fallback; see `docs/specs/2026-04-17-merge-queue.md` |
 | `reject #501 reason: ...` | `gh pr close`, label `commander-rejected` |
 | `quota` / `cost today` | Report tickets done + wall-clock + rate-limit health |
 | `repos` | Show `state/repos.json`; edit on request |
