@@ -147,8 +147,6 @@ atomic_write_json() {
   local filter="$1"; shift
   local tmp
   tmp="$(mktemp "${target}.XXXXXX")"
-  # shellcheck disable=SC2064
-  trap "rm -f '$tmp'" RETURN
 
   local input
   if [[ -f "$target" ]]; then
@@ -159,18 +157,26 @@ atomic_write_json() {
 
   if ! printf '%s' "$input" | jq "$@" "$filter" > "$tmp"; then
     err "jq failed for $target"
+    rm -f "$tmp"
     return 1
   fi
 
-  if ! "$ROOT_DIR/scripts/validate-state.sh" "$tmp" >/dev/null 2>&1; then
+  # Resolve the schema explicitly: validate-state.sh auto-detects by stripping
+  # .json from the basename, but our tmpfile is <target>.XXXXXX (no .json
+  # suffix) so auto-detection picks the wrong schema name. Point at the
+  # schema derived from the *target* basename instead.
+  local target_base
+  target_base="$(basename "$target" .json)"
+  local schema_file="$ROOT_DIR/state/schemas/${target_base}.schema.json"
+  if ! "$ROOT_DIR/scripts/validate-state.sh" --schema "$schema_file" "$tmp" >/dev/null 2>&1; then
     # Re-run with output so operator sees what failed.
-    "$ROOT_DIR/scripts/validate-state.sh" "$tmp" >&2 || true
+    "$ROOT_DIR/scripts/validate-state.sh" --schema "$schema_file" "$tmp" >&2 || true
     err "schema validation failed for $target — not writing"
+    rm -f "$tmp"
     return 1
   fi
 
   mv "$tmp" "$target"
-  trap - RETURN
 }
 
 launcher_marker() {
@@ -400,7 +406,9 @@ if [[ -n "$ap_interval" ]] || [[ -n "$ap_auto" ]]; then
     args+=(--arg a "$ap_auto")
   fi
   # Ensure required keys are present (setup.sh seeded them; belt-and-braces).
-  filter="$filter | .enabled = (.enabled // false) | .interval_min = (.interval_min // 30) | .last_run = (.last_run // null) | .last_picked_count = (.last_picked_count // 0) | .consecutive_rate_limit_hits = (.consecutive_rate_limit_hits // 0) | .auto_enable_on_session_start = (.auto_enable_on_session_start // true)"
+  # Use `has(k)` — jq's // operator treats `false` as "not a value", which
+  # would clobber an explicit `false` set one step earlier.
+  filter="$filter | (if has(\"enabled\") then . else .enabled = false end) | (if has(\"interval_min\") then . else .interval_min = 30 end) | (if has(\"last_run\") then . else .last_run = null end) | (if has(\"last_picked_count\") then . else .last_picked_count = 0 end) | (if has(\"consecutive_rate_limit_hits\") then . else .consecutive_rate_limit_hits = 0 end) | (if has(\"auto_enable_on_session_start\") then . else .auto_enable_on_session_start = true end)"
 
   if atomic_write_json "$ROOT_DIR/state/autopickup.json" "$filter" "${args[@]}"; then
     ok "state/autopickup.json updated"
