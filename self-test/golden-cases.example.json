@@ -1434,6 +1434,88 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "supervisor-escalate-disabled-path",
+      "_description": "Script-only self-test for scripts/hydra-supervisor-escalate.py — the outbound MCP client landed in ticket #87. Verifies the 'not-configured' fall-through branch: when state/connectors/mcp.json.example is read (upstream_supervisor.enabled=false by default) OR when the config file is missing entirely, the script exits 2 with a 'not-configured' marker on stdout. Commander reads exit 2 as 'keep legacy commander-stuck behavior, no upstream call made'. Also validates Python syntax, --help output, and that the exit-2 branch never touches the network (no token env var needed to trigger it). Runs locally in <1s; no network, no fixture supervisor required. Spec: docs/specs/2026-04-17-supervisor-escalate-client.md.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-supervisor-escalate.py parses as Python",
+          "cmd": "python3 -c 'import ast; ast.parse(open(\"scripts/hydra-supervisor-escalate.py\").read())' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-supervisor-escalate.py --help exits 0",
+          "cmd": "python3 scripts/hydra-supervisor-escalate.py --help >/dev/null && echo HELP_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HELP_OK"
+        },
+        {
+          "name": "missing config file → exit 2 + not-configured marker",
+          "cmd": "out=$(echo '{\"worker_id\":\"w-t\",\"question\":\"q?\"}' | python3 scripts/hydra-supervisor-escalate.py --config /nonexistent/mcp.json 2>&1); ec=$?; echo \"$out\" | grep -q 'not-configured' && [ \"$ec\" -eq 2 ] && echo DISABLED_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DISABLED_OK"
+        },
+        {
+          "name": "mcp.json.example (enabled=false) → exit 2 + not-configured marker",
+          "cmd": "out=$(echo '{\"worker_id\":\"w-t\",\"question\":\"q?\"}' | python3 scripts/hydra-supervisor-escalate.py --config state/connectors/mcp.json.example 2>&1); ec=$?; echo \"$out\" | grep -q 'not-configured' && [ \"$ec\" -eq 2 ] && echo EXAMPLE_DISABLED_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "EXAMPLE_DISABLED_OK"
+        },
+        {
+          "name": "exit 2 path writes JSON-parseable stdout",
+          "cmd": "echo '{\"worker_id\":\"w-t\",\"question\":\"q?\"}' | python3 scripts/hydra-supervisor-escalate.py --config state/connectors/mcp.json.example 2>/dev/null | jq -e '.error == \"not-configured\"' >/dev/null && echo JSON_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "JSON_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "supervisor-escalate-shape",
+      "_description": "Script-only self-test for scripts/hydra-supervisor-escalate.py envelope + config validation. Covers the enabled=true branch without making a real network call: uses --check to exercise config parsing, scope enforcement, and envelope shape validation. Verifies (a) valid envelope + valid config + token set → exit 0 with check-ok marker; (b) missing required envelope field → exit 4 + stderr marker; (c) token env var unset → exit 1 + token-missing marker; (d) scope_granted over-broad (anything beyond exactly ['resolve_question']) → exit 1 + scope-overreach marker. All steps stage a fixture mcp.json in a tmpdir — no mutation of the real state/ tree. Spec: docs/specs/2026-04-17-supervisor-escalate-client.md. Related envelope spec: docs/specs/2026-04-16-mcp-agent-interface.md.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "--check with valid config + token + envelope → exit 0 + check-ok",
+          "cmd": "TMP=$(mktemp -d) && trap \"rm -rf $TMP\" EXIT; printf '%s' '{\"upstream_supervisor\":{\"enabled\":true,\"transport\":\"http\",\"connect_url\":\"http://127.0.0.1:9999/mcp\",\"auth_token_env\":\"TEST_SUP_TOKEN\",\"scope_granted\":[\"resolve_question\"],\"timeout_sec\":5}}' > \"$TMP/mcp.json\"; out=$(echo '{\"worker_id\":\"w-1\",\"question\":\"q?\"}' | TEST_SUP_TOKEN=x python3 scripts/hydra-supervisor-escalate.py --check --config \"$TMP/mcp.json\" 2>&1); ec=$?; echo \"$out\" | grep -q 'check-ok' && [ \"$ec\" -eq 0 ] && echo CHECK_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CHECK_OK"
+        },
+        {
+          "name": "--check with malformed envelope (missing worker_id) → exit 4",
+          "cmd": "TMP=$(mktemp -d) && trap \"rm -rf $TMP\" EXIT; printf '%s' '{\"upstream_supervisor\":{\"enabled\":true,\"transport\":\"http\",\"connect_url\":\"http://127.0.0.1:9999/mcp\",\"auth_token_env\":\"TEST_SUP_TOKEN\",\"scope_granted\":[\"resolve_question\"],\"timeout_sec\":5}}' > \"$TMP/mcp.json\"; err=$(echo '{\"question\":\"missing worker_id\"}' | TEST_SUP_TOKEN=x python3 scripts/hydra-supervisor-escalate.py --check --config \"$TMP/mcp.json\" 2>&1 >/dev/null); ec=$?; echo \"$err\" | grep -q 'missing required field' && [ \"$ec\" -eq 4 ] && echo SHAPE_REJECTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SHAPE_REJECTED"
+        },
+        {
+          "name": "enabled config + no token env var → exit 1 + token-missing",
+          "cmd": "TMP=$(mktemp -d) && trap \"rm -rf $TMP\" EXIT; printf '%s' '{\"upstream_supervisor\":{\"enabled\":true,\"transport\":\"http\",\"connect_url\":\"http://127.0.0.1:9999/mcp\",\"auth_token_env\":\"TEST_SUP_TOKEN_ABSENT_XYZ\",\"scope_granted\":[\"resolve_question\"],\"timeout_sec\":5}}' > \"$TMP/mcp.json\"; unset TEST_SUP_TOKEN_ABSENT_XYZ; out=$(echo '{\"worker_id\":\"w-1\",\"question\":\"q?\"}' | python3 scripts/hydra-supervisor-escalate.py --config \"$TMP/mcp.json\" 2>&1); ec=$?; echo \"$out\" | grep -q 'token-missing' && [ \"$ec\" -eq 1 ] && echo TOKEN_MISSING_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "TOKEN_MISSING_OK"
+        },
+        {
+          "name": "scope_granted over-broad → exit 1 + scope-overreach",
+          "cmd": "TMP=$(mktemp -d) && trap \"rm -rf $TMP\" EXIT; printf '%s' '{\"upstream_supervisor\":{\"enabled\":true,\"transport\":\"http\",\"connect_url\":\"http://127.0.0.1:9999/mcp\",\"auth_token_env\":\"TEST_SUP_TOKEN\",\"scope_granted\":[\"resolve_question\",\"admin\"],\"timeout_sec\":5}}' > \"$TMP/mcp.json\"; out=$(echo '{\"worker_id\":\"w-1\",\"question\":\"q?\"}' | TEST_SUP_TOKEN=x python3 scripts/hydra-supervisor-escalate.py --config \"$TMP/mcp.json\" 2>&1); ec=$?; echo \"$out\" | grep -q 'scope-overreach' && [ \"$ec\" -eq 1 ] && echo SCOPE_REJECTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SCOPE_REJECTED"
+        },
+        {
+          "name": "unsupported transport (stdio) → exit 1 + unsupported-transport",
+          "cmd": "TMP=$(mktemp -d) && trap \"rm -rf $TMP\" EXIT; printf '%s' '{\"upstream_supervisor\":{\"enabled\":true,\"transport\":\"stdio\",\"connect_url\":\"/usr/bin/true\",\"auth_token_env\":\"TEST_SUP_TOKEN\",\"scope_granted\":[\"resolve_question\"],\"timeout_sec\":5}}' > \"$TMP/mcp.json\"; out=$(echo '{\"worker_id\":\"w-1\",\"question\":\"q?\"}' | TEST_SUP_TOKEN=x python3 scripts/hydra-supervisor-escalate.py --config \"$TMP/mcp.json\" 2>&1); ec=$?; echo \"$out\" | grep -q 'unsupported-transport' && [ \"$ec\" -eq 1 ] && echo STDIO_REJECTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STDIO_REJECTED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
