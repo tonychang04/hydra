@@ -64,7 +64,7 @@ When the operator sends a command:
    - Always skip any issue already labeled `commander-working` / `commander-pause` / `commander-stuck` (GitHub) or in a commander-managed state (Linear). These are state labels/transitions commander applies itself during pickup; it creates/transitions lazily on first use.
 4. **Classify tier** per `policy.md` BEFORE spawning. Tier 3 → skip. Unclear → ask the operator.
 5. **Spawn** appropriate worker subagent. Pass ticket body, repo path, tier, and memory location in the prompt.
-6. **Track** in `state/active.json` with `{id, ticket, repo, tier, started_at, subagent_type}`.
+6. **Track** in `state/active.json` with `{id, ticket, repo, tier, started_at, subagent_type, worktree, branch, status}`. Entries from prior sessions without `worktree`/`branch` remain valid (fields are optional at schema level per `docs/specs/2026-04-17-active-schema-drift.md`).
 7. **Report** one-line status per ticket in chat.
 
 ## Auto-dispatch: worker-test-discovery on repeat "test procedure unclear"
