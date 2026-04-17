@@ -2,12 +2,13 @@
 #
 # hydra-connect.sh — one-command wizard for wiring external connectors.
 #
-# Usage: ./hydra connect <linear|slack|supervisor> [options]
+# Usage: ./hydra connect <linear|slack|supervisor|digest> [options]
 #        ./hydra connect --list
 #        ./hydra connect --status [--quiet]
 #        ./hydra connect --dry-run <connector>
 #
 # Spec: docs/specs/2026-04-17-connector-wizard.md (ticket #139)
+# Spec: docs/specs/2026-04-17-daily-digest.md (ticket #144, digest subcommand)
 #
 # Mirrors the style of:
 #   scripts/hydra-add-repo.sh         (interactive wizard pattern)
@@ -33,7 +34,7 @@ ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: ./hydra connect <linear|slack|supervisor> [options]
+Usage: ./hydra connect <linear|slack|supervisor|digest> [options]
        ./hydra connect --list
        ./hydra connect --status [--quiet]
        ./hydra connect --dry-run <connector>
@@ -46,6 +47,8 @@ Subcommands:
   slack           Wire Hydra's Slack bot (state/connectors/slack.json)
   supervisor      Wire the outbound MCP upstream supervisor
                   (state/connectors/mcp.json:upstream_supervisor)
+  digest          Subscribe a channel to the daily status digest
+                  (state/digests.json). See docs/specs/2026-04-17-daily-digest.md.
 
 Flags:
   --list          List all supported connectors + install state. Exit 0.
@@ -66,6 +69,7 @@ Environment overrides (for self-test fixtures):
   HYDRA_CONNECT_LINEAR_FILE        Override state/linear.json path
   HYDRA_CONNECT_SLACK_FILE         Override state/connectors/slack.json path
   HYDRA_CONNECT_MCP_FILE           Override state/connectors/mcp.json path
+  HYDRA_CONNECT_DIGEST_FILE        Override state/digests.json path
   HYDRA_CONNECT_FAKE_MCP_LIST      Path to a file whose contents replace
                                    `claude mcp list` stdout. Used by --status
                                    tests so they don't need a real MCP client.
@@ -79,6 +83,8 @@ Exit codes:
 
 Examples:
   ./hydra connect linear                      # interactive wizard
+  ./hydra connect digest                      # subscribe daily digest
+  ./hydra connect digest stdout               # short-form: channel as arg
   ./hydra connect --dry-run supervisor        # preview; no write
   ./hydra connect --list                      # what connectors exist?
   ./hydra connect --status                    # are they healthy?
@@ -173,6 +179,10 @@ SLACK_SCHEMA="$ROOT_DIR/state/schemas/slack.schema.json"
 MCP_FILE="${HYDRA_CONNECT_MCP_FILE:-$ROOT_DIR/state/connectors/mcp.json}"
 MCP_EXAMPLE="$ROOT_DIR/state/connectors/mcp.json.example"
 MCP_SCHEMA="$ROOT_DIR/state/schemas/mcp.schema.json"
+
+DIGEST_FILE="${HYDRA_CONNECT_DIGEST_FILE:-$ROOT_DIR/state/digests.json}"
+DIGEST_EXAMPLE="$ROOT_DIR/state/digests.example.json"
+DIGEST_SCHEMA="$ROOT_DIR/state/schemas/digests.schema.json"
 
 VALIDATE_STATE="$ROOT_DIR/scripts/validate-state.sh"
 

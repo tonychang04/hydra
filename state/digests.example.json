@@ -1,0 +1,19 @@
+{
+  "_description": "Runtime state for the daily digest. Copy to state/digests.json (gitignored) — './hydra connect digest <channel>' writes it for you. See CLAUDE.md 'Scheduled autopickup' pointer + docs/specs/2026-04-17-daily-digest.md (ticket #144).",
+  "_canonical_term": "daily digest",
+  "_related_docs": [
+    "docs/specs/2026-04-17-daily-digest.md",
+    "docs/specs/2026-04-16-scheduled-autopickup.md",
+    "docs/specs/2026-04-17-scheduled-retro.md"
+  ],
+  "enabled": false,
+  "_enabled_note": "Set to true (or run './hydra connect digest') to let the autopickup tick's step-1.6 check emit a daily paragraph. Default false so a fresh clone is inert.",
+  "channel": "stdout",
+  "_channel_note": "One of: stdout | slack | webhook | email. stdout writes to memory/digests/YYYY-MM-DD.md AND prints to stdout — no external transport needed. slack/webhook/email append to logs/digest-out.jsonl in Phase 1 (transport fan-out is a follow-up).",
+  "time": "09:00",
+  "_time_note": "Local HH:MM at/after which the digest fires for the day. Default 09:00. Uses host local timezone (same pattern as scheduled retro).",
+  "destination": "memory/digests/",
+  "_destination_note": "Channel-specific target. stdout: directory prefix. slack: channel ID (C.../D...). webhook: env-var NAME holding the URL. email: address. NEVER paste tokens here — use env-var names for secrets.",
+  "last_digest_run": null,
+  "_last_digest_run_note": "ISO-8601 local timestamp of the most recent emission; null = never run. The autopickup tick's step-1.6 check compares this lexicographically against '<today>T<time>:00' to decide fire vs no-op."
+}
