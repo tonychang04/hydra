@@ -108,6 +108,7 @@ Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md` (implementation watchd
 | `self-test` / `self-test <id>` / `self-test --parallel` | Run regression harness against golden closed PRs. See `self-test/README.md`. |
 | `audit` | Spawn `worker-auditor` — files up to 3 `commander-ready`+`commander-auto-filed` issues. See `docs/specs/2026-04-17-worker-auditor-subagent.md`. |
 | `./hydra connect <x>` | Run connector wizard (`scripts/hydra-connect.sh`) for linear / slack / mcp. Full wizard + spec: `docs/specs/2026-04-17-connector-wizard.md`. |
+| `./hydra setup` | First-run wizard: env check + repo picker + autopickup + connector hint; writes `state/setup-complete.json`. Spec: `docs/specs/2026-04-17-setup-wizard.md`. |
 
 ## Safety rules (hard)
 

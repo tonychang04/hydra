@@ -18,15 +18,17 @@ Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) + [
 
 ## Try it in 60 seconds
 
-Fresh shell, five commands, end up at a Commander session that's picked up its first ticket:
+Fresh shell, four commands, end up at a Commander session that's picked up its first ticket:
 
 ```bash
 git clone https://github.com/tonychang04/hydra.git
 cd hydra
-./setup.sh
-./hydra add-repo <owner>/<repo>
-./hydra
+./setup.sh                       # env check + launcher + state templates
+./hydra setup                    # guided wizard: picks repos + configures autopickup
+./hydra                          # launch the commander
 ```
+
+`./hydra setup` is the one-command wizard (docs/specs/2026-04-17-setup-wizard.md): it wraps `./setup.sh`, prompts for repos to track, configures autopickup, and prints the `./hydra connect` hint for optional Linear / Slack / Supervisor wiring. Safe to re-run — it shows the current config and only updates on explicit consent. Prefer the old two-step? `./setup.sh` + `./hydra add-repo <owner>/<repo>` still works.
 
 Inside the launched Commander, type `pick up 1`. That's it — you should see **"hydra picked up its first ticket"** as a worker spawns against whatever issue is next in your queue.
 
