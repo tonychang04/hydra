@@ -1756,6 +1756,35 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "codex-worker-fixture",
+      "_description": "Script-only self-test for scripts/hydra-codex-exec.sh (spec: docs/specs/2026-04-17-codex-worker-backend.md, ticket #96). Runs the wrapper against a battery of stubbed `codex` binaries prepended to $PATH, verifying every documented exit code (0 success / 1 bad-args or no-codex / 2 codex-exec-failed / 4 codex-unavailable) and the security invariant that the task prompt never leaks to captured stdout/stderr. The stub approach keeps the test deterministic and free (no real Codex quota burn). Operators with a working local codex env can set HYDRA_TEST_CODEX_E2E=1 to additionally smoke --check against the real binary; the wrapper's full control flow is still exercised by the stubs regardless.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-codex-exec.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-codex-exec.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "codex-worker fixture roundtrip (13 stubbed assertions + prompt-leak guard)",
+          "cmd": "self-test/fixtures/codex-worker/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "--help prints usage",
+          "cmd": "scripts/hydra-codex-exec.sh --help | grep -q 'Exit codes:' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
