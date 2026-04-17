@@ -1,0 +1,18 @@
+From: pr-a
+Subject: [PATCH] docs: add retro command to commands table
+
+Adds a new row for the `retro` command. Pure additive — appends one row at
+the bottom of the commands table. Merges cleanly onto base.
+
+---
+ base-commands-table.md | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/base-commands-table.md b/base-commands-table.md
+--- a/base-commands-table.md
++++ b/base-commands-table.md
+@@ -12,3 +12,4 @@
+ | `pick up #42` | Spawn `worker-implementation` on that specific ticket |
+ | `review PR #501` | Spawn `worker-review` on that PR |
+ | `test discover <repo>` | Spawn `worker-test-discovery` on that repo |
++| `retro` | Produce a weekly retro from `logs/*.json` and write to `memory/retros/YYYY-WW.md`. |
