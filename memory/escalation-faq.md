@@ -1,12 +1,12 @@
 ---
 name: Worker escalation FAQ
-description: Answers to recurring worker questions. Commander reads this before pinging the operator. Append new entries whenever the operator answers a novel one.
+description: Answers to recurring worker questions. Commander reads this before escalating to the supervisor agent. Append new entries whenever the supervisor (or, in legacy direct-drive mode, the operator) answers a novel one.
 type: feedback
 ---
 
 # Worker Escalation FAQ
 
-Commander uses this to answer worker `QUESTION:` blocks without pinging the operator every time. Scan by keyword before escalating. Append new Q+A pairs after the operator resolves a novel question.
+Commander uses this to answer worker `QUESTION:` blocks without calling the supervisor agent every time. Scan by keyword before escalating. Append new Q+A pairs after an escalation resolves a novel question — whether the answer came from the supervisor's autonomous decision, a human the supervisor looped in, or (in legacy direct-drive mode) the operator typing in a terminal. The contents of the FAQ compound equivalently regardless of which transport produced the answer.
 
 ## Format
 
@@ -154,7 +154,11 @@ Commander uses this to answer worker `QUESTION:` blocks without pinging the oper
 - **Exception:** if a duplicate or "won't fix" issue is filed that no PR will address, close manually with `--reason "not planned"` + a comment explaining why.
 - **Source:** operational convention, 2026-04-17
 
-## When the operator must be looped in (no heuristic works)
+## When supervisor must be looped in (no heuristic works)
+
+Commander escalates to `supervisor.resolve_question` (see `docs/mcp-tool-contract.md`) whenever the heuristics above don't match. In the legacy direct-drive path (`./hydra` in a terminal, no `upstream_supervisor` configured), the same escalation surfaces as the chat-prompt surfacing in `CLAUDE.md` and the operator answers live. The supervisor agent decides from there whether to answer autonomously or loop its own human — Hydra does not dictate that decision.
+
+Trigger cases:
 
 - Genuinely ambiguous acceptance criteria that memory can't resolve
 - Security-adjacent tickets (even T2) where the worker wants a second opinion

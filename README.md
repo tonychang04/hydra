@@ -402,6 +402,24 @@ commander/
 - **Watch the first week closely.** Read every log. Tune policy/budget from what you see.
 - **If anything unexpected touches prod or customer data, say `pause` immediately** and investigate.
 
+## Agent-only interface (Phase 2)
+
+The happy path above shows a human typing into a terminal. That's legacy / direct-drive mode — fully supported, and probably what you'll run on your laptop. The Phase 2 direction is headless: Hydra exposes an **agent-only interface** over MCP, and another agent (your main Claude Code session, a custom supervisor bot, a dashboard agent) drives it.
+
+```
+Your main agent  ──MCP──▶  Hydra Commander (headless)
+                                   │
+                                   └──MCP (outbound)──▶  Supervisor agent (escalates novel questions)
+```
+
+The supervisor agent wraps whatever human channel exists (Slack, voice, pager) if there's one to loop in at all. Hydra doesn't know or care — it just calls one upstream tool (`supervisor.resolve_question`) when memory can't resolve a worker's question.
+
+**What's shipped in this release:** the tool-contract schemas (`mcp/hydra-tools.json`), the connector config template (`state/connectors/mcp.json.example`), and the prompt edits that make Commander think in supervisor-agent terms. The actual MCP server binary is a follow-up ticket — the contract is stable first so agent authors can plan against it.
+
+Read: **[docs/mcp-tool-contract.md](docs/mcp-tool-contract.md)** — every `hydra.*` tool, its scope, its input/output, and when to call it. Install path for the headless setup is **Option C** in **[INSTALL.md](INSTALL.md)**.
+
+The Mermaid diagrams above are unchanged — the happy path is still the happy path. The agent-only interface is a different transport for the same loop, not a different loop.
+
 ## Contributing
 
 This is an opinionated framework. PRs welcome for:

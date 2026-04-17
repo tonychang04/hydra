@@ -45,6 +45,54 @@ cd hydra
 
 `setup.sh` is idempotent. Safe to re-run anytime.
 
+Option A and Option B are both **legacy / direct-drive mode**: an operator sits in a terminal and types `pick up 2` to Commander. Fully supported — this is how most installs run today. If you want an agent (yours or someone else's) to drive Hydra instead of a terminal chat, read Option C below.
+
+## Option C — agent-driven install (Phase 2 direction, agent-only interface)
+
+Status: **contract + config only in this release.** The tool schemas (`mcp/hydra-tools.json`), tool-contract doc (`docs/mcp-tool-contract.md`), and connector config template (`state/connectors/mcp.json.example`) are all shipped. The actual MCP server binary (`./hydra mcp serve`) is a follow-up ticket. This section documents the intended end-state so you can read the contract and plan your supervisor-agent integration now.
+
+The **agent-only interface** replaces the terminal-chat surface with an MCP (Model Context Protocol) server. Another agent — the operator's main Claude Code session, a custom supervisor agent, a dashboard bot — connects as a client and calls `hydra.*` tools. Commander runs headless. No human types at a Commander prompt.
+
+### End-state flow (once the server binary lands)
+
+1. Operator runs Hydra (on laptop or VPS) in MCP-server mode:
+   ```bash
+   ./hydra mcp serve
+   ```
+   Commander boots, reads `state/connectors/mcp.json`, binds the configured transport (stdio or http), and waits.
+2. Operator's main agent (Claude Code, custom supervisor, whatever speaks MCP) connects:
+   ```bash
+   claude mcp add hydra <stdio-command-or-http-url>
+   ```
+   For stdio, the command is `ssh operator@vps ./hydra mcp serve` (or a local equivalent). For http, the URL is `https://your-hydra-host:8765/mcp`.
+3. The main agent now has `hydra.*` tools available — no direct chat with Commander. It sends commands the same way it sends any tool call:
+   ```
+   hydra.pick_up({count: 3})
+   hydra.get_status({})
+   hydra.merge_pr({pr_num: 501, caller_agent_id: "supervisor-main"})
+   ```
+4. Commander stays headless. Escalations (worker `QUESTION:` blocks that don't match memory) flow **outbound** via `supervisor.resolve_question` — Hydra calls the supervisor agent, the supervisor agent decides whether to answer autonomously or loop a human through its own channel.
+
+### What to read now (before the server binary lands)
+
+- `mcp/hydra-tools.json` — every tool you'll be able to call, with JSON Schema.
+- `docs/mcp-tool-contract.md` — the prose version: use cases, tradeoffs, scope boundaries per tool.
+- `state/connectors/mcp.json.example` — copy to `state/connectors/mcp.json` and pre-configure your authorized agents + upstream supervisor. Nothing reads this file yet, but the config you land here is what the server will consume.
+- `docs/specs/2026-04-16-mcp-agent-interface.md` — the why and the scope decisions.
+
+### Auth model (four scope levels)
+
+Tokens for each authorized agent are declared in `state/connectors/mcp.json:authorized_agents[]`. Every entry carries:
+- `id`: free-form label you choose.
+- `token_hash`: SHA-256 hex digest of the bearer token. **Never commit the raw token** — only its hash.
+- `scope`: an array of `["read", "spawn", "merge", "admin"]`.
+
+Scope semantics are documented in `docs/mcp-tool-contract.md`. The tier policy (`policy.md`) is enforced below the scope check — an `admin` + `merge` token still cannot merge a T3 PR through MCP.
+
+### Legacy and agent-driven coexist
+
+Running `./hydra mcp serve` does NOT disable the terminal-chat path — they're both valid surfaces on the same Commander. Most operators will use one or the other; the two surfaces exist to cover different deployment shapes (single-operator laptop vs. cloud-hosted headless).
+
 ## What `setup.sh` does
 
 1. Verifies `claude`, `gh`, and `gh auth status` all green
