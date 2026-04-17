@@ -43,7 +43,15 @@ Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", 
    - No recent rate-limit error in `state/quota-health.json` (auto-pause 1 hr if flagged).
 3. **Pick tickets** per `state/repos.json:ticket_trigger`: `assignee` (default `@me` or `assignee_override` — `docs/specs/2026-04-17-assignee-override.md`), `label` (`commander-ready`), or `linear` (MCP server, `state/linear.json:teams[].trigger`; pickup helper `scripts/linear-pickup-dispatch.sh`, spec `docs/specs/2026-04-17-linear-ticket-trigger.md`). Skip tickets labeled `commander-working` / `commander-pause` / `commander-stuck`.
 4. **Classify tier** per `policy.md`. T3 → skip. Unclear → ask.
-5. **Spawn** worker. Pass ticket body, repo path, tier, memory location.
+5. **Spawn** worker with the slim spawn template (below) — ticket URL, not inlined body. Spec: `docs/specs/2026-04-17-slim-worker-prompts.md`.
+   ```
+   Ticket: https://github.com/<o>/<r>/issues/<n>
+   Repo: <o>/<r> @ <path>
+   Tier: T<n>
+   <Memory Brief per #141>
+   Fetch full body via `gh issue view <n> --repo <o>/<r>`.
+   Worker type: <t>. Coordinate-with: <1-2 lines or "none">.
+   ```
 6. **Track** in `state/active.json` (schema allows pre-migration entries without `worktree`/`branch` per `docs/specs/2026-04-17-active-schema-drift.md`).
 7. **Report** one-line status.
 
