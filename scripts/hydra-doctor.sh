@@ -698,6 +698,82 @@ check_scripts() {
       "fix: chmod +x '$vs'" \
       "chmod +x '$vs'"
   fi
+
+  # Launcher version marker — match against the heredoc body in setup.sh.
+  # Spec: docs/specs/2026-04-17-launcher-auto-regen.md (ticket #123).
+  # Silently skip if the launcher doesn't exist (fresh clone, setup.sh never ran);
+  # other checks in the Config category would already have flagged that.
+  local launcher="$ROOT_DIR/hydra"
+  local lmh="$ROOT_DIR/scripts/launcher-marker.sh"
+  local setup="$ROOT_DIR/setup.sh"
+  if [[ -f "$launcher" ]] && [[ -x "$lmh" ]] && [[ -f "$setup" ]]; then
+    # Extract the launcher body from setup.sh (between the line
+    # `cat > "$LAUNCHER_TMP" <<'EOF'` and the next `^EOF$`), write to a
+    # tmpfile with the placeholder substituted to a fixed token, then ask
+    # launcher-marker.sh to compute the marker. The extraction script lives
+    # inline here so the check has no new external dependencies.
+    local tmp_body tmp_marker
+    tmp_body="$(mktemp)"
+    # awk FSM: start emitting after we see `<<'EOF'` on the LAUNCHER_TMP
+    # heredoc opener; stop at the next bare `EOF` line.
+    awk '
+      /cat > "\$LAUNCHER_TMP" <<'"'"'EOF'"'"'/ { inhere=1; next }
+      inhere && /^EOF$/ { inhere=0; exit }
+      inhere { print }
+    ' "$setup" > "$tmp_body"
+    if [[ ! -s "$tmp_body" ]]; then
+      check_warn "launcher version check" "could not extract heredoc from setup.sh" \
+        "manual: verify setup.sh still contains the <<'EOF' launcher heredoc block"
+      rm -f "$tmp_body"
+    else
+      # Compute the expected marker from the fresh body.
+      set +e
+      tmp_marker="$("$lmh" compute "$tmp_body" 2>/dev/null)"
+      local compute_rc=$?
+      set -e
+      rm -f "$tmp_body"
+      if [[ "$compute_rc" -ne 0 ]] || [[ -z "$tmp_marker" ]]; then
+        check_warn "launcher version check" "could not compute expected marker (sha256 unavailable?)" \
+          "manual: install coreutils (sha256sum) and re-run doctor"
+      else
+        # Extract the on-disk marker; compare.
+        set +e
+        local on_disk_marker
+        on_disk_marker="$("$lmh" extract "$launcher" 2>/dev/null)"
+        local extract_rc=$?
+        set -e
+        case "$extract_rc" in
+          0)
+            if [[ "$on_disk_marker" == "$tmp_marker" ]]; then
+              check_pass "launcher version matches setup.sh" "version $tmp_marker"
+            else
+              check_warn "launcher version matches setup.sh" \
+                "had $on_disk_marker, expected $tmp_marker — launcher is stale" \
+                "run: ./setup.sh --non-interactive    # regenerates ./hydra; old saved as ./hydra.bak-<ts>"
+            fi
+            ;;
+          4)
+            check_warn "launcher version matches setup.sh" \
+              "./hydra has no version marker (pre-#123 install)" \
+              "run: ./setup.sh --non-interactive    # adds the marker; old saved as ./hydra.bak-<ts>"
+            ;;
+          5)
+            check_warn "launcher version matches setup.sh" \
+              "./hydra marker line present but malformed" \
+              "run: ./setup.sh --non-interactive    # regenerates ./hydra; old saved as ./hydra.bak-<ts>"
+            ;;
+          *)
+            check_warn "launcher version check" "marker extraction failed (exit $extract_rc)" \
+              "run: scripts/launcher-marker.sh extract '$launcher'    # see the exact error"
+            ;;
+        esac
+      fi
+    fi
+  else
+    # Silent skip — lack of ./hydra is caught by the Config category; lack
+    # of launcher-marker.sh is caught by the scripts-executable check above.
+    verbose_log "launcher version check skipped (./hydra or launcher-marker.sh missing)"
+  fi
 }
 
 # -----------------------------------------------------------------------------
