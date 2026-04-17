@@ -2,12 +2,14 @@
 #
 # self-test fixture driver for scripts/rescue-worker.sh.
 #
-# Exercises the --probe mode (non-mutating) against synthetic worktrees that
-# represent each possible timeout-rescue state. Uses --base refs/heads/main so
-# the fixture needs no remote. Only probe + help / usage / branch-mismatch are
-# tested here because --rescue pushes to origin, which would need a live
-# upstream. The full rescue loop is exercised end-to-end by commander itself
-# on real worker worktrees.
+# Exercises the --probe and --probe-review modes (both non-mutating) against
+# synthetic inputs. The --probe side uses a throwaway git repo and --base
+# refs/heads/main so the fixture needs no remote. The --probe-review side uses
+# --gh-mock to point at local JSON files so CI never shells out to `gh`.
+#
+# Only probe paths are tested here because --rescue pushes to origin (needs a
+# live upstream) and the commander-side review-dispatch runs `/review` inline
+# (needs the worker-subagent executor — see CLAUDE.md "Worker timeout watchdog").
 #
 # Exits 0 on PASS, non-zero on FAIL with a clear message on stderr.
 #
@@ -135,6 +137,127 @@ if ! printf '%s' "$err" | grep -q '.git/index.lock present'; then
 fi
 if ! printf '%s' "$err" | grep -q 'worker may still be writing'; then
   echo "FAIL: expected 'worker may still be writing' in stderr; got: $err" >&2
+  exit 1
+fi
+
+# ---- 10. --probe-review: review-already-landed via body ----
+# Ticket #75. Mocks `gh pr view --json reviews/labels` with local JSON files so
+# CI can exercise the review-rescue path offline. The body opener "Commander
+# review" is the canonical marker from Commander's /review skill output.
+mock="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$mock"' EXIT
+
+cat > "$mock/reviews-101.json" <<'EOF'
+{"reviews":[{"body":"Commander review for PR #101\n\nLGTM, no blockers."}]}
+EOF
+cat > "$mock/labels-101.json" <<'EOF'
+{"labels":[{"name":"commander-review"}]}
+EOF
+
+out="$("$RESCUE" --probe-review 101 --gh-mock "$mock")"
+ec=$?
+if [[ "$ec" -ne 0 ]]; then
+  echo "FAIL: probe-review review-already-landed (body) expected exit 0, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"review-already-landed"'; then
+  echo "FAIL: expected review-already-landed verdict; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"source":"body"'; then
+  echo "FAIL: expected source:body; got: $out" >&2
+  exit 1
+fi
+
+# ---- 11. --probe-review: review-already-landed via commander-review-clean label ----
+cat > "$mock/reviews-202.json" <<'EOF'
+{"reviews":[]}
+EOF
+cat > "$mock/labels-202.json" <<'EOF'
+{"labels":[{"name":"commander-review-clean"}]}
+EOF
+
+out="$("$RESCUE" --probe-review 202 --gh-mock "$mock")"
+ec=$?
+if [[ "$ec" -ne 0 ]]; then
+  echo "FAIL: probe-review review-already-landed (label) expected exit 0, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"source":"label"'; then
+  echo "FAIL: expected source:label; got: $out" >&2
+  exit 1
+fi
+
+# ---- 12. --probe-review: no review + no label → exit 4 ----
+# This is the core review-rescue trigger. The observed failure is a review
+# worker that dies mid-stream and never posts anything to the PR — exit 4
+# tells commander "dispatch yourself to run /review inline".
+cat > "$mock/reviews-303.json" <<'EOF'
+{"reviews":[]}
+EOF
+cat > "$mock/labels-303.json" <<'EOF'
+{"labels":[{"name":"commander-working"}]}
+EOF
+
+set +e
+out="$("$RESCUE" --probe-review 303 --gh-mock "$mock")"
+ec=$?
+set -e
+if [[ "$ec" -ne 4 ]]; then
+  echo "FAIL: probe-review no-review/no-label expected exit 4, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"review-missing-dispatch-to-commander"'; then
+  echo "FAIL: expected review-missing-dispatch-to-commander verdict; got: $out" >&2
+  exit 1
+fi
+
+# ---- 13. --probe-review: reviews present but none with the Commander marker → exit 4 ----
+# Guards against the heuristic false-matching unrelated human review comments
+# (e.g. a nitpick comment from a reviewer); the script must require the
+# "Commander review" prefix specifically, not just any body text.
+cat > "$mock/reviews-404.json" <<'EOF'
+{"reviews":[{"body":"Nitpick: missing period on line 12"},{"body":"LGTM"}]}
+EOF
+cat > "$mock/labels-404.json" <<'EOF'
+{"labels":[{"name":"commander-working"}]}
+EOF
+set +e
+out="$("$RESCUE" --probe-review 404 --gh-mock "$mock")"
+ec=$?
+set -e
+if [[ "$ec" -ne 4 ]]; then
+  echo "FAIL: probe-review with non-commander review bodies expected exit 4, got $ec; out=$out" >&2
+  exit 1
+fi
+
+# ---- 14. --probe-review: missing pr_number arg → exit 2 ----
+set +e
+"$RESCUE" --probe-review >/dev/null 2>&1
+ec=$?
+set -e
+if [[ "$ec" -ne 2 ]]; then
+  echo "FAIL: probe-review with no pr_number should exit 2, got $ec" >&2
+  exit 1
+fi
+
+# ---- 15. --probe-review: non-integer pr_number → exit 2 ----
+set +e
+"$RESCUE" --probe-review not-a-number >/dev/null 2>&1
+ec=$?
+set -e
+if [[ "$ec" -ne 2 ]]; then
+  echo "FAIL: probe-review with non-integer pr_number should exit 2, got $ec" >&2
+  exit 1
+fi
+
+# ---- 16. mutual-exclusion: --probe-review + --probe → exit 2 ----
+set +e
+"$RESCUE" --probe --probe-review 101 --gh-mock "$mock" >/dev/null 2>&1
+ec=$?
+set -e
+if [[ "$ec" -ne 2 ]]; then
+  echo "FAIL: --probe and --probe-review together should exit 2, got $ec" >&2
   exit 1
 fi
 
