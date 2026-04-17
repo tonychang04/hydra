@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/memory-citations.schema.json",
+  "title": "Hydra memory citations state",
+  "description": "Citation counts that drive skill promotion. Key format is 'learnings-<repo>.md#\"<quote>\"' where the file part is relative to $HYDRA_EXTERNAL_MEMORY_DIR (or ./memory/). Commander merges deltas emitted by scripts/parse-citations.sh into this file.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["citations"],
+  "properties": {
+    "citations": {
+      "type": "object",
+      "description": "Map of citation key -> entry. Keys follow '<file>#<quote>'; keys starting with underscore (e.g. _comment) are treated as meta and skipped.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["count", "last_cited", "tickets", "promotion_threshold_reached"],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of times this entry has been cited across all tickets."
+          },
+          "last_cited": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "ISO date (YYYY-MM-DD) of the most recent citation."
+          },
+          "tickets": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "De-duplicated list of ticket refs that cited this entry."
+          },
+          "promotion_threshold_reached": {
+            "type": "boolean",
+            "description": "True when count >= 3 AND distinct tickets.length >= 3."
+          }
+        }
+      }
+    }
+  }
+}

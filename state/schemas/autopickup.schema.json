@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/autopickup.schema.json",
+  "title": "Hydra scheduled autopickup state",
+  "description": "Runtime state for scheduled autopickup. See CLAUDE.md 'Scheduled autopickup' + docs/specs/2026-04-16-scheduled-autopickup.md.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "enabled",
+    "interval_min",
+    "last_run",
+    "last_picked_count",
+    "consecutive_rate_limit_hits"
+  ],
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "interval_min": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 120,
+      "description": "Minutes between ticks. Clamped to [5, 120] on activation."
+    },
+    "auto_enable_on_session_start": {
+      "type": "boolean",
+      "description": "Opt-out session-start behavior. Missing = true for backward compat."
+    },
+    "last_run": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 timestamp of the last tick, or null if never run."
+    },
+    "last_picked_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of tickets spawned in the most recent tick."
+    },
+    "consecutive_rate_limit_hits": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Strike counter for the 2-strike rate-limit auto-disable rule."
+    }
+  }
+}
