@@ -337,6 +337,14 @@ else
 #                                            snapshot + top memory citations
 #                                            (spec: docs/specs/2026-04-17-hydra-activity.md,
 #                                            ticket #19).
+#   ./hydra pair-agent <agent-id> [opts]     One-command setup for a new
+#                                            MCP-speaking agent: generates a
+#                                            bearer, prints paste-ready config
+#                                            recipes for Claude Code, Cursor,
+#                                            OpenClaw / Codex-CLI, and raw curl,
+#                                            then runs a live sanity check.
+#                                            (spec: docs/specs/2026-04-17-pair-agent.md,
+#                                            ticket #124).
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -393,6 +401,9 @@ Subcommands:
                                Queue a specific issue for next tick.
   activity [--json]            Text-based observability: last 24h of log
                                activity + live workers + top memory citations.
+  pair-agent <agent-id> [opts] One-command setup for an MCP-speaking agent:
+                               generates a bearer, prints paste-ready recipes,
+                               runs a live sanity check.
   doctor [--fix|--fix-safe]    Install sanity check. --fix walks the operator
                                through each fixable issue interactively.
   mcp <serve|register-agent>   MCP server subcommands (agent-only interface).
@@ -422,6 +433,7 @@ HYDRAHELP
   resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
   activity)     shift; hydra_exec_helper scripts/hydra-activity.sh "$@" ;;
+  pair-agent)   shift; hydra_exec_helper scripts/hydra-pair-agent.sh "$@" ;;
   mcp)
     shift
     case "${1:-}" in

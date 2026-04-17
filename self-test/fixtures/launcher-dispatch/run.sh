@@ -132,6 +132,7 @@ assert_dispatches "pause"        "Usage: ./hydra pause"
 assert_dispatches "resume"       "Usage: ./hydra resume"
 assert_dispatches "issue"        "Usage: ./hydra issue"
 assert_dispatches "activity"     "Usage: ./hydra activity"
+assert_dispatches "pair-agent"   "Usage: ./hydra pair-agent"
 
 # mcp has two levels. --help at the top prints the MCP usage sub-table
 # (cat'd inline in the launcher), --help on subcommands dispatches to
@@ -181,7 +182,7 @@ echo "VERSION_OK: $ver"
 #    assert the case block doesn't match any of the documented subcommands,
 #    which is verified structurally by grepping the generated launcher.
 # -----------------------------------------------------------------------------
-if ! grep -qE '^\s*(doctor|add-repo|remove-repo|list-repos|status|ps|pause|resume|issue|activity|mcp)\)' hydra; then
+if ! grep -qE '^\s*(doctor|add-repo|remove-repo|list-repos|status|ps|pause|resume|issue|activity|pair-agent|mcp)\)' hydra; then
   echo "FAIL: generated ./hydra is missing expected subcommand case entries" >&2
   exit 1
 fi

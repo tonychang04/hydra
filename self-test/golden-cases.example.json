@@ -1964,6 +1964,47 @@
       "last_result": null
     },
     {
+      "id": "pair-agent-dry-run",
+      "_description": "Script-only self-test for scripts/hydra-pair-agent.sh — the one-command agent-pairing wrapper around the #92 register-agent primitive (spec: docs/specs/2026-04-17-pair-agent.md, ticket #124). Exercises the --dry-run path end-to-end: no bearer generated, no state mutation, no network. Asserts (a) --dry-run exits 0, (b) all four recipe block headers present (Claude Code / Cursor / OpenClaw / raw curl), (c) placeholder <token-would-go-here> is present, (d) no 43+ char base64-shaped string leaks to stdout (real-token-leak detector), (e) --editor filters to a single block, (f) invalid --scope exits 2, (g) no-arg exits 2 with missing-agent-id marker, (h) --dry-run does not create the mcp.json config. Also verifies bash -n syntax clean, --help exit 0, and dispatch wiring in setup.sh. Fixture lives at self-test/fixtures/pair-agent/run.sh — tmpdir-isolated, safe to re-run, CI-safe. Commander runs this before committing changes to scripts/hydra-pair-agent.sh or its launcher dispatch.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-pair-agent.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-pair-agent.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-pair-agent.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-pair-agent.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra pair-agent"
+        },
+        {
+          "name": "missing <agent-id> is a usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/hydra-pair-agent.sh 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo MISSING_ID_EXIT_2",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MISSING_ID_EXIT_2"
+        },
+        {
+          "name": "integration smoke (--dry-run, all 4 recipes, no token leak, no mutation, --editor filter, error paths)",
+          "cmd": "self-test/fixtures/pair-agent/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "dispatch wired: setup.sh launcher heredoc routes `./hydra pair-agent` to the new script",
+          "cmd": "grep -Eq 'pair-agent\\)[[:space:]]+shift;[[:space:]]+hydra_exec_helper scripts/hydra-pair-agent\\.sh' setup.sh && echo DISPATCH_WIRED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DISPATCH_WIRED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "supervisor-escalate-disabled-path",
       "_description": "Script-only self-test for scripts/hydra-supervisor-escalate.py — the outbound MCP client landed in ticket #87. Verifies the 'not-configured' fall-through branch: when state/connectors/mcp.json.example is read (upstream_supervisor.enabled=false by default) OR when the config file is missing entirely, the script exits 2 with a 'not-configured' marker on stdout. Commander reads exit 2 as 'keep legacy commander-stuck behavior, no upstream call made'. Also validates Python syntax, --help output, and that the exit-2 branch never touches the network (no token env var needed to trigger it). Runs locally in <1s; no network, no fixture supervisor required. Spec: docs/specs/2026-04-17-supervisor-escalate-client.md.",
       "kind": "script",
