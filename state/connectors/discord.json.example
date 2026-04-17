@@ -1,0 +1,25 @@
+{
+  "_description": "Copy to state/connectors/discord.json and fill in. Controls the Hydra Discord bot (bin/hydra-discord-bot). Bot runs inside or alongside the Commander process, listens for DMs from exactly one allowlisted Discord user (snowflake ID), and posts proactive notifications on state transitions. Mirrors the Slack bot shape from ticket #74 with Slack→Discord substitutions. state/connectors/*.json (except *.example.json) is gitignored — only the .example mirror is committed.",
+  "_canonical_term": "discord bot",
+  "_related_docs": [
+    "docs/specs/2026-04-17-discord-bot.md",
+    "docs/specs/2026-04-17-slack-bot.md",
+    "docs/phase2-vps-runbook.md"
+  ],
+  "enabled": false,
+  "_enabled_note": "Set to true to let bin/hydra-discord-bot start. Default false so a missing/incomplete config is inert — bot exits 0 with a clear log line if this is false.",
+  "bot_token_env": "HYDRA_DISCORD_BOT_TOKEN",
+  "_bot_token_env_note": "Name of the env var holding the Discord bot token from the Discord Developer Portal (Applications → <your app> → Bot → Token → Reset Token). Do NOT paste the token into this file. On Fly: `fly secrets set HYDRA_DISCORD_BOT_TOKEN=...`. Unlike Slack, Discord uses a single bot token — no separate app-level token is required.",
+  "allowed_user_id": "100000000000000000",
+  "_allowed_user_id_note": "Exactly ONE Discord user ID (snowflake — 17-20 digit numeric string). NOT the username#tag, NOT the global display name. Enable Developer Mode in Discord (User Settings → Advanced → Developer Mode = ON), then right-click your own name in any channel → Copy User ID. DMs from any other user are silently ignored and logged once to logs/discord-audit.jsonl with action=refused-unauthorized-user. Stored as a string because Discord snowflakes exceed JavaScript's Number.MAX_SAFE_INTEGER and the Discord API itself returns them as strings.",
+  "default_channel": "100000000000000000",
+  "_default_channel_note": "Fallback channel ID (usually the DM channel ID between you and the bot) for proactive notifications if DMing allowed_user_id directly fails (user blocked the bot, etc.). Find by right-clicking the DM conversation in Discord's sidebar → Copy Channel ID (Developer Mode must be enabled). Also a numeric snowflake string.",
+  "notification_poll_interval_sec": 60,
+  "_notification_poll_interval_sec_note": "How often to poll for newly-labeled commander-review-clean PRs. Default 60s. Minimum enforced in code is 30s (tighter hits GitHub rate limits).",
+  "repos": [
+    "tonychang04/hydra"
+  ],
+  "_repos_note": "Which repos to poll for the commander-review-clean label. Phase 1: must be listed explicitly here (the bot is a standalone process that doesn't read state/repos.json yet). Phase 2 (after ticket #72 lands): the bot becomes an MCP client and pulls this list from Commander's active repo config via hydra.get_status.",
+  "seen_prs_state_path": "state/discord-notified-prs.json",
+  "_seen_prs_state_path_note": "Where to persist the set of PR IDs the bot has already notified about. Persisting means a bot restart doesn't re-notify. File is capped at 500 entries via LRU eviction."
+}
