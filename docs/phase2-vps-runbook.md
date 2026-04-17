@@ -522,6 +522,94 @@ Flip `enabled: false` in `state/connectors/slack.json` and restart the process. 
 | Notifications don't fire on `commander-review-clean` | Check `gh` is installed inside the Machine and `GH_TOKEN` is set. Check `repos` in `slack.json` includes the repo. Check `logs/slack-audit.jsonl` shows outbound events. |
 | Bot dies on every `fly deploy` | Normal — `fly deploy` replaces the Machine. The bot restarts from `entrypoint.sh`. `state/slack-notified-prs.json` on the volume preserves the seen-set, so no duplicate notifications. |
 
+## Configuring the Codex backend
+
+Hydra supports spawning OpenAI's `codex` CLI as an implementation worker backend alongside the default Claude Code worker. Dual-backend gives commander rate-limit resilience (Claude quota exhaustion → Codex keeps shipping), cost/speed arbitrage, and a primitive for future second-opinion spawning. The infrastructure lives in two places:
+
+- [`.claude/agents/worker-codex-implementation.md`](../.claude/agents/worker-codex-implementation.md) — subagent definition that orchestrates `codex exec` for code-gen while keeping commander-handshake logic in Claude.
+- [`scripts/hydra-codex-exec.sh`](../scripts/hydra-codex-exec.sh) — thin wrapper (≤250 LOC) that invokes `codex exec` against a given worktree + task prompt, detects diff / no-diff / unavailable, and returns a deterministic exit code.
+
+Spec: [`docs/specs/2026-04-17-codex-worker-backend.md`](specs/2026-04-17-codex-worker-backend.md).
+
+### Prerequisites
+
+| Need | How |
+|---|---|
+| `codex` CLI on `$PATH` inside the runtime env | Install per [Codex CLI docs](https://github.com/openai/codex) — either in your local shell (legacy direct-drive) or baked into `infra/Dockerfile` for the Fly Machine (Phase 2). |
+| One of: `OPENAI_API_KEY` **or** a valid ChatGPT session that supports `gpt-5.2-codex` | See "Auth modes" below. |
+| `./hydra doctor` green | Runs `scripts/hydra-codex-exec.sh --check` transitively once the doctor's codex-category check lands. For now you can invoke `scripts/hydra-codex-exec.sh --check` directly — exit 0 means the wrapper sees codex; exit 1 means codex isn't on PATH; exit 4 means codex is present but auth/model is broken. |
+
+### Auth modes
+
+The wrapper prefers API-key auth when present and falls back to whatever `codex login` has persisted on the host. Concretely:
+
+1. **`OPENAI_API_KEY` set in the environment.** Preferred. Works with any account tier that has API access. On Fly, set it as a secret: `fly secrets set OPENAI_API_KEY=sk-...`. On a local laptop, export it from your shell rc or an `.envrc`. The wrapper pipes the task prompt via stdin and never echoes the key.
+2. **ChatGPT-session auth** (persisted under `~/.codex/` after `codex login`). Works if your account tier supports `gpt-5.2-codex`. Known-broken on ChatGPT Plus today — see "Known blocker" below.
+
+You do **not** need both. The wrapper picks whichever one is present; API-key wins on ties.
+
+### Flipping a repo to the Codex backend
+
+Once `codex` is installed and auth works, opt a specific repo in by editing [`state/repos.json`](../state/repos.example.json) and setting `preferred_backend`:
+
+```json
+{
+  "repos": [
+    {
+      "owner": "your-org",
+      "name": "your-repo",
+      "local_path": "/absolute/path/to/clone",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "preferred_backend": "codex"
+    }
+  ]
+}
+```
+
+Valid values:
+
+| Value | Meaning |
+|---|---|
+| `claude` (default if absent) | `worker-implementation` (the Claude Code subagent). Current behavior, no change. |
+| `codex` | `worker-codex-implementation` (the Codex-backed subagent). Only honored once ticket [#97](https://github.com/tonychang04/hydra/issues/97) wires the router; until then commander still spawns Claude, but the field is valid and documented for forward-compat. |
+| `auto` | Future rate-limit-aware routing (ticket [#97]). Currently treated as `claude`. |
+
+The field is additive: leaving it absent is explicitly supported and means "use Claude." Run `./hydra status` (or `scripts/validate-state.sh state/repos.json`) to sanity-check the change parses.
+
+### Known blocker (operator side)
+
+Some operators on a ChatGPT Plus account hit this when invoking `codex exec`:
+
+```
+gpt-5.2-codex model is not supported when using Codex with a ChatGPT account
+```
+
+**This is not a Hydra bug.** It's an OpenAI account-tier constraint around which models a ChatGPT-session-authenticated CLI can invoke. Two fixes:
+
+1. **Switch to API-key auth.** Get an API key from the OpenAI dashboard, `export OPENAI_API_KEY=sk-...`, re-run `scripts/hydra-codex-exec.sh --check`. Most common resolution.
+2. **Upgrade your account.** A tier that supports `gpt-5.2-codex` under ChatGPT-session auth fixes it without an API key.
+
+The wrapper detects this error and returns exit code 4 (`codex-unavailable`), which commander surfaces as `commander-stuck` with a clear "codex-unavailable: model-not-supported" reason — it does **not** silently fall back to Claude. Silent fallback would hide the signal that drives future routing in [#97].
+
+### Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `./scripts/hydra-codex-exec.sh --check` exits 1 "codex CLI not on PATH" | Install the Codex CLI per upstream docs; re-run. On Fly, add the install step to `infra/Dockerfile` and redeploy. |
+| `--check` exits 4 "codex-unavailable" | Auth problem. Run `codex --version` by hand to see the raw error; then either set `OPENAI_API_KEY` or run `codex login`. |
+| A ticket PR opens as `worker-implementation` even though `preferred_backend: codex` | Expected until [#97] lands. Until then, `preferred_backend` is persisted and validated but not yet routed on. |
+| Wrapper reports "codex exec completed with exit 0 but produced no changes" | Codex accepted the prompt but refused to edit anything — usually means the task prompt was too vague or asked Codex to touch a disallowed path. Check the worker's commit log for the task prompt it sent. |
+| Prompt text appears in commander logs | File a security bug. The wrapper pipes via stdin and scrubs stderr; any leak is a regression. The `codex-worker-fixture` self-test asserts this invariant. |
+
+### Self-test
+
+```bash
+./self-test/run.sh --case codex-worker-fixture
+```
+
+Runs the wrapper against four stubbed `codex` binaries (success / no-change / model-not-supported / rate-limit), verifying every exit code and the prompt-leak security invariant. Runs on CI (script-kind). Set `HYDRA_TEST_CODEX_E2E=1` to additionally smoke-check against a real `codex` install on your host.
+
 ## Non-Fly operators (Hetzner, DO, bare VPS)
 
 Use `infra/systemd/hydra.service` instead of Fly. The install steps are documented in-file at the top of that unit. Same `infra/entrypoint.sh` runs in both paths, so the operational muscle memory (attach, logs, deploy) carries over via `journalctl -u hydra.service -f` and `sudo -iu hydra tmux attach -t commander`.
