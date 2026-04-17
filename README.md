@@ -169,6 +169,35 @@ The bottom row — the only layer that touches you — shrinks every week as mem
 - A deploy controller (stops at merge; CI + your deploy infra handle the rest).
 - A replacement for human judgment on security or production risk (T3 = refuse).
 
+## How Hydra compares
+
+If you've used Dependabot, Aider, GitHub Copilot Workspace, or the Codex CLI, here's where Hydra fits:
+
+| | Hydra | Dependabot | Aider | Copilot Workspace | Codex CLI |
+|---|---|---|---|---|---|
+| **Scope** | general tickets (GitHub Issues, Linear next) | dependency updates only | interactive code edits | GitHub issue implementation | interactive code gen |
+| **Trigger** | auto (autopickup) or manual `pick up` | schedule or PR event | human-invoked | human-invoked | human-invoked |
+| **Parallelism** | N workers concurrently (`max_concurrent_workers`, default 3) | 1 PR per dep | 1 session | 1 issue at a time | 1 session |
+| **Autonomy** | auto-merge after review-clean (T1; T2 configurable) | auto-merge opt-in | human merges | human merges | human merges |
+| **Learns over time** | yes (memory + citations + skill promotion) | no | no | no | no |
+| **Self-hosted** | yes — your laptop or cloud VPS | SaaS (GitHub) | self (runs locally) | SaaS (GitHub) | self (runs locally) |
+| **Cost model** | subscription (Claude Max) or API (Phase 2) | free | API pay-as-you-go | subscription | API |
+| **Isolation** | git worktrees | runs on GitHub infra | none (edits your working tree) | GitHub Codespaces | none (edits your working tree) |
+| **Safety tiers** | T1 / T2 / T3-refuse (see below) | n/a | n/a | n/a | n/a |
+| **Learning from other workers** | planned ([#21](https://github.com/tonychang04/hydra/issues/21) peer help) | no | no | no | no |
+
+Competitor cells reflect the worker's understanding of each tool's documented behavior as of **2026-04-16**. Tools in this space evolve fast; expect this table to be revisited roughly every six months. If you spot a cell that's out of date, file an issue — a one-cell fix is welcome.
+
+**Where Hydra wins:** general-purpose parallel ticket clearing that learns from every PR it ships. The row that's hardest for any other tool to match is *learns over time* — the memory → citation → skill-promotion pipeline is the reason the loop gets quieter every week. Everything else in the table is table stakes or a deliberate design choice (self-hosted, isolated, tiered-safety).
+
+**Where Hydra loses:**
+
+- **Pure dependency bumps** — Dependabot is more specialized, battle-tested, and free. If all you need is `foo@1.2.3 → foo@1.2.4`, use Dependabot. (Hydra can still handle a dep bump as a T1 ticket if you prefer one tool; it just isn't the best-in-class option for that workload.)
+- **Interactive single-file edits with human in the loop at every step** — Aider and Codex CLI are better if you want to drive the edit yourself turn by turn. Hydra is built for walk-away async work, not live pair programming.
+- **Zero-config, pre-integrated with GitHub's UI** — Copilot Workspace is already inside GitHub; there's nothing to install. Hydra is self-hosted, which is power and responsibility both.
+
+The niche Hydra owns: **walk-away parallel ticket clearing that compounds a learning loop across repos**. That's not what any of the other tools are built for.
+
 ## Risk tiers (keep Hydra safe to leave running)
 
 | Tier | Scope | Who merges |
