@@ -1,0 +1,70 @@
+# hydra.service — systemd unit for Hydra commander on a bare Debian VPS.
+#
+# Use this when you're NOT on Fly.io (Hetzner, Digital Ocean droplet, Linode,
+# self-hosted box). Fly.io operators don't need it — Fly supervises the
+# container directly.
+#
+# Install (as root on the target host):
+#   1. Clone the framework and run setup as the hydra user:
+#        useradd -m -u 1000 -s /bin/bash hydra
+#        sudo -iu hydra git clone https://github.com/tonychang04/hydra.git /hydra
+#        sudo -iu hydra bash -c 'cd /hydra && ./setup.sh'
+#   2. Drop secrets into /etc/hydra/env (mode 0600, owner hydra):
+#        CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-...
+#        GITHUB_TOKEN=ghp_...
+#        # optional: ANTHROPIC_API_KEY=... (fallback if no OAuth token)
+#   3. Install this unit:
+#        cp /hydra/infra/systemd/hydra.service /etc/systemd/system/hydra.service
+#        systemctl daemon-reload
+#        systemctl enable --now hydra.service
+#   4. Tail logs via:
+#        journalctl -u hydra.service -f
+#   5. Attach to the commander tmux session:
+#        sudo -iu hydra tmux attach -t commander
+#
+# Rollback: `systemctl stop hydra.service && systemctl disable hydra.service`.
+# State/memory/logs persist at /hydra/data regardless of the unit's state.
+
+[Unit]
+Description=Hydra commander (Claude Code)
+Documentation=https://github.com/tonychang04/hydra/blob/main/docs/phase2-vps-runbook.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hydra
+Group=hydra
+WorkingDirectory=/hydra
+
+# Secrets file — keep mode 0600. systemd will refuse to start if it's missing.
+EnvironmentFile=/etc/hydra/env
+
+# Data dir matches the Fly.io layout so the same entrypoint.sh works.
+Environment=HYDRA_ROOT=/hydra
+Environment=HYDRA_DATA_DIR=/hydra/data
+
+ExecStart=/hydra/infra/entrypoint.sh
+
+# Same-signal semantics as the Dockerfile (SIGINT = graceful tmux shutdown).
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+# Stay up. 30s backoff avoids hammering the VPS if auth is misconfigured.
+Restart=always
+RestartSec=30s
+
+# Mild hardening. Commander needs to write /hydra/data; leave that path open.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/hydra
+
+# Cap journald noise.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hydra
+
+[Install]
+WantedBy=multi-user.target

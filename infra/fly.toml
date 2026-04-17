@@ -1,0 +1,73 @@
+# fly.toml — Hydra commander Phase 2 deployment config.
+#
+# Ship this as-is (the operator customizes `app` + `primary_region` per their
+# Fly.io account). `scripts/deploy-vps.sh` drives first-time setup; after that
+# the usual `fly deploy` picks up framework changes.
+#
+# Shape:
+#   - shared-cpu-1x / 512MB  — plenty for a single commander process. Claude
+#     Code holds a websocket; workers spawn short-lived subprocesses. Scale up
+#     by editing [[vm]] if you run many concurrent workers.
+#   - /hydra/data persistent volume — state/memory/logs survive redeploys.
+#   - auto_stop "suspend" + min_machines_running = 0 — costs collapse to ~$0
+#     when idle; webhook traffic (follow-up #40/#41) wakes the machine back up.
+#     Until webhooks land, the operator may prefer `auto_stop_machines = "off"`
+#     and `min_machines_running = 1` so autopickup keeps ticking. Flip as needed.
+#   - [[http_service]] on 8080 → /health endpoint served by entrypoint.sh.
+#
+# NOT in this file (separate tickets):
+#   - webhook routes (#40/#41) — will add [[http_service]] concentrations on
+#     /webhook/github and /webhook/linear once that handler lands.
+#   - Slack bot (#42) — same story; no socket-mode app config here yet.
+
+app = "hydra-commander"              # Operator: rename to your Fly app before first deploy.
+# primary_region = "iad"             # Operator: uncomment + set to your nearest Fly region
+                                     # (e.g. "iad", "sjc", "fra", "nrt"). Run `fly platform regions`
+                                     # to see options. Left commented so `fly launch --copy-config`
+                                     # prompts interactively on first run.
+
+kill_signal = "SIGINT"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  HYDRA_DATA_DIR      = "/hydra/data"
+  HYDRA_HEALTH_PORT   = "8080"
+  HYDRA_TMUX_SESSION  = "commander"
+  # CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, GITHUB_TOKEN go in `fly secrets`,
+  # never here. See docs/phase2-vps-runbook.md.
+
+# Persistent volume — state/memory/logs live here so `fly deploy` doesn't wipe
+# the operator's in-flight workers, memory citations, or retros.
+[[mounts]]
+  source      = "hydra_data"
+  destination = "/hydra/data"
+  # initial_size = "1gb"   # Created by scripts/deploy-vps.sh via `fly volumes create`.
+
+# /health on 8080. Phase 1: only /health. Phase 2 follow-ups add /webhook/* paths.
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = "suspend"    # Idle cost savings. Suspend preserves RAM/FS.
+  auto_start_machines  = true
+  min_machines_running = 0            # Operator: set to 1 if you want autopickup to tick
+                                      # continuously without waiting for an inbound request.
+  processes            = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval     = "15s"
+    method       = "GET"
+    timeout      = "5s"
+    path         = "/health"
+
+[[vm]]
+  size        = "shared-cpu-1x"
+  memory      = "512mb"
+  cpu_kind    = "shared"
+  cpus        = 1
+
+[deploy]
+  strategy = "immediate"              # Single-machine deploy; nothing to roll through.
