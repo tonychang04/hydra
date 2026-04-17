@@ -43,6 +43,10 @@
     "last_retro_run": {
       "type": ["string", "null"],
       "description": "ISO-8601 local timestamp of the last scheduled or manual retro, or null if never run. Drives the Monday-09:00-local idempotency guard in the autopickup tick. See docs/specs/2026-04-17-scheduled-retro.md."
+    },
+    "last_promotion_run": {
+      "type": ["string", "null"],
+      "description": "ISO date (YYYY-MM-DD) of the last skill-promotion tick (scripts/promote-citations.sh). Drives the once-per-day gate inside the autopickup tick. Null or missing means never run. See docs/specs/2026-04-17-skill-promotion-automation.md (ticket #145)."
     }
   }
 }

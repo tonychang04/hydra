@@ -6,5 +6,6 @@
   "last_run": null,
   "last_picked_count": 0,
   "consecutive_rate_limit_hits": 0,
-  "last_retro_run": null
+  "last_retro_run": null,
+  "last_promotion_run": null
 }
