@@ -117,6 +117,12 @@ else
 #   ./hydra pause [--reason <text>]          Toggle PAUSE on.
 #   ./hydra resume                           Toggle PAUSE off.
 #   ./hydra issue <url-or-owner/repo/num>    Queue a specific issue for next tick.
+#
+# MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
+# Launches Hydra's agent-only interface. Not a chat session.
+#
+#   ./hydra mcp serve [--transport http|stdio] [--port N] [--bind ADDR]
+#                                              Start the MCP server (blocking).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -146,6 +152,27 @@ case "${1:-}" in
   pause)        shift; hydra_exec_helper scripts/hydra-pause.sh "$@" ;;
   resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
+  mcp)
+    shift
+    case "${1:-}" in
+      serve) shift; hydra_exec_helper scripts/hydra-mcp-serve.sh "$@" ;;
+      ""|-h|--help)
+        cat <<'MCPUSAGE'
+Usage: ./hydra mcp <subcommand> [options]
+
+Subcommands:
+  serve    Start the MCP server (agent-only interface).
+           Run `./hydra mcp serve --help` for options.
+MCPUSAGE
+        exit 0
+        ;;
+      *)
+        echo "✗ Unknown mcp subcommand: $1" >&2
+        echo "  Try: ./hydra mcp --help" >&2
+        exit 2
+        ;;
+    esac
+    ;;
 esac
 
 # --version short-circuits before any env/auth sanity checks so it works on a
