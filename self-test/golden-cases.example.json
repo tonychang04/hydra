@@ -402,6 +402,143 @@
       "last_result": null
     },
     {
+      "id": "state-schemas",
+      "_description": "Script-only self-test: exercises scripts/validate-state.sh and scripts/validate-state-all.sh against fixtures under self-test/fixtures/state-schemas/. Verifies that the minimal bash+jq path accepts valid fixtures and rejects broken ones (one invalid fixture per schema, each breaks a different required top-level key), that the bulk runner aggregates results, and that --strict fails cleanly when ajv-cli isn't installed. Runs locally; no worker spawn, no worktree, no network. Commander runs this before committing changes to scripts/validate-state*.sh, state/schemas/*, or the fixtures themselves. Spec: docs/specs/2026-04-16-state-schemas.md (ticket #30).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "validate-state.sh bash -n clean",
+          "cmd": "bash -n scripts/validate-state.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state-all.sh bash -n clean",
+          "cmd": "bash -n scripts/validate-state-all.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "all state schemas are valid JSON",
+          "cmd": "jq empty state/schemas/*.schema.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "all valid fixtures are valid JSON",
+          "cmd": "jq empty self-test/fixtures/state-schemas/valid/*.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "all invalid fixtures are structurally valid JSON (only schema rejects them)",
+          "cmd": "jq empty self-test/fixtures/state-schemas/invalid/*.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state.sh passes on valid active fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/active.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh passes on valid budget-used fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/budget-used.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh passes on valid autopickup fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/autopickup.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh passes on valid memory-citations fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/memory-citations.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh passes on valid repos fixture",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/valid/repos.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "validate-state.sh rejects active fixture missing 'workers'",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/active.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys: workers"
+        },
+        {
+          "name": "validate-state.sh rejects budget-used fixture missing wall-clock key",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/budget-used.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys"
+        },
+        {
+          "name": "validate-state.sh rejects autopickup fixture missing last_run",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/autopickup.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys"
+        },
+        {
+          "name": "validate-state.sh rejects memory-citations fixture missing citations",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/memory-citations.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys: citations"
+        },
+        {
+          "name": "validate-state.sh rejects repos fixture missing repos",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/repos.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing required keys: repos"
+        },
+        {
+          "name": "validate-state-all.sh exits 0 on valid fixtures dir",
+          "cmd": "scripts/validate-state-all.sh --state-dir self-test/fixtures/state-schemas/valid",
+          "expected_exit": 0,
+          "expected_stdout_contains": "validate-state-all: OK (5 passed"
+        },
+        {
+          "name": "validate-state-all.sh exits 1 on invalid fixtures dir",
+          "cmd": "scripts/validate-state-all.sh --state-dir self-test/fixtures/state-schemas/invalid 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo BULK_FAIL_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BULK_FAIL_OK"
+        },
+        {
+          "name": "validate-state-all.sh failure summary names every failing file",
+          "cmd": "scripts/validate-state-all.sh --state-dir self-test/fixtures/state-schemas/invalid 2>&1 | grep -c '^  ✗ '",
+          "expected_exit": 0,
+          "expected_stdout_contains": "5"
+        },
+        {
+          "name": "validate-state.sh --strict without ajv exits 2 with clear message",
+          "cmd": "if command -v ajv >/dev/null 2>&1; then echo SKIP_HAS_AJV; else scripts/validate-state.sh --strict --schema-dir state/schemas self-test/fixtures/state-schemas/valid/active.json 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo STRICT_NOAJV_OK; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state-all.sh --strict without ajv exits 2 with clear message",
+          "cmd": "if command -v ajv >/dev/null 2>&1; then echo SKIP_HAS_AJV; else scripts/validate-state-all.sh --strict --state-dir self-test/fixtures/state-schemas/valid 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo STRICT_NOAJV_OK; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "validate-state-all.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/validate-state-all.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: validate-state-all.sh"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "memory-validators",
       "_description": "Script-only self-test: exercises scripts/parse-citations.sh, scripts/validate-learning-entry.sh, and scripts/validate-citations.sh against fixtures under self-test/fixtures/memory-validator/. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to any of those scripts or the memory schema.",
       "kind": "script",

@@ -1,0 +1,14 @@
+{
+  "workers": [
+    {
+      "id": "w-abc123",
+      "ticket": "tonychang04/hydra#42",
+      "repo": "tonychang04/hydra",
+      "tier": "T4",
+      "started_at": "2026-04-16T10:00:00Z",
+      "subagent_type": "worker-implementation",
+      "status": "running"
+    }
+  ],
+  "last_updated": "2026-04-16T10:00:00Z"
+}
