@@ -1,0 +1,6 @@
+{
+  "_description": "Fixture state/budget-used.json for the json-output-schema-valid self-test.",
+  "tickets_completed_today": 4,
+  "tickets_failed_today": 1,
+  "total_worker_wall_clock_minutes_today": 57
+}

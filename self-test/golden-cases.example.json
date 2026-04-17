@@ -1838,6 +1838,77 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "json-output-schema-valid",
+      "_description": "Exercises the --json output paths on ./hydra status and ./hydra ps against deterministic fixtures and the canonical schema at state/schemas/hydra-status-output.schema.json. Hard-fails if either subcommand emits malformed JSON, drifts from the required top-level shape, or breaks the stable `version` contract. Spec: docs/specs/2026-04-17-json-output-mode.md (ticket #105). Runs locally; no network, no worker spawn, no Claude auth.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "bash -n clean on hydra-status.sh and hydra-ps.sh",
+          "cmd": "bash -n scripts/hydra-status.sh && bash -n scripts/hydra-ps.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "schema file is valid JSON and advertises version 1.0",
+          "cmd": "jq -e '.definitions.status_output.properties.version.enum | index(\"1.0\") != null' state/schemas/hydra-status-output.schema.json >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "status --json against empty-state fixture emits parseable JSON with required top-level keys",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-empty.json \"$tmp/active.json\" && cp self-test/fixtures/json-output/autopickup-off.json \"$tmp/autopickup.json\" && cp self-test/fixtures/json-output/budget-used.json \"$tmp/budget-used.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-status.sh --json | jq -e '.version == \"1.0\" and (.active_workers | type == \"array\") and (.active_workers | length == 0) and .paused == false and .autopickup.enabled == false and (.today.done | type == \"number\")' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "status --json against busy-state fixture passes active_workers through with active.schema.json shape",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-busy.json \"$tmp/active.json\" && cp self-test/fixtures/json-output/autopickup-on.json \"$tmp/autopickup.json\" && cp self-test/fixtures/json-output/budget-used.json \"$tmp/budget-used.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-status.sh --json | jq -e '.active_workers | length == 3 and (.[0] | has(\"id\") and has(\"ticket\") and has(\"tier\") and has(\"started_at\") and has(\"status\"))' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "status --json autopickup block reflects fixture values",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-busy.json \"$tmp/active.json\" && cp self-test/fixtures/json-output/autopickup-on.json \"$tmp/autopickup.json\" && cp self-test/fixtures/json-output/budget-used.json \"$tmp/budget-used.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-status.sh --json | jq -e '.autopickup.enabled == true and .autopickup.interval_min == 30 and .autopickup.last_run == \"2026-04-17T11:30:00Z\"' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "ps --json against empty fixture emits empty workers array + version 1.0",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-empty.json \"$tmp/active.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-ps.sh --json | jq -e '.version == \"1.0\" and (.workers | type == \"array\") and (.workers | length == 0)' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "ps --json against busy fixture adds minutes_running to each worker",
+          "cmd": "tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-busy.json \"$tmp/active.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-ps.sh --json | jq -e '(.workers | length == 3) and (.workers[] | has(\"minutes_running\") and (.minutes_running | type == \"number\"))' >/dev/null && rm -rf \"$tmp\" && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "status --json includes stable generated_at ISO-8601 Z timestamp",
+          "cmd": "scripts/hydra-status.sh --json | jq -e '.generated_at | test(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$\")' >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "prose output path still works (regression: --json is opt-in, not default)",
+          "cmd": "NO_COLOR=1 scripts/hydra-status.sh 2>&1 | grep -q '▸ Hydra status' && NO_COLOR=1 scripts/hydra-ps.sh 2>&1 | grep -q '▸ Hydra ps' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "ajv validates status --json against schema (optional: skipped when ajv unavailable)",
+          "cmd": "if command -v ajv >/dev/null 2>&1; then tmp=$(mktemp -d) && cp self-test/fixtures/json-output/active-busy.json \"$tmp/active.json\" && cp self-test/fixtures/json-output/autopickup-on.json \"$tmp/autopickup.json\" && cp self-test/fixtures/json-output/budget-used.json \"$tmp/budget-used.json\" && HYDRA_STATE_DIR=\"$tmp\" scripts/hydra-status.sh --json > \"$tmp/out.json\" && ajv validate -s state/schemas/hydra-status-output.schema.json -d \"$tmp/out.json\" >/dev/null 2>&1 && rm -rf \"$tmp\" && echo OK; else echo 'OK (ajv unavailable, skipped)'; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

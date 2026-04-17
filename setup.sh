@@ -113,7 +113,8 @@ else
 #   ./hydra add-repo <owner>/<name> [args]   Interactive wizard: add a repo.
 #   ./hydra remove-repo <owner>/<name>       Remove a repo entry.
 #   ./hydra list-repos                       Table view of state/repos.json.
-#   ./hydra status [--with-tickets]          Read-only Hydra state snapshot.
+#   ./hydra status [--with-tickets] [--json] Read-only Hydra state snapshot.
+#   ./hydra ps [--json]                      Per-worker detail from state/active.json.
 #   ./hydra pause [--reason <text>]          Toggle PAUSE on.
 #   ./hydra resume                           Toggle PAUSE off.
 #   ./hydra issue <url-or-owner/repo/num>    Queue a specific issue for next tick.
@@ -156,6 +157,7 @@ case "${1:-}" in
   remove-repo)  shift; hydra_exec_helper scripts/hydra-remove-repo.sh "$@" ;;
   list-repos)   shift; hydra_exec_helper scripts/hydra-list-repos.sh "$@" ;;
   status)       shift; hydra_exec_helper scripts/hydra-status.sh "$@" ;;
+  ps)           shift; hydra_exec_helper scripts/hydra-ps.sh "$@" ;;
   pause)        shift; hydra_exec_helper scripts/hydra-pause.sh "$@" ;;
   resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
