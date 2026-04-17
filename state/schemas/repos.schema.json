@@ -49,9 +49,32 @@
             "enum": ["assignee", "label", "linear"]
           },
           "merge_policy": {
-            "type": "string",
-            "enum": ["auto-t1", "human-all", "refuse-all"],
-            "description": "Optional override. Absent = defer to global policy.md."
+            "description": "Optional per-repo override. Absent = defer to global policy.md defaults (T1 auto, T2 human, T3 refused). Two accepted shapes:\n\n1. Object form (preferred, per ticket #20): `{\"T1\": \"auto|auto_if_review_clean|human\", \"T2\": \"auto|auto_if_review_clean|human\"}`. A `T3` key is tolerated for documentation but ignored — T3 is hardcoded `never` regardless.\n2. Legacy string form (still accepted for back-compat): `\"auto-t1\" | \"human-all\" | \"refuse-all\"` — pre-#20 shape, maps to the object form at lookup time.\n\nAuthoritative lookup lives in `scripts/merge-policy-lookup.sh`. See `docs/specs/2026-04-17-per-repo-merge-policy.md`.",
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "T1": {
+                    "type": "string",
+                    "enum": ["auto", "auto_if_review_clean", "human"]
+                  },
+                  "T2": {
+                    "type": "string",
+                    "enum": ["auto", "auto_if_review_clean", "human"]
+                  },
+                  "T3": {
+                    "type": "string",
+                    "enum": ["never"],
+                    "description": "Optional self-documentation. Lookup hardcodes `never` for T3; this key does not change behavior."
+                  }
+                }
+              },
+              {
+                "type": "string",
+                "enum": ["auto-t1", "human-all", "refuse-all"]
+              }
+            ]
           },
           "preferred_backend": {
             "type": "string",

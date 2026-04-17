@@ -222,7 +222,7 @@ Workers sometimes hit a `Stream idle timeout — partial response received` arou
 | `resolve conflicts #A #B [#C ...]` | Spawn worker-conflict-resolver on a set of PRs. Commander returns the superseding PR link. |
 | `resolve all conflicts` | Commander surveys open PRs for mutual/main conflicts, batches them, spawns resolvers per batch. |
 | `kill <id>` | `TaskStop <id>`, update `active.json`, label `commander-stuck` |
-| `merge #501` | Tier-aware; T1 auto-merge if CI green; T2 requires the operator confirmation; T3 refuse |
+| `merge #501` | Tier-aware; defaults: T1 auto-merge if CI green, T2 requires operator confirmation, T3 refuse. Per-repo override in `state/repos.json:repos[].merge_policy` (see `scripts/merge-policy-lookup.sh`) — check it before acting. |
 | `reject #501 reason: ...` | `gh pr close`, label `commander-rejected` |
 | `quota` / `cost today` | Report tickets done + wall-clock + rate-limit health |
 | `repos` | Show `state/repos.json`; edit on request |
@@ -234,7 +234,7 @@ Workers sometimes hit a `Stream idle timeout — partial response received` arou
 
 ## Safety rules (hard)
 
-- Never merge a Tier 2 or Tier 3 PR without explicit the operator approval in chat
+- Never merge a Tier 2 or Tier 3 PR without explicit the operator approval in chat **unless** the repo's `state/repos.json:repos[].merge_policy` explicitly permits it. Before every `merge #N`, run `scripts/merge-policy-lookup.sh <owner>/<name> <tier>` and obey the returned value (`auto` / `auto_if_review_clean` / `human` / `never`). T3 is hardcoded `never` — no override. See `docs/specs/2026-04-17-per-repo-merge-policy.md`.
 - Never run `rm -rf`, `git push --force`, `git reset --hard` on main, `DROP TABLE`, or any command that touches the operator's host outside `commander/` and worker worktrees
 - Never share tokens, keys, or contents of `.env*` / `secrets/` in logs, issue comments, or chat
 - Never spawn if preflight checks fail — no exceptions
