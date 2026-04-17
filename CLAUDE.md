@@ -154,6 +154,49 @@ After a `worker-implementation` opens a PR:
 
 This is deliberately separate from the implementer so the reviewer isn't biased by the implementer's context.
 
+## Worker timeout watchdog
+
+Workers sometimes hit a `Stream idle timeout — partial response received` around the 18-minute mark (see ticket #45 for the observed pattern). The worker has typically committed some files but never gets to self-report, open the PR, or emit `MEMORY_CITED:` markers. Without this procedure, commander has to wait for the operator to notice and rescue by hand — killing the "set and forget" guarantee of scheduled autopickup.
+
+**When to run the watchdog check:** on every tick that touches `state/active.json` — autopickup ticks, interactive `status` commands, and the post-spawn grace window after a worker finishes. The check is cheap: one loop over `state/active.json` entries.
+
+**Detection:** for each entry in `state/active.json`, compute `now() - started_at`. A worker is a **rescue candidate** if BOTH:
+1. `now() - started_at > 12 minutes` (under the observed 18-minute stream-idle threshold, leaving ~6 min to act), AND
+2. no completion entry exists in `logs/<ticket>.json` AND no recent log write indicates the worker is alive.
+
+**Procedure:**
+
+1. Run `scripts/rescue-worker.sh --probe <worktree> <branch> <ticket>`. The probe is non-mutating and prints a JSON verdict on stdout:
+   - `{"verdict":"rescue-commits", ...}` — worker committed partial work, branch is ahead of `origin/main`
+   - `{"verdict":"rescue-uncommitted", ...}` — worktree has staged or unstaged changes
+   - `{"verdict":"push-only", ...}` — commits exist and are already pushed; nothing to rescue, just follow up
+   - `{"verdict":"nothing-to-rescue", ...}` — no partial work; the worker died cold
+
+2. If probe returns `rescue-commits` or `rescue-uncommitted`: run `scripts/rescue-worker.sh --rescue <worktree> <branch> <ticket>`. The script:
+   - commits any uncommitted changes with message `rescue: partial work from timed-out worker on #<ticket>`
+   - fetches `origin/main` and rebases (fast-forward only; exit 3 + `rescue-conflict` on conflict)
+   - pushes the branch via `--set-upstream`
+   - prints the branch name on stdout for commander to pick up with `gh pr create`
+
+3. If rescue succeeds: label the ticket `commander-rescued`, comment with rescue SHAs and which step the worker died at, then spawn a fresh `worker-implementation` with a "resume from rescue" hint — it reads the partial work, finishes the remaining acceptance criteria, and opens / updates the PR. This keeps the machine moving without pinging the operator.
+
+4. If probe returns `nothing-to-rescue`: label `commander-stuck` with a comment noting stream-idle timeout + no partial work recovered. Operator can `retry #<n>` when ready. Same legacy behavior, triggered faster.
+
+5. If `--rescue` exits 3 (`rescue-conflict`): do NOT retry. Surface to the operator via the normal paused-on-question path — this is a semantic conflict (main has moved in a way that clashes with rescued work), and commander is not allowed to guess at semantic merges. Same rule as `worker-conflict-resolver`.
+
+**Safety guarantees of `scripts/rescue-worker.sh`:**
+- Refuses to run if HEAD isn't on the expected `<branch>` (catches worktree mix-ups).
+- Refuses if `<worktree>` isn't a git worktree.
+- `--probe` never writes; commander can run it freely.
+- `--rescue` never force-pushes; a rebase conflict is escalated, not masked.
+- Exit codes are documented: `0` success, `1` I/O or branch mismatch, `2` usage error, `3` rescue conflict.
+
+**Threshold tuning:** 12 min is the default. If it turns out to false-positive on slow-but-alive workers, bump it in this section (and in `docs/specs/2026-04-16-worker-timeout-watchdog.md`). The probe is non-mutating, so a false-positive probe call is harmless — nothing is committed until `--rescue` runs.
+
+**Future optimization: chunked worker prompts.** Option #2 from ticket #45. Breaking large tickets into smaller worker runs would make 18-min timeouts much rarer at the source. Out of scope for this watchdog. A follow-up ticket would need a "worker-planner" subagent type that splits the ticket before spawning the implementation worker. Noted here so future agents see the trade-off: the watchdog catches failures; chunking would prevent them. Both can coexist.
+
+**Relationship to Managed Agents (#43):** when commander migrates workers to a managed cloud sandbox, the underlying SDK handles stream timeouts natively. This watchdog becomes less frequently invoked but remains as an application-level safety net. Do not remove it on the Managed Agents migration — the rescue semantics (partial work + resume via a follow-up worker) are independent of the transport.
+
 ## Commands you understand
 
 | the operator says | You do |

@@ -644,6 +644,53 @@
       "last_result": null
     },
     {
+      "id": "worker-timeout-watchdog-script",
+      "_description": "Script-only self-test for scripts/rescue-worker.sh (spec: docs/specs/2026-04-16-worker-timeout-watchdog.md, ticket #45). Exercises the non-mutating --probe mode against a throwaway git repo that simulates each rescue state (clean / dirty / ahead-of-main), checks --help / missing-args / branch-mismatch error paths, and verifies bash -n cleanliness. The --rescue mutating path (commit + rebase + push) is exercised by commander on real worker worktrees and by the worker-subagent SKIP stub (worker-timeout-watchdog-rescue) — it can't run in pure script-kind because it needs a live remote.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "rescue-worker.sh bash -n clean",
+          "cmd": "bash -n scripts/rescue-worker.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "rescue-worker.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/rescue-worker.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage:"
+        },
+        {
+          "name": "rescue-worker.sh missing mode returns usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/rescue-worker.sh /tmp hydra/commander/45 45 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo USAGE_ERR",
+          "expected_exit": 0,
+          "expected_stdout_contains": "USAGE_ERR"
+        },
+        {
+          "name": "rescue-worker.sh missing positional args returns usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/rescue-worker.sh --probe 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo USAGE_ERR",
+          "expected_exit": 0,
+          "expected_stdout_contains": "USAGE_ERR"
+        },
+        {
+          "name": "rescue-worker.sh --probe on nonexistent worktree exits 1",
+          "cmd": "NO_COLOR=1 scripts/rescue-worker.sh --probe /nonexistent/path/for/fixture-$$ hydra/commander/45 45 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo NOPATH_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NOPATH_OK"
+        },
+        {
+          "name": "rescue-worker.sh fixture roundtrip (probe + branch-mismatch + usage)",
+          "cmd": "self-test/fixtures/rescue-worker/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "hydra-operator-skill-valid",
       "_description": "Script-only self-test for the hydra-operator Main Agent skill (spec: docs/specs/2026-04-16-hydra-operator-skill.md, ticket #53). Verifies that skills/hydra-operator/SKILL.md exists with the required YAML frontmatter fields (name, description, mcpServers) that Claude Code's skill loader needs, that the install README is present and contains the operator-facing `cp -r` install command, and that copying the skill directory into a fake user-scoped skills dir produces a readable SKILL.md. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to skills/hydra-operator/.",
       "kind": "script",
@@ -823,6 +870,41 @@
           "CLAUDE.md"
         ],
         "max_files_changed": 0
+      },
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "worker-timeout-watchdog-rescue",
+      "_description": "Simulates a worker-implementation whose chat stream dies mid-ticket (18-minute stream-idle timeout — see ticket #45 observed pattern). The fixture would spawn a worker that writes a partial set of files to a worktree, then sleeps past the 12-minute watchdog threshold without ever returning. Commander detects silence + absent completion log, runs scripts/rescue-worker.sh --probe, sees 'rescue-uncommitted' or 'rescue-commits', runs --rescue, then spawns a fresh worker with a resume hint that picks up from the partial work and opens the PR. Ticket #45. Today the runner SKIPs this case — it needs both the worker-subagent executor (same blocker as test-discovery-dormant-to-active, permission-probe, conflict-resolver-additive) AND a timer-mocking primitive so the 12-min wait doesn't actually take 12 minutes on CI.",
+      "kind": "worker-subagent",
+      "_skip_reason": "requires worker-subagent SKIP-path executor + timer mocking; implement when worker-implementation SKIP path lands (ticket #15 follow-up)",
+      "worker_type": "worker-implementation",
+      "tier": "T2",
+      "fixture_dir": "self-test/fixtures/rescue-worker",
+      "ticket_body_summary": "A worker-implementation spawned on a fresh ticket goes silent at the 18-minute stream-idle mark after committing partial work. Commander's watchdog (CLAUDE.md 'Worker timeout watchdog') must detect the silence within 12 minutes, run scripts/rescue-worker.sh --probe, run --rescue if probe returns rescue-commits or rescue-uncommitted, then spawn a follow-up worker that finishes the ticket and opens the PR. A 'nothing-to-rescue' probe labels the ticket commander-stuck for operator retry.",
+      "assertions": {
+        "must_touch_paths": [],
+        "must_not_touch_paths": [
+          ".github/workflows/**",
+          "policy.md",
+          "budget.json",
+          ".claude/settings.local.json",
+          "CLAUDE.md"
+        ],
+        "must_include_patterns": [
+          "rescue: partial work from timed-out worker",
+          "commander-rescued"
+        ],
+        "expected_artifact": "worker opens a draft PR containing both the partial rescued commits and the completion commits; the ticket has a 'commander-rescued' label and a comment listing the rescue commit SHAs",
+        "pr_label_required": "commander-review",
+        "watchdog_fires_within_minutes": 12,
+        "probe_verdicts_exercised": [
+          "rescue-uncommitted",
+          "rescue-commits",
+          "nothing-to-rescue"
+        ],
+        "rescue_conflict_escalates_to_operator": true
       },
       "last_run": null,
       "last_result": null
