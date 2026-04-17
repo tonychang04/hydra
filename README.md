@@ -288,6 +288,10 @@ After install, also install the Main Agent skill: `cp -r skills/hydra-operator ~
 
 After install, run `./hydra doctor` to verify your setup. All ✓'s means you're ready to pick up tickets. It runs a battery of non-destructive checks across environment, config, runtime state, memory, and scripts, prints per-check pass/fail, and exits non-zero if any check fails. Pass `--verbose` for raw command output or `--fix-safe` to attempt safe auto-remediations (chmod +x, mkdir -p).
 
+### Setup
+
+Run `./hydra setup` once after install. It walks you through env check, adding repos, picking an autopickup interval, and writes a `state/setup-complete.json` fingerprint. CI-friendly: `./hydra setup --non-interactive --repos=owner/repo --autopickup-interval=30`. Spec: [`docs/specs/2026-04-17-setup-wizard.md`](docs/specs/2026-04-17-setup-wizard.md).
+
 ### CLI commands (no chat required)
 
 Daily operations and repo management are exposed as `./hydra <subcommand>` calls that never launch a Claude session. Safe for shell scripts, cron, SSH, and muscle-memory ops. Spec: [`docs/specs/2026-04-16-hydra-cli.md`](docs/specs/2026-04-16-hydra-cli.md).
@@ -295,6 +299,7 @@ Daily operations and repo management are exposed as `./hydra <subcommand>` calls
 | Command | What it does |
 |---|---|
 | `./hydra doctor [--verbose]` | Install sanity check. Non-destructive. |
+| `./hydra setup [--non-interactive ...]` | First-time setup wizard: env check, repo picker, autopickup interval, fingerprint. Spec: [`2026-04-17-setup-wizard.md`](docs/specs/2026-04-17-setup-wizard.md). |
 | `./hydra status [--with-tickets] [--json]` | Read-only snapshot: active workers, today's throughput, autopickup state, PAUSE, pending queue. `--json` emits the stable shape at `state/schemas/hydra-status-output.schema.json`. |
 | `./hydra ps [--json]` | Per-worker detail from `state/active.json` (id, ticket, tier, minutes_running, status). `--json` shares the status schema's `ps_output` definition. |
 | `./hydra add-repo <owner>/<name>` | Interactive wizard to add a repo to `state/repos.json`. Auto-suggests `local_path`, validates, atomic-writes. `--force` to overwrite an existing entry. |
