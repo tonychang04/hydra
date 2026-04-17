@@ -36,11 +36,14 @@ schema_file="$(dirname "$state_file")/schemas/${base}.schema.json"
 jq empty "$state_file" 2>/dev/null || { echo "✗ $state_file is not valid JSON" >&2; exit 1; }
 jq empty "$schema_file" 2>/dev/null || { echo "✗ $schema_file is not valid JSON" >&2; exit 1; }
 
-# Required top-level keys from schema
+# Required top-level keys from schema.
+# Use `has(...)` (not `.key`) so keys with falsy values (false / null / 0)
+# still register as present — jq -e '.key' exits 1 on falsy values even
+# when the key is set, which is the wrong behavior for a presence check.
 required=$(jq -r '.required // [] | .[]' "$schema_file")
 missing=()
 for key in $required; do
-  jq -e ".\"$key\"" "$state_file" > /dev/null 2>&1 || missing+=("$key")
+  jq -e --arg k "$key" 'has($k)' "$state_file" > /dev/null 2>&1 || missing+=("$key")
 done
 
 if [[ ${#missing[@]} -gt 0 ]]; then

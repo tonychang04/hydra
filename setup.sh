@@ -103,9 +103,24 @@ else
 #   ./hydra --version        Print the contents of the repo-root VERSION file and exit.
 #                            Intended for bug reports ("what version of Hydra are you
 #                            running?"). Does NOT exec claude.
+#   ./hydra doctor [args]    Run the install sanity-check (scripts/hydra-doctor.sh).
+#                            Diagnostic only; does not launch commander.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Subcommand: doctor — run scripts/hydra-doctor.sh and exit. No commander launch.
+if [[ "${1:-}" == "doctor" ]]; then
+  shift
+  [[ -x scripts/hydra-doctor.sh ]] || {
+    echo "✗ scripts/hydra-doctor.sh missing or not executable." >&2
+    exit 1
+  }
+  # Source .hydra.env if present so doctor sees HYDRA_ROOT / HYDRA_EXTERNAL_MEMORY_DIR.
+  # shellcheck disable=SC1091
+  [[ -f .hydra.env ]] && source .hydra.env
+  exec scripts/hydra-doctor.sh "$@"
+fi
 
 # --version short-circuits before any env/auth sanity checks so it works on a
 # broken / partially-installed tree. Read the VERSION file verbatim (strip

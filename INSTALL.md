@@ -366,6 +366,7 @@ rm -rf ~/.hydra                          # remove external operational memory (O
 
 | Symptom | Fix |
 |---|---|
+| Symptom unclear | `./hydra doctor` — runs the full install sanity-check and addresses most misconfigurations. Pass `--verbose` for more detail or `--fix-safe` to auto-repair safe issues (chmod +x, mkdir -p). |
 | `./hydra: claude: command not found` | Install Claude Code and ensure it's in PATH |
 | `gh auth status` fails | `gh auth login` |
 | Setup complains about `.claude/` being globally gitignored | Expected if your `~/.gitignore` has `.claude`. Force-adding framework files in the hydra repo is handled by the repo's own `.gitignore` rules via explicit commits; nothing for you to do. |
