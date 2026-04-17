@@ -371,6 +371,47 @@ hydra_exec_helper() {
 }
 
 case "${1:-}" in
+  -h|--help|help)
+    cat <<'HYDRAHELP'
+Usage: ./hydra [<subcommand>] [options]
+
+Hydra — persistent AI agent orchestrator. Run with no arguments to
+launch the Commander Claude session. Subcommands below dispatch to
+helper scripts without launching a chat session (safe for cron / SSH
+/ scripts / daily-ops muscle memory).
+
+Subcommands:
+  add-repo <owner>/<name>      Interactive wizard: add a repo to state/repos.json.
+  remove-repo <owner>/<name>   Remove a repo entry.
+  list-repos                   Table view of state/repos.json.
+  status [--with-tickets] [--json]
+                               Read-only Hydra state snapshot.
+  ps [--json]                  Per-worker detail from state/active.json.
+  pause [--reason <text>]      Toggle PAUSE on (blocks new worker spawns).
+  resume                       Toggle PAUSE off.
+  issue <url-or-owner/repo/num>
+                               Queue a specific issue for next tick.
+  activity [--json]            Text-based observability: last 24h of log
+                               activity + live workers + top memory citations.
+  doctor [--fix|--fix-safe]    Install sanity check. --fix walks the operator
+                               through each fixable issue interactively.
+  mcp <serve|register-agent>   MCP server subcommands (agent-only interface).
+                               Run `./hydra mcp --help` for details.
+
+Top-level flags:
+  --version                    Print the contents of VERSION and exit.
+  --no-autopickup              Launch commander with autopickup idle at
+                               session start (opt-out of the default-on
+                               behavior).
+  -h, --help                   Show this help and exit.
+
+Any other arguments (e.g. `-c`, `--continue`, prompt text) pass through
+to `claude` when no subcommand is matched.
+
+Docs: README.md (what) · USING.md (how) · docs/specs/ (why)
+HYDRAHELP
+    exit 0
+    ;;
   doctor)       shift; hydra_exec_helper scripts/hydra-doctor.sh "$@" ;;
   add-repo)     shift; hydra_exec_helper scripts/hydra-add-repo.sh "$@" ;;
   remove-repo)  shift; hydra_exec_helper scripts/hydra-remove-repo.sh "$@" ;;
