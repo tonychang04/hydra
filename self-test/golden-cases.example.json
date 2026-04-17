@@ -172,8 +172,9 @@
     },
     {
       "id": "autopickup-default-on-smoke",
-      "_description": "Script-only self-test for the default-on autopickup behavior (spec: docs/specs/2026-04-16-autopickup-default-on.md, ticket #17). Verifies that a fresh setup.sh seeds state/autopickup.json with auto_enable_on_session_start=true, and that the ./hydra launcher's --no-autopickup flag exports HYDRA_NO_AUTOPICKUP=1. Runs locally; no worker spawn, no worktree. setup.sh is run non-interactively with an empty stdin so the external-memory-dir prompt accepts the default. Assumes a `claude` stub on PATH is NOT required — we do not exec the launcher, we only read the generated script and source .hydra.env.",
+      "_description": "Script-only self-test for the default-on autopickup behavior (spec: docs/specs/2026-04-16-autopickup-default-on.md, ticket #17). Verifies that a fresh setup.sh seeds state/autopickup.json with auto_enable_on_session_start=true, and that the ./hydra launcher's --no-autopickup flag exports HYDRA_NO_AUTOPICKUP=1. Runs locally; no worker spawn, no worktree. setup.sh is run non-interactively with an empty stdin so the external-memory-dir prompt accepts the default. setup.sh hard-fails its prereq check if `claude` is not on PATH, so this case is marked requires_claude_cli — it SKIPs on CI runners where the Claude Code CLI isn't installed.",
       "kind": "script",
+      "requires": ["requires_claude_cli"],
       "worker_type": null,
       "tier": "T1",
       "steps": [

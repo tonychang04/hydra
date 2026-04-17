@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Keep total wall-clock under ~2 min. Each job runs in parallel on its own
+# ubuntu-latest runner; no cross-job dependencies.
+jobs:
+  syntax:
+    name: Syntax (bash -n + jq + frontmatter)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      - name: Run syntax checks
+        run: bash .github/workflows/scripts/syntax-check.sh
+
+  spec-presence:
+    name: Spec presence (framework changes need a spec)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check spec presence
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/workflows/scripts/spec-presence-check.sh
+
+  self-test:
+    name: Self-test (script-kind cases)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # Skip the docker-heavy cases (e.g. s3-backend-roundtrip boots localstack
+      # via docker compose + awscli). They run locally fine; on CI they'd blow
+      # the <2 min budget. Run them in a separate nightly workflow later.
+      HYDRA_CI_SKIP_DOCKER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      - name: Run self-test (script kind)
+        run: ./self-test/run.sh --kind=script
+
+  no-conflict-markers:
+    name: No merge conflict markers
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for leftover conflict markers
+        run: |
+          # Guard against half-resolved conflicts. Uses line-anchored regex so
+          # legitimate uses of these tokens inside prose (e.g. docs talking
+          # *about* conflict markers) don't trip the check — real conflict
+          # markers always sit at the start of a line followed by a space.
+          if grep -rnE '^(<{7}|={7}|>{7}) ' . --exclude-dir=.git --exclude-dir=node_modules 2>/dev/null; then
+            echo "::error::Merge conflict markers detected above. Resolve before merging."
+            exit 1
+          fi
+          echo "No conflict markers found."

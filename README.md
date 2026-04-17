@@ -1,5 +1,6 @@
 # Hydra
 
+[![CI](https://github.com/tonychang04/hydra/actions/workflows/ci.yml/badge.svg)](https://github.com/tonychang04/hydra/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/tag/tonychang04/hydra?label=version)](https://github.com/tonychang04/hydra/releases)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#)

@@ -414,6 +414,56 @@ run_skip_case() {
   return 0
 }
 
+# check_requires — returns 0 if all requires flags satisfied, else prints a
+# reason on stdout and returns 1. Supported tokens:
+#   requires_docker  — docker CLI + reachable daemon
+#   requires_aws     — aws CLI available
+# Unknown tokens are treated as satisfied (forward-compat — a case can declare
+# a new requires token before the runner knows about it, without breaking CI).
+check_requires() {
+  local case_json="$1"
+  local tokens
+  tokens="$(jq -r '(.requires // []) | .[]' <<<"$case_json" 2>/dev/null || true)"
+  [[ -z "$tokens" ]] && return 0
+
+  local t
+  while IFS= read -r t; do
+    [[ -z "$t" ]] && continue
+    case "$t" in
+      requires_docker)
+        if [[ "${HYDRA_CI_SKIP_DOCKER:-0}" == "1" ]]; then
+          echo "requires_docker: HYDRA_CI_SKIP_DOCKER=1 set (CI fast-path)"
+          return 1
+        fi
+        if ! command -v docker >/dev/null 2>&1; then
+          echo "requires_docker: docker not on PATH"
+          return 1
+        fi
+        if ! docker info >/dev/null 2>&1; then
+          echo "requires_docker: docker daemon not reachable"
+          return 1
+        fi
+        ;;
+      requires_aws)
+        if ! command -v aws >/dev/null 2>&1; then
+          echo "requires_aws: aws CLI not on PATH"
+          return 1
+        fi
+        ;;
+      requires_claude_cli)
+        if ! command -v claude >/dev/null 2>&1; then
+          echo "requires_claude_cli: claude CLI not on PATH (case invokes setup.sh which hard-fails without it)"
+          return 1
+        fi
+        ;;
+      *)
+        # Unknown token — assume satisfied (forward-compat).
+        ;;
+    esac
+  done <<<"$tokens"
+  return 0
+}
+
 # -----------------------------------------------------------------------------
 # iterate cases (sequential)
 # -----------------------------------------------------------------------------
@@ -441,7 +491,11 @@ for id in "${all_ids[@]}"; do
 
   case "$case_kind" in
     script)
-      if run_script_case "$id" "$case_json"; then
+      skip_reason="$(check_requires "$case_json" || true)"
+      if [[ -n "$skip_reason" ]]; then
+        run_skip_case "$id" "$case_kind" "$skip_reason"
+        skipped=$((skipped + 1))
+      elif run_script_case "$id" "$case_json"; then
         passed=$((passed + 1))
       else
         failed=$((failed + 1))
