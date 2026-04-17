@@ -182,6 +182,42 @@ for schema_path in "${schemas[@]}"; do
   esac
 done
 
+# -----------------------------------------------------------------------------
+# CLAUDE.md size guard — ticket #138, spec
+# docs/specs/2026-04-17-claudemd-size-guard.md.
+#
+# The size check is part of preflight because CLAUDE.md is loaded into every
+# Commander session and bloat silently degrades performance. We run it here
+# rather than in a separate preflight step so one preflight call covers both
+# state schemas and the CLAUDE.md budget. Same exit-code semantics as the
+# per-file validator: 0 = under budget, 1 = over budget, 2+ = setup error.
+#
+# If CLAUDE.md isn't present (downstream repos borrowing the bulk runner
+# against their own state-dir), the check skips gracefully.
+# -----------------------------------------------------------------------------
+size_check="$SCRIPT_DIR/check-claude-md-size.sh"
+claude_md_path="$ROOT_DIR/CLAUDE.md"
+if [[ ! -f "$claude_md_path" ]]; then
+  echo "∅ $claude_md_path (skip — CLAUDE.md not present; nothing to size-check)"
+  skipped=$((skipped + 1))
+elif [[ ! -f "$size_check" ]]; then
+  echo "∅ check-claude-md-size.sh (skip — helper script not found at $size_check)"
+  skipped=$((skipped + 1))
+else
+  set +e
+  bash "$size_check" --path "$claude_md_path"
+  ec=$?
+  set -e
+  case "$ec" in
+    0)  passed=$((passed + 1)) ;;
+    1)  failed_files+=("$claude_md_path (over budget)") ;;
+    *)
+        echo "✗ check-claude-md-size.sh exited $ec on $claude_md_path — aborting bulk run" >&2
+        exit "$ec"
+        ;;
+  esac
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 if [[ ${#failed_files[@]} -eq 0 ]]; then
