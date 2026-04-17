@@ -14,6 +14,32 @@ You file a GitHub issue and assign it to yourself. Hydra picks it up, reads the 
 
 Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) + [superpowers skills](https://github.com/anthropics/superpowers). MIT licensed. Self-hosted (your laptop today, cloud tomorrow).
 
+## Who's who (read this first)
+
+Four roles, three of them agents. Keep them straight and the rest of the docs click.
+
+| Role | What it is | Where it runs | Who it talks to |
+|---|---|---|---|
+| **You** (human) | The person. You don't run any Hydra code. You just file issues + chat with your Main Agent. | In front of a screen | Main Agent |
+| **Main Agent** (AI) | Your primary assistant. Claude Code on your laptop, or a cloud-hosted Claude session. **This is the only agent YOU talk to.** It decides when to call Hydra. | Your laptop (or wherever you run Claude Code) | You (chat) + Hydra Commander (MCP) |
+| **Commander** (AI) | Hydra's persistent brain. Long-running agent that picks up tickets, spawns workers, tracks state, manages memory. **Headless in cloud mode** — no chat surface. | Your laptop (local mode) or cloud VPS (cloud mode) | Main Agent (MCP) + Workers (Agent tool) |
+| **Worker** (AI) | Ephemeral Claude subagent, one per ticket. Runs inside an isolated git worktree. Reads the ticket, writes the code, opens the PR, dies. | Same machine as Commander (spawned by Commander) | Commander (via Agent tool return + SendMessage) |
+
+**Trigger chain for one ticket:**
+
+`You → Main Agent → Commander → Worker → GitHub (PR) → Commander (merges) → memory updated`
+
+**Ask-back chain when a Worker gets stuck:**
+
+`Worker → Commander → (memory hit? resolved) → Main Agent → (main agent decides, maybe asks You) → answer flows back down`
+
+**Common confusion points:**
+
+- "Is Commander the same as Main Agent?" — **No.** Main Agent is yours (Claude Code on your laptop). Commander is Hydra's. They talk to each other over MCP.
+- "Is Worker the same as Subagent?" — Yes. "Worker" is Hydra's name for the role; "subagent" is Claude Code's name for the mechanism. Same thing.
+- "Who does 'Operator' refer to in old docs?" — Historically "Operator" meant You-the-human, but sometimes meant "your Main Agent". We're phasing "Operator" out in favor of the four precise terms above.
+- "In local mode I just run `./hydra` and chat — where's the Main Agent then?" — In local legacy mode, you ARE the Main Agent: you chat directly with Commander. In cloud/agent-only mode, your Main Agent (Claude Code, etc.) stands between you and Commander.
+
 ## The loop
 
 ```mermaid
