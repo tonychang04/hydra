@@ -201,6 +201,40 @@ Workers sometimes hit a `Stream idle timeout — partial response received` arou
 
 **Threshold tuning:** 12 min is the default. If it turns out to false-positive on slow-but-alive workers, bump it in this section (and in `docs/specs/2026-04-16-worker-timeout-watchdog.md`). The probe is non-mutating, so a false-positive probe call is harmless — nothing is committed until `--rescue` runs.
 
+### Review-worker rescue (ticket #75)
+
+The procedure above rescues **implementation** workers: the evidence of partial work lives in the worktree, so `--probe` / `--rescue` operate on git state. **Review** workers are different — their artifact is a `gh pr review --comment` body and/or a `commander-review-clean` label on the PR. If a review worker dies silent, the worktree has nothing to rescue; commander has to check GitHub instead.
+
+**When to run the review-rescue check:** same 12-min silence trigger as the implementation watchdog, but only for entries in `state/active.json` with `subagent_type == "worker-review"`. Same liveness gate (no completion log, no recent writes).
+
+**Procedure:**
+
+1. Run `scripts/rescue-worker.sh --probe-review <pr_number>` (non-mutating). Two signals count as "review already landed":
+   - A review body on the PR whose first line starts with `Commander review` (the canonical opener emitted by the `/review` skill).
+   - The label `commander-review-clean` applied to the PR.
+   The probe emits one of two verdicts on stdout:
+   - `{"verdict":"review-already-landed","source":"body"|"label","pr":N}` — exit 0; nothing to do, the worker posted before dying.
+   - `{"verdict":"review-missing-dispatch-to-commander","pr":N}` — exit **4**; commander must take over.
+
+2. On **exit 0**: no rescue needed. Update `state/active.json` to mark the entry completed (the review landed before the stream died), and proceed with the usual review-gate surfacing (if the review is blocker-free, surface "Ready for merge"; else re-spawn `worker-implementation`).
+
+3. On **exit 4**: commander dispatches to itself — run the `/review` skill inline on the PR (the same flow a human would invoke via `review PR #501`), then post a consolidated `gh pr review --comment` ending with `(auto-rescued after review-worker timeout — see ticket #75)` so the provenance is visible on the PR. Apply `commander-review-clean` via the REST API if the review passes; else re-spawn `worker-implementation` with the review feedback as usual.
+
+4. On **exit 1** (`gh` not available / auth failure / PR not found): label the ticket `commander-stuck` and surface to the operator. The auto-rescue path needs `gh` working; if it isn't, commander is not allowed to guess at the review.
+
+**Safety guarantees of `--probe-review`:**
+- Never mutates the PR; only inspects reviews + labels.
+- No worktree inspection — the flag is orthogonal to `--probe` / `--rescue`.
+- The `HYDRA_RESCUE_GH_MOCK` env var (equivalently, `--gh-mock <dir>`) is a test-only seam used by `self-test/fixtures/rescue-worker/run.sh` so CI can exercise the verdict logic offline. Unset in production.
+- Exit codes: `0` review already landed, `1` I/O or gh failure, `2` usage error, `4` review-type rescue required.
+
+**What this procedure does NOT do:**
+- Does NOT auto-re-spawn `worker-review` on exit 4. The second spawn would hit the same stream-idle ceiling; running `/review` inline from commander breaks the loop.
+- Does NOT modify the existing `--probe` / `--rescue` verdicts or exit codes — `--probe-review` is a new subcommand, purely additive.
+- Does NOT make the inline review asynchronous. Until the worker-subagent executor from ticket #15 follow-up lands (same blocker as `worker-timeout-watchdog-rescue` and `test-discovery-dormant-to-active`), the commander-side dispatch runs in the foreground of whatever tick detects the timeout.
+
+Spec: `docs/specs/2026-04-17-review-worker-rescue.md`.
+
 **Future optimization: chunked worker prompts.** Option #2 from ticket #45. Breaking large tickets into smaller worker runs would make 18-min timeouts much rarer at the source. Out of scope for this watchdog. A follow-up ticket would need a "worker-planner" subagent type that splits the ticket before spawning the implementation worker. Noted here so future agents see the trade-off: the watchdog catches failures; chunking would prevent them. Both can coexist.
 
 **Relationship to Managed Agents (#43):** when commander migrates workers to a managed cloud sandbox, the underlying SDK handles stream timeouts natively. This watchdog becomes less frequently invoked but remains as an application-level safety net. Do not remove it on the Managed Agents migration — the rescue semantics (partial work + resume via a follow-up worker) are independent of the transport.
