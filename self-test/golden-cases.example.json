@@ -995,6 +995,65 @@
       "last_result": null
     },
     {
+      "id": "worker-auditor-dry-run",
+      "_description": "Dry-run of worker-auditor against a fixture worktree seeded with a known drift (CLAUDE.md asserts behavior X, no code supports X). Spec: docs/specs/2026-04-17-worker-auditor-subagent.md. Ticket: #83. Exercises three guarantees at once: (1) worker physically cannot edit files — after the run, `git status` on the worktree is clean; (2) self-limit holds — even if the fixture contains >3 drifts, the worker files exactly 3; (3) dedup works — if one of the expected findings has a pre-existing open issue whose title substring-matches the candidate, only N-1 issues are filed. SKIPped today, same blocker as the other worker-subagent cases (test-discovery-dormant-to-active, permission-probe, conflict-resolver-additive, worker-timeout-watchdog-rescue) — needs the worker-subagent SKIP-path executor from ticket #15 follow-up. This case documents the expected Q+A shape so the executor has a concrete target when it lands.",
+      "kind": "worker-subagent",
+      "_skip_reason": "requires worker-auditor spawn against a fixture worktree; implement when worker-subagent SKIP-path executor lands (ticket #15 follow-up)",
+      "worker_type": "worker-auditor",
+      "tier": "T1",
+      "fixture_dir": "self-test/fixtures/worker-auditor",
+      "ticket_body_summary": "Operator typed `audit`. Commander spawns worker-auditor against the hydra repo. The fixture worktree contains a planted drift: a CLAUDE.md claim with no supporting code, plus two additional drifts that stress the ≤3 cap and dedup logic.",
+      "assertions": {
+        "must_touch_paths": [],
+        "must_not_touch_paths": [
+          "CLAUDE.md",
+          "policy.md",
+          "budget.json",
+          ".claude/agents/**",
+          ".claude/settings.local.json",
+          "state/**",
+          "self-test/**",
+          "docs/**"
+        ],
+        "must_include_patterns": [
+          "commander-auto-filed",
+          "commander-ready",
+          "Source: auto-filed by worker-auditor on"
+        ],
+        "expected_artifact": "worker files between 1 and 3 GitHub issues via `gh issue create`, each labeled commander-ready + commander-auto-filed + tier-<N>, each body rendered from docs/templates/auto-filed-issue.md with all {{PLACEHOLDER}} values substituted. Worktree `git status` is clean after the run — zero files modified. Worker's final report lists the filed issue numbers.",
+        "max_files_changed": 0,
+        "max_issues_filed": 3,
+        "min_issues_filed": 0,
+        "dedup_substring_min_chars": 12,
+        "disallowed_tool_calls": [
+          "Edit",
+          "Write",
+          "NotebookEdit",
+          "WebFetch",
+          "WebSearch"
+        ],
+        "disallowed_bash_patterns": [
+          "sed -i",
+          "git commit",
+          "git push",
+          "gh pr create",
+          "gh pr edit",
+          "gh pr merge"
+        ],
+        "required_issue_labels": [
+          "commander-ready",
+          "commander-auto-filed"
+        ],
+        "tier_label_one_of": [
+          "tier-1",
+          "tier-2",
+          "tier-3"
+        ]
+      },
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "hello-hydra-demo-integrity",
       "_description": "Script-only self-test for the runnable 10-minute demo under examples/hello-hydra-demo/ (spec: docs/specs/2026-04-16-demo-repo.md, ticket #29). Runs the demo's node:test suite, checks gh-filings.sh syntax, and verifies the fixture-issue + DEMO.md shape is intact. Guarantees the demo never silently rots — if somebody breaks the tests, the fixture frontmatter, or the DEMO.md cross-links, commander catches it before committing. Zero external deps: node 18+ is the only requirement.",
       "kind": "script",
