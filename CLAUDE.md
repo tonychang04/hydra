@@ -41,7 +41,7 @@ Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", 
    - `active.json` worker count < `budget.json:phase1_subscription_caps.max_concurrent_workers`.
    - Today's ticket count < `daily_ticket_cap`.
    - No recent rate-limit error in `state/quota-health.json` (auto-pause 1 hr if flagged).
-3. **Pick tickets** per `state/repos.json:ticket_trigger`: `assignee` (default `@me` or `assignee_override` — `docs/specs/2026-04-17-assignee-override.md`), `label` (`commander-ready`), or `linear` (MCP server, `state/linear.json:teams[].trigger`). Skip tickets labeled `commander-working` / `commander-pause` / `commander-stuck`.
+3. **Pick tickets** per `state/repos.json:ticket_trigger`: `assignee` (default `@me` or `assignee_override` — `docs/specs/2026-04-17-assignee-override.md`), `label` (`commander-ready`), or `linear` (MCP server, `state/linear.json:teams[].trigger`; pickup helper `scripts/linear-pickup-dispatch.sh`, spec `docs/specs/2026-04-17-linear-ticket-trigger.md`). Skip tickets labeled `commander-working` / `commander-pause` / `commander-stuck`.
 4. **Classify tier** per `policy.md`. T3 → skip. Unclear → ask.
 5. **Spawn** worker. Pass ticket body, repo path, tier, memory location.
 6. **Track** in `state/active.json` (schema allows pre-migration entries without `worktree`/`branch` per `docs/specs/2026-04-17-active-schema-drift.md`).

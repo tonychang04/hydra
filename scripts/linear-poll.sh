@@ -209,13 +209,14 @@ normalized="$(printf '%s' "$raw_response" | jq \
         team_id: $tid,
         trigger: {type: $tt, value: $tv},
         issues:  ($raw | map({
-          id:         (.id // ""),
-          identifier: (.identifier // ""),
-          title:      (.title // ""),
-          state:      ((.state // {}).name // ""),
-          assignee:   ((.assignee // {}).email // ""),
-          labels:     ((.labels // []) | map(.name)),
-          url:        (.url // "")
+          id:          (.id // ""),
+          identifier:  (.identifier // ""),
+          title:       (.title // ""),
+          description: (.description // ""),
+          state:       ((.state // {}).name // ""),
+          assignee:    ((.assignee // {}).email // ""),
+          labels:      ((.labels // []) | map(.name)),
+          url:         (.url // "")
         })),
         count:   ($raw | length)
       }

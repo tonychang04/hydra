@@ -1,0 +1,40 @@
+{
+  "_description": "Fixture state/linear.json for the linear-ticket-trigger self-test. One team, assignee trigger on 'operator@example.com'. state_transitions defines the 4 Linear states Commander marks as its own ('In Progress' = on_pickup, 'In Review' = on_pr_opened, 'Done' = on_pr_merged, 'Blocked' = on_stuck). scripts/linear-pickup-dispatch.sh filters out tickets in any of those states. See docs/specs/2026-04-17-linear-ticket-trigger.md.",
+  "enabled": true,
+  "poll_interval_override_min": null,
+  "rate_limit_per_hour": 60,
+  "teams": [
+    {
+      "team_id": "team-uuid-eng",
+      "team_name": "Engineering",
+      "trigger": {
+        "type": "assignee",
+        "value": "operator@example.com"
+      },
+      "repo_mapping": {
+        "example-org/example-repo": {
+          "default_branch": "main"
+        }
+      },
+      "state_name_mapping": {
+        "In Progress": null,
+        "In Review": null,
+        "Done": null,
+        "Blocked": null
+      }
+    }
+  ],
+  "comment_on": {
+    "worker_started": true,
+    "question_asked": true,
+    "pr_opened": true,
+    "pr_merged": true,
+    "worker_stuck": true
+  },
+  "state_transitions": {
+    "on_pickup": "In Progress",
+    "on_pr_opened": "In Review",
+    "on_pr_merged": "Done",
+    "on_stuck": "Blocked"
+  }
+}

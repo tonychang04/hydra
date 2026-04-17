@@ -99,6 +99,8 @@ The spec itself is fine to author yourself (it's orchestration / decision-record
    Implements: docs/specs/YYYY-MM-DD-<slug>.md"
    ```
 
+   **Linear-sourced tickets:** prepend the body with `Closes LIN-123 — https://linear.app/...` (the identifier + URL are passed in the spawn prompt). GitHub treats it as informational; the Linear issue transitions via MCP on merge. Keeps PR ↔ Linear ticket link visible.
+
 9. **Ticket-source update** (same as `worker-implementation`):
    - GitHub: `gh issue edit <num> --remove-label commander-working --add-label commander-review`
    - Linear: via the `linear` MCP server, transition to `on_pr_opened` state.
