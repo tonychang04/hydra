@@ -385,6 +385,13 @@ cat > "$LAUNCHER_TMP" <<'EOF'
 #                                            (specs: docs/specs/2026-04-17-connector-wizard.md
 #                                            [ticket #139], docs/specs/2026-04-17-daily-digest.md
 #                                            [ticket #144])
+#   ./hydra setup [--non-interactive --repos=A,B --autopickup-interval=N]
+#                                            First-time setup wizard. Env check,
+#                                            repo picker, autopickup interval,
+#                                            connector hint, fingerprint at
+#                                            state/setup-complete.json.
+#                                            (spec: docs/specs/2026-04-17-setup-wizard.md,
+#                                            ticket #168).
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -452,6 +459,10 @@ Subcommands:
                                the outbound MCP supervisor, or the daily
                                status digest (push 1 paragraph once a day).
                                Run `./hydra connect --help` for details.
+  setup [--non-interactive --repos=A,B --autopickup-interval=N]
+                               First-time setup wizard: env check, repo
+                               picker, autopickup interval, fingerprint.
+                               Run `./hydra setup --help` for details.
   doctor [--fix|--fix-safe]    Install sanity check. --fix walks the operator
                                through each fixable issue interactively.
   mcp <serve|register-agent>   MCP server subcommands (agent-only interface).
@@ -484,6 +495,7 @@ HYDRAHELP
   watch)        shift; hydra_exec_helper scripts/hydra-watch.sh "$@" ;;
   pair-agent)   shift; hydra_exec_helper scripts/hydra-pair-agent.sh "$@" ;;
   connect)      shift; hydra_exec_helper scripts/hydra-connect.sh "$@" ;;
+  setup)        shift; hydra_exec_helper scripts/hydra-setup.sh "$@" ;;
   mcp)
     shift
     case "${1:-}" in
