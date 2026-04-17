@@ -135,6 +135,23 @@ done <<<"$keys"
 
 if [[ ${#stale[@]} -eq 0 ]]; then
   echo "validate-citations: OK ($checked citation(s) checked in $citations_file)"
+
+  # --- S3 sync hook -------------------------------------------------------
+  # Clean citations pass → memory is consistent. If HYDRA_MEMORY_BACKEND=s3
+  # or s3-strict, push the memory dir (and any just-completed compaction
+  # edits) to S3. Spec: docs/specs/2026-04-17-dual-mode-memory.md
+  if [[ "${HYDRA_MEMORY_BACKEND:-local}" =~ ^s3(-strict)?$ ]]; then
+    sync_script="$(dirname "${BASH_SOURCE[0]}")/hydra-memory-sync.sh"
+    if [[ -x "$sync_script" ]]; then
+      if ! "$sync_script" --push --memory-dir "$memory_dir" >&2; then
+        if [[ "${HYDRA_MEMORY_BACKEND}" == "s3-strict" ]]; then
+          echo "validate-citations: S3 push failed and backend=s3-strict; exiting" >&2
+          exit 1
+        fi
+        echo "validate-citations: warning — S3 push failed, continuing (backend=s3)" >&2
+      fi
+    fi
+  fi
   exit 0
 fi
 
