@@ -1,0 +1,27 @@
+{
+  "_description": "Expected filter payload Hydra should build when calling linear_list_issues. One object per trigger type. scripts/linear-poll.sh constructs these in live mode; this fixture pins the exact shape so a regression in the jq pipeline shows up as a diff.",
+  "team_id": "team-uuid-eng",
+  "by_trigger": {
+    "assignee": {
+      "filter": {
+        "team":     { "id": "team-uuid-eng" },
+        "assignee": { "email": "me" }
+      },
+      "first": 50
+    },
+    "state": {
+      "filter": {
+        "team":  { "id": "team-uuid-eng" },
+        "state": { "name": "Ready for Hydra" }
+      },
+      "first": 50
+    },
+    "label": {
+      "filter": {
+        "team":   { "id": "team-uuid-eng" },
+        "labels": { "name": { "in": ["ready-for-hydra"] } }
+      },
+      "first": 50
+    }
+  }
+}

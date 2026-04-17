@@ -125,6 +125,26 @@ Commander uses this to answer worker `QUESTION:` blocks without pinging the oper
 - **Answer:** Mark your review as REQUEST_CHANGES with a `SECURITY:` prefix on the blocker. Label the PR `commander-stuck` (not `commander-rejected`). Commander will page the operator. Never merge or suggest merge of a PR with an unresolved SECURITY: blocker.
 - **Source:** Security policy, 2026-04-16
 
+## Linear MCP integration
+
+### Linear MCP tool names don't match `docs/linear-tool-contract.md`. What do I do?
+
+- **Context:** Worker tries to call `linear_list_issues` but `claude mcp call linear linear_list_issues ...` errors with "tool not found." The Linear MCP server has a different naming convention.
+- **Answer:** STOP. Do not invent tool names on the fly. Return a `QUESTION:` block describing the mismatch. `scripts/linear-poll.sh` supports env var overrides (`HYDRA_LINEAR_TOOL_LIST`, etc.) but the fix is a PR to `docs/linear-tool-contract.md` (the source of truth) + matching updates to `state/linear.example.json` and `self-test/fixtures/linear/*.json`. Operators without Linear creds cannot validate this — escalate to the operator so they can confirm the real names.
+- **Source:** Issue #5 — Linear MCP integration was scaffolded without live-workspace validation; 2026-04-16
+
+### Linear state transition fails with "state 'In Review' not found"
+
+- **Context:** `linear_update_issue` is called after PR open but the team uses a custom state name (e.g. `Code Review` instead of `In Review`).
+- **Answer:** Surface ONE message to the operator: "Linear state 'In Review' not found on team <team_id>. Configure state_name_mapping in state/linear.json." Do NOT retry silently. The fix is to populate `teams[0].state_name_mapping` in `state/linear.json` — it maps Hydra's logical state names to the operator's actual Linear state names.
+- **Source:** `docs/linear-tool-contract.md` error handling, 2026-04-16
+
+### Linear MCP returns 401/403 mid-session
+
+- **Context:** Auth was fine at session start but a later `linear_*` call fails with auth error.
+- **Answer:** OAuth token expired. The worker cannot re-auth itself. Escalate to the operator: "Linear MCP auth expired — please re-run `claude mcp add linear` and reply when done." Until the operator re-auths, skip Linear-triggered tickets (GitHub-triggered tickets still work).
+- **Source:** `docs/linear-tool-contract.md` error handling, 2026-04-16
+
 ## When the operator must be looped in (no heuristic works)
 
 - Genuinely ambiguous acceptance criteria that memory can't resolve

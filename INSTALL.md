@@ -95,14 +95,76 @@ Edit it:
 
 ## (Optional) Linear
 
-If tickets live in Linear:
+If tickets live in Linear, Hydra can pick them up via the Linear MCP server instead of (or alongside) GitHub Issues. **Status:** the Linear path is scaffolded and fixture-tested; end-to-end validation against a live Linear workspace is still pending — see `docs/linear-tool-contract.md` for the exact tool surface Hydra assumes and the operator validation checklist at the bottom.
+
+### 1. Install the Linear MCP server
 
 ```bash
 claude mcp add linear
-# Follow the prompts to authenticate
 ```
 
-Then `cp state/linear.example.json state/linear.json` and fill in your team ID, trigger type, and repo mapping.
+What to expect at the prompts:
+- It asks which scope (`user` vs `project`) — pick `user` if you want Linear available across all your Claude Code sessions.
+- It opens a browser OAuth flow to `https://linear.app/oauth/...`. Authenticate as the Linear user whose tickets Hydra should see.
+- On success, `claude mcp list` shows `linear` as a registered server.
+
+Verify:
+```bash
+claude mcp list | grep -i linear     # should print the linear server entry
+```
+
+### 2. Copy the config template and fill it in
+
+```bash
+cp state/linear.example.json state/linear.json
+```
+
+Minimum fields to edit:
+
+| Field | What to put |
+|---|---|
+| `enabled` | Flip to `true` once everything below is filled |
+| `teams[0].team_id` | Your Linear team's internal UUID. Find via: Linear Web → Settings → Teams → click your team → the URL has `/team/ABC-123/...` where `ABC` is the team key; the UUID appears in `Settings → API → Team ID`. |
+| `teams[0].team_name` | Human-readable name (for your own reference; Hydra logs it) |
+| `teams[0].trigger.type` | One of: `assignee` (pick up issues assigned to you), `state` (pick up issues in a named state), `label` (pick up issues with a specific label) |
+| `teams[0].trigger.value` | `me` for assignee; the state name (e.g. `Ready for Hydra`) for state; the label name for label |
+| `teams[0].repo_mapping` | Replace `your-org/your-repo` with the GitHub repo(s) this Linear team's tickets correspond to. Hydra needs this to know which local clone to worktree from. |
+| `state_transitions.*` | Leave defaults unless your team uses custom state names. If so, ALSO populate `teams[0].state_name_mapping` to map Hydra's logical names to yours. |
+| `rate_limit_per_hour` | Defaults to 60. Lower it if your workspace has tight API limits. |
+
+Then in `state/repos.json`, set `"ticket_trigger": "linear"` on each repo whose Linear tickets Hydra should pick up.
+
+### 3. Smoke-test the wiring WITHOUT hitting Linear
+
+Hydra ships a fixture-mode poll script so you can verify your install can parse a realistic Linear response before trusting it against live data:
+
+```bash
+scripts/linear-poll.sh --fixture self-test/fixtures/linear/mock-list-issues-response.json
+```
+
+Expected output: a normalized JSON blob with `"source": "fixture"`, `"count": 3`, and three ENG-xxx issues. If this fails, `jq` is missing or the script can't find the fixture.
+
+### 4. Validate against your live Linear workspace
+
+Work through the checklist in `docs/linear-tool-contract.md`. In short:
+
+```bash
+# Live poll your assigned issues:
+scripts/linear-poll.sh --team <your-team-uuid> --trigger-type assignee --trigger-value me
+```
+
+If it returns your actual open Linear issues, the integration is live. If it returns an auth error or "Linear MCP server not installed", re-run step 1.
+
+### Troubleshooting Linear
+
+| Symptom | Fix |
+|---|---|
+| `Linear MCP server ('linear') not installed` | Run `claude mcp add linear`. Verify with `claude mcp list`. |
+| `Linear MCP auth failed` / 401 / 403 | Re-run `claude mcp add linear` — the OAuth token has likely expired. If you previously authed as the wrong Linear user, remove first: `claude mcp remove linear`. |
+| `Linear MCP rate-limited` | Back off; retry in an hour. Lower `rate_limit_per_hour` in `state/linear.json` to prevent future hits. |
+| "Linear state 'In Review' not found on team..." | Your team uses custom state names. Populate `teams[0].state_name_mapping` in `state/linear.json` to map Hydra's logical names (`In Review`, `Done`, etc.) to your actual state names. |
+| Tool names differ from `docs/linear-tool-contract.md` | Override with env vars (e.g. `HYDRA_LINEAR_TOOL_LIST=list_issues`) and open a PR to correct the tool contract doc — that's the single source of truth. |
+| Can't find the team ID | Linear Web → Settings → API → "Team ID" (or in the URL: `linear.app/<org>/team/<KEY>/...` — the full UUID is in Settings, the short key is in the URL). |
 
 ## Launch
 

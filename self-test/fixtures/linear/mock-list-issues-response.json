@@ -1,0 +1,91 @@
+{
+  "_description": "Canned response that mimics what docs/linear-tool-contract.md declares linear_list_issues returns. Three issues in varied states so scripts/linear-poll.sh normalization exercises assignee/state/label paths on realistic data. Update this fixture ONLY if the real Linear MCP response shape is verified to differ — and update docs/linear-tool-contract.md in the same PR.",
+  "issues": [
+    {
+      "id": "issue-uuid-aaa-111",
+      "identifier": "ENG-101",
+      "title": "Add retry logic to the webhook dispatcher",
+      "description": "The webhook dispatcher currently gives up after the first 5xx response. Add exponential backoff (3 retries max) and surface total-failures as a metric.",
+      "url": "https://linear.app/example-org/issue/ENG-101/add-retry-logic-to-the-webhook-dispatcher",
+      "state": {
+        "id": "state-uuid-todo",
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": {
+        "id": "user-uuid-operator",
+        "email": "operator@example.com",
+        "name": "Operator"
+      },
+      "team": {
+        "id": "team-uuid-eng",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "labels": [
+        { "id": "label-uuid-backend", "name": "backend" },
+        { "id": "label-uuid-ready",   "name": "ready-for-hydra" }
+      ],
+      "priority": 3,
+      "createdAt": "2026-04-15T12:00:00Z",
+      "updatedAt": "2026-04-16T09:30:00Z"
+    },
+    {
+      "id": "issue-uuid-bbb-222",
+      "identifier": "ENG-102",
+      "title": "Fix typo in the settings page subtitle",
+      "description": "Current copy says 'Manages your prefrences'. Change to 'Manage your preferences'.",
+      "url": "https://linear.app/example-org/issue/ENG-102/fix-typo-in-the-settings-page-subtitle",
+      "state": {
+        "id": "state-uuid-in-progress",
+        "name": "In Progress",
+        "type": "started"
+      },
+      "assignee": {
+        "id": "user-uuid-operator",
+        "email": "operator@example.com",
+        "name": "Operator"
+      },
+      "team": {
+        "id": "team-uuid-eng",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "labels": [
+        { "id": "label-uuid-typo", "name": "typo" }
+      ],
+      "priority": 4,
+      "createdAt": "2026-04-16T08:00:00Z",
+      "updatedAt": "2026-04-16T08:15:00Z"
+    },
+    {
+      "id": "issue-uuid-ccc-333",
+      "identifier": "ENG-103",
+      "title": "Investigate slow queries on the reports dashboard",
+      "description": "Several users reporting >10s load time on /reports. Profile the top 3 queries and propose indexing or caching changes (analysis only — schema changes are a separate ticket).",
+      "url": "https://linear.app/example-org/issue/ENG-103/investigate-slow-queries-on-the-reports-dashboard",
+      "state": {
+        "id": "state-uuid-ready-for-hydra",
+        "name": "Ready for Hydra",
+        "type": "unstarted"
+      },
+      "assignee": {
+        "id": "user-uuid-other",
+        "email": "teammate@example.com",
+        "name": "Teammate"
+      },
+      "team": {
+        "id": "team-uuid-eng",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "labels": [
+        { "id": "label-uuid-perf",  "name": "performance" },
+        { "id": "label-uuid-ready", "name": "ready-for-hydra" }
+      ],
+      "priority": 2,
+      "createdAt": "2026-04-14T10:00:00Z",
+      "updatedAt": "2026-04-16T07:45:00Z"
+    }
+  ]
+}
