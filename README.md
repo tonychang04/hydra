@@ -1,30 +1,82 @@
 # Hydra
 
-**A long-lasting AI agent with many worker heads.** One persistent brain (the **Commander**), many parallel workers (the **heads**). Clears tickets autonomously. Learns from every run. Gradually replaces the human in the loop.
+**An auto-machine that clears your ticket queue while you sleep.**
 
-The metaphor is literal: Hydra has one body (the long-running Commander session that keeps memory, tracks state, routes work, and evolves its own policy) and many heads (short-lived worker subagents, one per ticket, each in its own isolated git worktree). Cut off a head (worker fails), two grow back (retry with what was learned). The body is immortal.
+You file a GitHub issue and assign it to yourself. Hydra picks it up, reads the repo, writes the code, runs the tests, reviews its own PR, and merges it. You wake up to a queue of merged PRs. Every loop makes Hydra smarter: patterns become memory, recurring memory becomes repo-native skills, answered questions become auto-answers.
 
-## What Hydra does
+Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) + [superpowers skills](https://github.com/anthropics/superpowers). MIT licensed. Self-hosted (your laptop today, cloud tomorrow).
 
-- Reads GitHub Issues (Linear support planned) — tickets either assigned to the operator or labeled `commander-ready`
-- Classifies each ticket by risk tier (T1 auto-merge / T2 human-merge-gate / T3 refuse)
-- Spawns N isolated worker subagents in parallel, each on its own ticket in its own git worktree
-- Each worker reads the repo's own `CLAUDE.md` / `AGENTS.md` / `.claude/skills/`, discovers how to test the repo (docker, .env.example, Makefile), implements, runs tests, and opens a draft PR
-- A separate **review-worker** runs `/review` + `/codex review` on the PR before the human sees it
-- Workers return `QUESTION:` blocks when uncertain; Commander answers from its accumulated memory first, pings the human only when memory can't resolve
-- Every completed ticket feeds the learning loop: cited patterns → per-repo memory → consistent ones graduate into repo-local skills every future agent inherits
+## The auto-loop (what makes Hydra, Hydra)
 
-Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) and [superpowers skills](https://github.com/anthropics/superpowers).
+```mermaid
+flowchart TB
+    classDef operator fill:#fef3c7,stroke:#d97706,color:#000
+    classDef commander fill:#dbeafe,stroke:#2563eb,color:#000
+    classDef worker fill:#dcfce7,stroke:#16a34a,color:#000
+    classDef pr fill:#f3e8ff,stroke:#9333ea,color:#000
+    classDef mem fill:#fce7f3,stroke:#db2777,color:#000
+    classDef gate fill:#fee2e2,stroke:#dc2626,color:#000
 
-## Identity (on purpose, narrow)
+    O[Operator<br/>files GitHub issue<br/>assigns to self]:::operator
+    C[Commander<br/>persistent AI session<br/>polls every N min]:::commander
+    PRE{preflight OK?<br/>PAUSE · budget<br/>· rate-limit}:::gate
+    W1[worker 1<br/>isolated worktree]:::worker
+    W2[worker 2<br/>isolated worktree]:::worker
+    W3[worker N<br/>isolated worktree]:::worker
+    PR1[draft PR]:::pr
+    PR2[draft PR]:::pr
+    PR3[draft PR]:::pr
+    RV[review worker<br/>/review + /codex<br/>+ /cso if auth]:::worker
+    CLEAN{review clean?}:::gate
+    MERGE[Commander auto-merges]:::commander
+    MEM[(memory<br/>learnings · citations<br/>escalation-faq)]:::mem
+    SK[skill promotion PR<br/>into target repo]:::pr
 
-Hydra is for **three things. Nothing else:**
+    O -->|new issue assigned| C
+    C --> PRE
+    PRE -->|yes| W1 & W2 & W3
+    PRE -->|no| C
+    W1 --> PR1
+    W2 --> PR2
+    W3 --> PR3
+    PR1 & PR2 & PR3 --> RV
+    RV --> CLEAN
+    CLEAN -->|yes| MERGE
+    CLEAN -->|blockers| W1
+    MERGE --> MEM
+    MEM -->|3+ citations across 3+ tickets| SK
 
-1. **Parallel issue-clearing** — N tickets in flight, each isolated, each producing a draft PR
-2. **Auto-testing** — workers discover how to test any repo (docker, .env.example, makefile), run it, document what worked. The same primitive self-tests the commander itself.
-3. **Future cloud env-spawning** — Phase 2: managed cloud sandboxes so workers can stand up the service end-to-end, not just typecheck. Commander itself graduates from a local Claude Code session to a VM-hosted loop with a Slack / web / SMS chat surface.
+    C -. novel QUESTION .-> O
+    C -. SECURITY blocker .-> O
+    C -. weekly retro .-> O
+```
 
-Humans are the exception, not the default. Hydra runs while you sleep and pings you only for: merge gates on non-trivial PRs, genuinely novel questions, security tripwires, and weekly retros. Every time it has to ping you, the answer gets captured so it won't need to ping again for a similar question. The goal is a slow, measurable reduction in how often a human is in the loop.
+The whole thing is supposed to run without you. When it can't, Commander tells you exactly why and remembers your answer so it doesn't ask again.
+
+## What Hydra IS
+
+- **An auto-machine.** Default mode is hands-off. Autopickup polls GitHub every N minutes. You chat with Commander only to steer, not to dispatch.
+- **Parallel.** N workers in flight at once, each isolated in its own git worktree. One Mac today, N cloud sandboxes tomorrow.
+- **Self-testing.** Workers discover how to test a repo (docker-compose, .env.example, Makefile). The same primitive runs regression tests against the Hydra framework itself.
+- **Learning.** Every completed ticket contributes citations. Consistent patterns graduate out of Commander's memory and into repo-native skills.
+- **Self-hosting.** Hydra is a regular GitHub repo; you can add `tonychang04/hydra` to your Hydra's `state/repos.json` and let workers improve Hydra. Dogfood is the default test.
+
+## What Hydra is NOT
+
+- A chat assistant (only the commands listed below).
+- A plan-review gauntlet (no CEO / design / DX / eng plan reviews — use gstack for that).
+- A deploy controller (stops at merge; CI + your deploy infra handle the rest).
+- A replacement for human judgment on security or production risk (T3 = refuse).
+
+## Risk tiers (keep Hydra safe to leave running)
+
+| Tier | Scope | Who merges |
+|---|---|---|
+| **T1** | Typo fixes, doc changes, dep patch bumps, pure test additions | Commander, after CI green |
+| **T2** | Feature work, bug fixes, refactors | Commander (after review-worker clears it) — configurable per repo |
+| **T3** | Auth, migrations, infra, `.github/workflows/*`, secrets, anything matching `*auth*`/`*security*`/`*crypto*` | Nobody — Commander refuses the ticket |
+
+Per-repo override in `state/repos.json` (e.g. Hydra self-hosted defaults `{T1: human, T2: human}` because framework changes are high-impact).
 
 ## Install
 
