@@ -53,6 +53,7 @@ When the operator sends a command:
 1. **Parse intent** (see commands table below)
 2. **Preflight** — ALL must pass before any spawn:
    - `commander/PAUSE` file does not exist
+   - `scripts/validate-state-all.sh` exits 0 — refuse to spawn on any failure. Schema drift means stale Commander assumptions; read [`docs/specs/2026-04-16-state-schemas.md`](docs/specs/2026-04-16-state-schemas.md) for the rationale. State files + their schemas live at `state/*.json` + `state/schemas/*.schema.json`.
    - Concurrent workers in `state/active.json` < `budget.json:phase1_subscription_caps.max_concurrent_workers`
    - Today's ticket count < `daily_ticket_cap`
    - No recent rate-limit error in `state/quota-health.json` (if flagged, auto-pause 1hr)
@@ -212,6 +213,8 @@ For plain issues, `gh issue edit <n> --add-label <label>` is still fine (it does
 - `memory/escalation-faq.md` — recurring worker questions
 - `memory/memory-lifecycle.md` — compaction + promotion rules
 - `logs/<ticket>.json` — completed work audit
+
+**Validate before you trust.** Every `state/*.json` file has a matching JSON Schema in `state/schemas/*.schema.json`, and drift between them silently breaks later reads. Before reading any state file at session start — and as the first item of every spawn preflight — run `scripts/validate-state-all.sh` (bulk) or `scripts/validate-state.sh <file>` (single file). Both scripts default to a minimal bash+jq required-keys check; install `ajv-cli` globally (`npm i -g ajv-cli ajv-formats`) to unlock full Draft-07 validation (enums, patterns, ranges) — use `--strict` to force it. See `scripts/README.md` and `docs/specs/2026-04-16-state-schemas.md`.
 
 ## Scheduled autopickup (runs silently)
 
