@@ -1,0 +1,19 @@
+From: pr-b
+Subject: [PATCH] docs: add autopickup command to commands table
+
+Adds a new row for the `autopickup every N min` command. Pure additive — appends
+one row at the bottom of the commands table. Conflicts with pr-a-diff.patch
+because both patches append a new line at the same position in the table.
+
+---
+ base-commands-table.md | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/base-commands-table.md b/base-commands-table.md
+--- a/base-commands-table.md
++++ b/base-commands-table.md
+@@ -12,3 +12,4 @@
+ | `pick up #42` | Spawn `worker-implementation` on that specific ticket |
+ | `review PR #501` | Spawn `worker-review` on that PR |
+ | `test discover <repo>` | Spawn `worker-test-discovery` on that repo |
++| `autopickup every N min` | Enter scheduled auto-pickup mode (N clamped to [5, 120], default 30). |

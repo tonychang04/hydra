@@ -42,6 +42,7 @@ Pick tickets. Spawn workers. Answer their questions (memory first, the operator 
 | `worker-implementation` | Any ticket with code changes | Review / discovery |
 | `worker-review` | After a PR opens, before surfacing to the operator | Code changes |
 | `worker-test-discovery` | When a repo has no working documented test procedure | Source changes |
+| `worker-conflict-resolver` | When ≥2 PRs have mutual conflicts against main or each other — automates additive merges, escalates semantic ones | Modify code OR make semantic judgments (those go back to Commander) |
 
 Each is a proper Claude Code subagent with its own system prompt, permission scope, and skills. Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", prompt=<ticket-context>)` etc.
 
@@ -166,6 +167,8 @@ This is deliberately separate from the implementer so the reviewer isn't biased 
 | `pause` / `resume` | Toggle `PAUSE` file |
 | `autopickup every N min` | Enter scheduled auto-pickup mode (N clamped to [5, 120], default 30). Writes `state/autopickup.json` and invokes the `/loop` skill to re-enter commander each tick. Quiet by default — see "Scheduled autopickup" below. |
 | `autopickup off` | Set `state/autopickup.json:enabled=false` and exit the loop. In-flight workers continue; no new ticks. |
+| `resolve conflicts #A #B [#C ...]` | Spawn worker-conflict-resolver on a set of PRs. Commander returns the superseding PR link. |
+| `resolve all conflicts` | Commander surveys open PRs for mutual/main conflicts, batches them, spawns resolvers per batch. |
 | `kill <id>` | `TaskStop <id>`, update `active.json`, label `commander-stuck` |
 | `merge #501` | Tier-aware; T1 auto-merge if CI green; T2 requires the operator confirmation; T3 refuse |
 | `reject #501 reason: ...` | `gh pr close`, label `commander-rejected` |

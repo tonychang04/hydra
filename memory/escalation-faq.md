@@ -154,6 +154,38 @@ Commander uses this to answer worker `QUESTION:` blocks without calling the supe
 - **Exception:** if a duplicate or "won't fix" issue is filed that no PR will address, close manually with `--reason "not planned"` + a comment explaining why.
 - **Source:** operational convention, 2026-04-17
 
+## Conflict resolution
+
+These rules govern `worker-conflict-resolver` (and any future automation that merges multiple PRs). They're the source of truth for "what's safe to auto-merge" vs "what has to escalate." Don't expand the additive list without updating this FAQ first.
+
+### When to auto-resolve a conflict vs escalate to the supervisor
+
+- **Context:** `worker-conflict-resolver` (or a human Commander merging in parallel PRs) encounters a merge conflict. The question is always: is this deterministic (safe to resolve mechanically) or semantic (requires a judgment call)?
+- **Answer:** Auto-resolve ONLY if the conflict matches one of four additive patterns:
+  1. **Both sides added rows to the same markdown table** → keep both rows, in numeric-PR order (lowest PR first). Dedupe exact byte-for-byte matches.
+  2. **Both sides appended new sections to the same file** (same heading anchor, new content) → keep both sections, in numeric-PR order.
+  3. **Both sides added elements to the same JSON array** → keep both, in numeric-PR order; re-run `jq empty` to validate; fix trailing-comma issues.
+  4. **Both sides added keys to the same JSON object** → keep both keys. If they collide on the same key name with different values, STOP — that's semantic.
+  Escalate (STOP + emit `QUESTION:` block, no commit) if ANY of these hold:
+  - Both sides modified the SAME LINE with different content
+  - One side deleted a line the other side modified
+  - Both sides renamed the same file to different names
+  - Same JSON key with different values
+  - Anything you're unsure about
+- **Source:** ticket #7, spec `docs/specs/2026-04-16-worker-conflict-resolver.md`, fixture `self-test/fixtures/conflict-resolver/semantic-conflict-example.md`
+
+### Why the additive list is narrow
+
+- **Context:** it's tempting to add "close enough" patterns to the auto-resolve list (e.g. "two modifications that look compatible").
+- **Answer:** don't. The whole point of the deterministic path is that operators can trust it without reading every merge diff. Every additive pattern passes a structural test: two sides added NEW things at the same anchor, so concatenation is correct by construction. A modification-vs-modification conflict can never pass that test — by definition, both sides wrote over something that was already there, and concatenating "rewritten" things is nonsense. If you want a new auto-resolve rule, state the structural invariant that makes it safe; if you can't, it's semantic.
+- **Source:** ticket #7 design decision, 2026-04-16
+
+### I'm worker-conflict-resolver and a semantic conflict shows up. What do I do?
+
+- **Context:** mid-merge, a conflict region doesn't fit any of the four additive patterns.
+- **Answer:** STOP immediately. Do NOT `git add` the conflict markers. Do NOT commit. Emit a `QUESTION:` block with: which PRs, which file and line range, both versions verbatim (short excerpts), your best guess + why, and three options (take A / take B / needs human). Commander either answers from memory or escalates to the supervisor agent. Under no circumstances pick silently — that's how data gets lost.
+- **Source:** ticket #7, spec `docs/specs/2026-04-16-worker-conflict-resolver.md`
+
 ## When supervisor must be looped in (no heuristic works)
 
 Commander escalates to `supervisor.resolve_question` (see `docs/mcp-tool-contract.md`) whenever the heuristics above don't match. In the legacy direct-drive path (`./hydra` in a terminal, no `upstream_supervisor` configured), the same escalation surfaces as the chat-prompt surfacing in `CLAUDE.md` and the operator answers live. The supervisor agent decides from there whether to answer autonomously or loop its own human — Hydra does not dictate that decision.
