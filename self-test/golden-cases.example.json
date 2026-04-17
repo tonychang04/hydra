@@ -335,6 +335,41 @@
       "last_result": null
     },
     {
+      "id": "release-script-smoke",
+      "_description": "Script-only self-test for scripts/release.sh (spec: docs/specs/2026-04-17-release-process.md, ticket #28). Stages a minimal mirror tree in a tmpdir with fixture VERSION + CHANGELOG.md, invokes release.sh against it, verifies --dry-run does not mutate files and that downgrade / equal-version / non-semver all exit non-zero. Runs before committing changes to scripts/release.sh, VERSION, or CHANGELOG.md.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "release.sh bash -n clean",
+          "cmd": "bash -n scripts/release.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "release.sh fixture roundtrip (dry-run + refusals)",
+          "cmd": "self-test/fixtures/release/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "VERSION file is valid semver",
+          "cmd": "grep -Eq '^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$' VERSION && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "CHANGELOG.md has Unreleased section",
+          "cmd": "grep -q '^## \\[Unreleased\\]' CHANGELOG.md && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "s3-backend-roundtrip",
       "_description": "Script-only self-test for scripts/state-get.sh + scripts/state-put.sh against a localstack-backed DynamoDB (Phase 2 adapter — see docs/specs/2026-04-16-s3-knowledge-store.md and ticket #13). Spins up localstack via docker compose, creates the bucket + commander-* tables, puts a JSON blob via state-put.sh (dynamodb backend, localstack endpoint), reads it back via state-get.sh, compares bit-for-bit, tears down. Marked requires_docker: skipped on machines where `docker info` fails.",
       "kind": "script",

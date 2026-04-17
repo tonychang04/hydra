@@ -100,9 +100,31 @@ else
 #   ./hydra --no-autopickup  Launch with HYDRA_NO_AUTOPICKUP=1 exported so commander
 #                            stays idle at session start (no auto-enable). Useful for
 #                            debugging, read-only sessions, or "just status please".
+#   ./hydra --version        Print the contents of the repo-root VERSION file and exit.
+#                            Intended for bug reports ("what version of Hydra are you
+#                            running?"). Does NOT exec claude.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# --version short-circuits before any env/auth sanity checks so it works on a
+# broken / partially-installed tree. Read the VERSION file verbatim (strip
+# trailing whitespace); if it's missing, say so explicitly rather than silently
+# printing nothing.
+for arg in "$@"; do
+  case "$arg" in
+    --version)
+      if [[ -f VERSION ]]; then
+        tr -d '[:space:]' <VERSION
+        echo
+        exit 0
+      else
+        echo "✗ VERSION file missing at $SCRIPT_DIR/VERSION" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
 
 # Parse launcher flags (only --no-autopickup so far). Unknown flags pass through to claude.
 # Using ${arr[@]+"${arr[@]}"} idiom for bash 3.2 (macOS default) compatibility with set -u.
