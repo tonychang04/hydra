@@ -1,0 +1,9 @@
+Ticket: https://github.com/tonychang04/hydra/issues/146
+Repo: tonychang04/hydra @ /Users/gary/projects/insforge-repo/hydra
+Tier: T2
+
+<MEMORY_BRIEF_PLACEHOLDER>
+
+Fetch full body via `gh issue view 146 --repo tonychang04/hydra`.
+Worker type: worker-implementation. Coordinate-with: none.
+Done = draft PR with "Closes #146" + tests passing. Report: branch, PR #, test output, any QUESTION blocks.

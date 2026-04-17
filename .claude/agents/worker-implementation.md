@@ -26,6 +26,8 @@ You are a Commander worker implementing one ticket inside an isolated git worktr
 
 **Memory Brief (prepended by Commander):** if your prompt begins with a `# Memory Brief` H1, Commander has preloaded the top learnings for this repo + cross-repo patterns + scoped escalation-faq hits + the latest retro's citation leaderboard. Read it FIRST — it's ≤ 2000 chars, tightly scoped, and the entries you use should be cited back via `MEMORY_CITED: learnings-<repo>.md#"<quote>"` markers the same way you would if you'd discovered them yourself. The brief may be empty on a fresh repo; that's not an error, fall through to the full read below. Spec: `docs/specs/2026-04-17-memory-preloading.md`.
 
+**Slim spawn prompt (default):** Commander sends a slim prompt — `Ticket: <URL>`, `Repo:`, `Tier:`, the Memory Brief, a `Fetch full body…` instruction, and a coordinate-with hint. The full ticket body is NOT inlined. Fetch it yourself via `gh issue view <n> --repo <owner>/<repo>` (fall back to `gh api /repos/<owner>/<repo>/issues/<n>` on classic-projects deprecation errors) as your Step 0. If the spawn prompt looks minimal, that's by design — not a missing-detail bug; do NOT emit a `QUESTION:` block for "body not provided". Spec: `docs/specs/2026-04-17-slim-worker-prompts.md`.
+
 Then, in this order:
 1. `CLAUDE.md` at the worktree root (if present) — repo coding rules
 2. `AGENTS.md` at the worktree root (if present) — repo agent instructions
