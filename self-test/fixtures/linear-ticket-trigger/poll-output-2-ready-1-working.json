@@ -1,0 +1,87 @@
+{
+  "_description": "Canned Linear MCP response for the linear-ticket-trigger self-test. Same shape as self-test/fixtures/linear/mock-list-issues-response.json (per docs/linear-tool-contract.md), but curated to exercise the pickup-dispatch filter: 2 tickets in 'Todo' (ready to pick up) + 1 in 'In Progress' (Commander already working on it, must be filtered out). After filtering through state_transitions.on_pickup='In Progress', the dispatcher should emit exactly 2 entries.",
+  "issues": [
+    {
+      "id": "issue-uuid-100",
+      "identifier": "ENG-200",
+      "title": "Add docstrings to the public API in web.py",
+      "description": "Several public functions in web.py lack docstrings. Add Google-style docstrings to every top-level function.",
+      "url": "https://linear.app/example-org/issue/ENG-200/add-docstrings-to-the-public-api-in-web-py",
+      "state": {
+        "id": "state-uuid-todo",
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": {
+        "id": "user-uuid-operator",
+        "email": "operator@example.com",
+        "name": "Operator"
+      },
+      "team": {
+        "id": "team-uuid-eng",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "labels": [
+        { "id": "label-uuid-docs", "name": "docs" }
+      ],
+      "priority": 3,
+      "createdAt": "2026-04-16T12:00:00Z",
+      "updatedAt": "2026-04-16T12:00:00Z"
+    },
+    {
+      "id": "issue-uuid-101",
+      "identifier": "ENG-201",
+      "title": "Factor duplicated validation logic into shared helper",
+      "description": "src/validators/*.ts repeats the same null-check pattern in 8 places. Extract into a shared utility and call it from each site.",
+      "url": "https://linear.app/example-org/issue/ENG-201/factor-duplicated-validation-logic-into-shared-helper",
+      "state": {
+        "id": "state-uuid-todo",
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": {
+        "id": "user-uuid-operator",
+        "email": "operator@example.com",
+        "name": "Operator"
+      },
+      "team": {
+        "id": "team-uuid-eng",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "labels": [
+        { "id": "label-uuid-refactor", "name": "refactor" }
+      ],
+      "priority": 3,
+      "createdAt": "2026-04-16T12:05:00Z",
+      "updatedAt": "2026-04-16T12:05:00Z"
+    },
+    {
+      "id": "issue-uuid-102",
+      "identifier": "ENG-202",
+      "title": "Commander already working on this one",
+      "description": "This ticket is already in a commander-managed state ('In Progress'). The pickup dispatcher MUST filter it out so a second worker doesn't get spawned on top of the first.",
+      "url": "https://linear.app/example-org/issue/ENG-202/commander-already-working-on-this-one",
+      "state": {
+        "id": "state-uuid-in-progress",
+        "name": "In Progress",
+        "type": "started"
+      },
+      "assignee": {
+        "id": "user-uuid-operator",
+        "email": "operator@example.com",
+        "name": "Operator"
+      },
+      "team": {
+        "id": "team-uuid-eng",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "labels": [],
+      "priority": 3,
+      "createdAt": "2026-04-16T11:00:00Z",
+      "updatedAt": "2026-04-16T11:30:00Z"
+    }
+  ]
+}
