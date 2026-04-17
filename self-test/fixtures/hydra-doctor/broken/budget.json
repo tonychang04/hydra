@@ -1,0 +1,5 @@
+{
+  "phase1_subscription_caps": {
+    "max_concurrent_workers": 3
+  }
+}

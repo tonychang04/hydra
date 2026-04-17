@@ -249,6 +249,74 @@ Requires a local `docker` + `--privileged` to execute. Not run in CI; this is an
 
 ## Troubleshooting
 
+### First-run troubleshooting
+
+Before you SSH into the Machine and start reading raw logs, run the doctor.
+It's the single diagnostic that covers 90% of "why isn't my install working."
+It runs locally, on a VPS, or inside the Fly Machine without modification.
+
+```bash
+# Local laptop
+./hydra doctor
+
+# Inside the Fly Machine
+fly ssh console --app <app> -C '/hydra/hydra doctor'
+```
+
+Every ✗ / ⚠ now ships with an actionable hint line right below it, prefixed
+one of:
+
+| Prefix | Meaning |
+|---|---|
+| `fix:` | Safe command the doctor can run for you (chmod +x, mkdir -p). Offered by `--fix`. |
+| `run:` | Command you should run yourself — usually a package install or a `./setup.sh`. Doctor never auto-runs these. |
+| `manual:` | Edit-a-file instruction — usually a config tweak. No command to run. |
+
+Example output on a broken install:
+
+```
+✗ jq on PATH — not found
+    run: brew install jq    # or apt-get install jq on Linux
+✗ state/repos.json exists — missing
+    run: ./setup.sh    # then edit state/repos.json to list your repos
+⚠ logs/ exists — missing
+    fix: mkdir -p '/hydra/logs'
+```
+
+For the interactive walkthrough, add `--fix`:
+
+```bash
+./hydra doctor --fix
+```
+
+For each fixable issue, doctor prompts:
+
+```
+  [1/3] ⚠ logs/ exists
+        fix: mkdir -p '/hydra/logs'
+        ▸ _
+```
+
+- `y` → run the fix command.
+- `n` → skip this one.
+- `s` → show the exact command that would run, then re-prompt.
+- `q` → quit the walkthrough; remaining items are untouched.
+
+`--fix` only auto-runs narrowly safe commands (chmod +x on a script that lost
+its bit, mkdir -p on missing directories). Doctor deliberately does NOT
+auto-install binaries (`brew install jq`), re-auth to GitHub (`gh auth login`),
+or edit your JSON config files — those print as `run:` / `manual:` hints
+instead. The guardrail is there so operators keep control of anything with a
+real blast radius.
+
+`--fix` requires an interactive terminal. In CI or scripted contexts, use
+`--fix-safe` instead — it applies the same narrow set of fixes without
+prompting.
+
+Spec: [`docs/specs/2026-04-17-doctor-fix-mode.md`](specs/2026-04-17-doctor-fix-mode.md) · Ticket: [#104](https://github.com/tonychang04/hydra/issues/104).
+
+### Common symptoms
+
 | Symptom | Check |
 |---|---|
 | Machine won't start, logs show `Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set` | `fly secrets list --app <app>` — re-run `fly secrets set` for the missing var. |
@@ -256,6 +324,7 @@ Requires a local `docker` + `--privileged` to execute. Not run in CI; this is an
 | `tmux attach` shows an empty pane | Commander exited; `fly logs` shows why. Most likely cause: bad OAuth token or rate limit. |
 | Deploy hangs on "Waiting for healthy status" | `grace_period` in `fly.toml` is 30s — commander takes longer than that on first boot on slow links. Retry `fly deploy`; subsequent boots are faster. |
 | Lost state after deploy | Verify the volume is still attached: `fly volumes list --app <app>`. If the volume is gone, you created a new app without re-attaching — don't `fly apps destroy` without first `fly volumes snapshot`. |
+| Doctor reports a ✗ with no hint below it | File a bug — every ✗ should have a hint. The `doctor-fix-smoke` self-test case is the regression gate. |
 
 ## Repo cloning on Fly
 

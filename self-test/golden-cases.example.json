@@ -2058,6 +2058,53 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "doctor-fix-smoke",
+      "_description": "Script-only self-test for scripts/hydra-doctor.sh --fix mode (ticket #104, spec docs/specs/2026-04-17-doctor-fix-mode.md). Runs doctor against a deliberately-broken fixture (self-test/fixtures/hydra-doctor/broken/) with HYDRA_ROOT overridden, and asserts (a) every ✗ / ⚠ line is immediately followed by an actionable hint prefixed fix:, run:, or manual:; (b) --fix-safe creates the missing logs/ directory (backward-compat with ticket #36's --fix-safe path); (c) --help advertises --fix; (d) --fix with stdin closed and no /dev/tty doesn't crash — the walkthrough aborts gracefully. Skipped categories: environment/integrations/self-test (they inspect the host, not HYDRA_ROOT). Any new check added to hydra-doctor without a fix_hint will cause step (a) to fail — that's the intended regression gate.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-doctor.sh --help advertises --fix",
+          "cmd": "NO_COLOR=1 scripts/hydra-doctor.sh --help | grep -q -- '--fix' && echo HELP_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HELP_OK"
+        },
+        {
+          "name": "config category against broken fixture → every ✗ has a hint",
+          "cmd": "OUT=$(HYDRA_ROOT=self-test/fixtures/hydra-doctor/broken NO_COLOR=1 scripts/hydra-doctor.sh --category=config 2>&1 || true); fail_count=$(printf '%s\\n' \"$OUT\" | grep -c '^  ✗ ' || true); hint_count=$(printf '%s\\n' \"$OUT\" | grep -cE '^      (fix|run|manual): ' || true); [ \"$fail_count\" -ge 2 ] && [ \"$fail_count\" -eq \"$hint_count\" ] && echo \"HINTS_OK fails=$fail_count hints=$hint_count\"",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HINTS_OK"
+        },
+        {
+          "name": "runtime category against broken fixture → every ✗/⚠ has a hint",
+          "cmd": "OUT=$(HYDRA_ROOT=self-test/fixtures/hydra-doctor/broken NO_COLOR=1 scripts/hydra-doctor.sh --category=runtime 2>&1 || true); bad_count=$(printf '%s\\n' \"$OUT\" | grep -cE '^  (✗|⚠) ' || true); hint_count=$(printf '%s\\n' \"$OUT\" | grep -cE '^      (fix|run|manual): ' || true); [ \"$bad_count\" -ge 3 ] && [ \"$bad_count\" -eq \"$hint_count\" ] && echo \"HINTS_OK bad=$bad_count hints=$hint_count\"",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HINTS_OK"
+        },
+        {
+          "name": "--fix-safe against fixture creates missing logs/ (backward-compat with #36)",
+          "cmd": "rm -rf self-test/fixtures/hydra-doctor/broken/logs; HYDRA_ROOT=self-test/fixtures/hydra-doctor/broken NO_COLOR=1 scripts/hydra-doctor.sh --category=runtime --fix-safe >/dev/null 2>&1 || true; [ -d self-test/fixtures/hydra-doctor/broken/logs ] && echo FIX_SAFE_OK; rm -rf self-test/fixtures/hydra-doctor/broken/logs",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FIX_SAFE_OK"
+        },
+        {
+          "name": "--fix with stdin closed ends walkthrough gracefully (no bash abort)",
+          "cmd": "HYDRA_ROOT=self-test/fixtures/hydra-doctor/broken NO_COLOR=1 scripts/hydra-doctor.sh --category=config --fix </dev/null >/tmp/hydra-doctor-fix.out 2>&1 || true; grep -q 'Summary:' /tmp/hydra-doctor-fix.out && echo FIX_NONINTERACTIVE_OK; rm -f /tmp/hydra-doctor-fix.out",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FIX_NONINTERACTIVE_OK"
+        },
+        {
+          "name": "broken-fixture config category exits 1 (integration smoke)",
+          "cmd": "HYDRA_ROOT=self-test/fixtures/hydra-doctor/broken NO_COLOR=1 scripts/hydra-doctor.sh --category=config >/dev/null 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo EXIT1_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "EXIT1_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
