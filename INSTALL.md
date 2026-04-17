@@ -74,6 +74,8 @@ See [`docs/phase2-vps-runbook.md` → "Migrating from local to cloud"](docs/phas
 
 Once commander is live on Fly, your **main agent** (your own Claude Code session, a custom supervisor bot, OpenClaw, Hermes, etc.) connects as an MCP client and calls `hydra.*` tools to dispatch work.
 
+For per-client recipes (Claude Code, Cursor, Zed, OpenClaw, generic MCP) with copy-pasteable config, sanity checks, and common-failure troubleshooting, see **[docs/connecting-your-agent/](docs/connecting-your-agent/)**. The steps below are the manual primitive the `./hydra pair-agent` wrapper automates.
+
 1. **Generate a bearer token for the main agent** (run on the commander):
    ```bash
    fly ssh console --app <your-app> -C './hydra mcp register-agent main-agent'
