@@ -235,6 +235,25 @@ Type:
 
 Full command reference in [USING.md](USING.md).
 
+## Phase 2 (optional): Deploy Commander to Fly.io
+
+Run commander on a cheap Linux VPS instead of (or in addition to) your laptop. Keeps it up while you sleep, works from your phone over Slack/SSH, same Max subscription — no metered API bills.
+
+**TL;DR one command:**
+```bash
+./scripts/deploy-vps.sh
+```
+
+The script prompts for the Fly app name, region, your `CLAUDE_CODE_OAUTH_TOKEN` (generate with `claude setup-token` on a host where you're already signed into Claude Code Max), and your `GITHUB_TOKEN`. It then runs `fly launch --copy-config`, stages the secrets, creates a persistent volume for state/memory/logs, and deploys.
+
+**Full walkthrough, cost estimates, rollback, monitoring, security notes:** [`docs/phase2-vps-runbook.md`](docs/phase2-vps-runbook.md).
+
+**Decision record / architecture:** [`docs/specs/2026-04-16-vps-deployment.md`](docs/specs/2026-04-16-vps-deployment.md).
+
+**Non-Fly operators** (Hetzner, Digital Ocean, bare Debian): use `infra/systemd/hydra.service` — install steps are in the comments at the top of that file.
+
+Scope note: this ships the core deploy artifacts (Dockerfile, `fly.toml`, entrypoint, deploy script, docs). The webhook receiver (GitHub/Linear) and Slack bot are separate follow-ups — track in [#40](https://github.com/tonychang04/hydra/issues/40), [#41](https://github.com/tonychang04/hydra/issues/41), [#42](https://github.com/tonychang04/hydra/issues/42).
+
 ## Phase 2 — cloud knowledge store (optional)
 
 Phase 1 keeps every learned pattern, every log, and every piece of runtime state on the operator's Mac. Phase 2 moves the heavy stuff to AWS so multiple commander instances can share memory and a commander running on a cloud VM keeps working after a laptop dies.

@@ -1,0 +1,46 @@
+# Keep the Hydra VPS image lean + avoid baking operator state into it.
+# Anything operator-specific should come from Fly volumes / secrets at runtime,
+# not the built image.
+
+# VCS
+.git
+.github
+.gitignore
+
+# Hydra local state — rebuilt from example files on first volume boot.
+state/active.json
+state/autopickup.json
+state/budget-used.json
+state/memory-citations.json
+state/quota-health.json
+state/repos.json
+state/linear.json
+
+# Logs + per-ticket work artifacts
+logs/*.json
+logs/*.log
+commander.log
+
+# Local commander control files
+commander/PAUSE
+
+# Node / tooling caches (in case of self-test adjacent tooling)
+node_modules
+.npm
+.pnpm-store
+.cache
+
+# Editor/tmp
+.DS_Store
+*.swp
+*.swo
+.idea
+.vscode
+
+# Shell envs
+.env
+.env.*
+.hydra.env
+
+# Built docker/fly metadata
+.fly/
