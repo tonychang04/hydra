@@ -1,6 +1,11 @@
 {
   "_description": "Template for your own golden self-test cases. Copy to golden-cases.json and add your validated closed PRs. Commander runs workers against these in dryrun mode and compares output. A regression means a commander prompt change made worker output meaningfully worse.",
   "_how_to_add": "After a manual Stage-0 validation of a closed PR in one of your repos, capture: repo, pr_num, parent_commit (pre-fix), key assertions (what the worker MUST produce), and minimum quality signals (tests added? no source regressions? build passes?).",
+  "_requires_legend": {
+    "requires_docker": "Skip the case if `docker info` fails (no docker daemon reachable). Used by cases that spin up localstack / test containers.",
+    "requires_linear_mcp": "Skip the case if the Linear MCP server isn't installed.",
+    "requires_gh_auth": "Skip the case if `gh auth status` fails."
+  },
   "cases": [
     {
       "id": "example-case-id",
@@ -324,6 +329,36 @@
           "name": "runner skips worker-implementation kind cleanly",
           "cmd": "NO_COLOR=1 ./self-test/run.sh --kind=worker-implementation 2>&1 | grep -F 'SKIP: requires Claude auth'",
           "expected_exit": 0
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "s3-backend-roundtrip",
+      "_description": "Script-only self-test for scripts/state-get.sh + scripts/state-put.sh against a localstack-backed DynamoDB (Phase 2 adapter — see docs/specs/2026-04-16-s3-knowledge-store.md and ticket #13). Spins up localstack via docker compose, creates the bucket + commander-* tables, puts a JSON blob via state-put.sh (dynamodb backend, localstack endpoint), reads it back via state-get.sh, compares bit-for-bit, tears down. Marked requires_docker: skipped on machines where `docker info` fails.",
+      "kind": "script",
+      "requires": ["requires_docker"],
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "local-mode smoke — backend unset defaults to local and roundtrips a JSON blob",
+          "cmd": "tmp=$(mktemp -d) && echo '{\"workers\":[],\"last_updated\":null}' > \"$tmp/active.json\" && scripts/state-get.sh --key active --state-dir \"$tmp\" && echo '{\"workers\":[{\"id\":\"w1\"}],\"last_updated\":\"2026-04-16T00:00:00Z\"}' | scripts/state-put.sh --key active --state-dir \"$tmp\" && scripts/state-get.sh --key active --state-dir \"$tmp\"",
+          "expected_exit": 0,
+          "expected_stdout_contains": "w1"
+        },
+        {
+          "name": "memory-mount.sh --dry-run prints the mount-s3 command when env is set",
+          "cmd": "HYDRA_S3_BUCKET=fx HYDRA_S3_PREFIX=test HYDRA_EXTERNAL_MEMORY_DIR=/tmp/hydra-fx-$$ HYDRA_AWS_REGION=us-east-1 scripts/memory-mount.sh --dry-run",
+          "expected_exit": 0,
+          "expected_stdout_contains": "dry-run"
+        },
+        {
+          "name": "localstack e2e roundtrip (put via dynamodb backend, get, compare)",
+          "cmd": "self-test/fixtures/s3-backend/run-e2e.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
         }
       ],
       "last_run": null,

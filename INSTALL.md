@@ -187,6 +187,96 @@ Type:
 
 Full command reference in [USING.md](USING.md).
 
+## Phase 2 — cloud knowledge store (optional)
+
+Phase 1 keeps every learned pattern, every log, and every piece of runtime state on the operator's Mac. Phase 2 moves the heavy stuff to AWS so multiple commander instances can share memory and a commander running on a cloud VM keeps working after a laptop dies.
+
+**Read first:** `docs/phase2-s3-knowledge-store.md` (the why / what-lives-where design) and `docs/specs/2026-04-16-s3-knowledge-store.md` (the implementation notes for this adapter).
+
+**This is an operator-led migration.** Hydra ships the adapters; the operator provisions the AWS resources. Nothing below is automated — every step below produces a real resource in your AWS account.
+
+### 1. Provision the bucket + tables
+
+Create these in the region you want Hydra to live in:
+
+- **S3 bucket** — one per commander instance, e.g. `my-commander-knowledge-<instance>`.
+  - Enable **versioning** (so memory edits are recoverable).
+  - Enable **SSE-KMS** with an operator-owned CMK (not the AWS-managed `aws/s3` key). Memory files can contain internal ticket bodies.
+- **DynamoDB tables** (PAY_PER_REQUEST is fine; each table is a single row):
+  - `commander-active` — in-flight workers
+  - `commander-budget` — daily counters
+  - `commander-memory-citations` — citation leaderboard
+  - All three use partition key `id` (string).
+
+### 2. Create an IAM role with scoped permissions
+
+The role the commander VM (or your local laptop, via `aws sso login` / profile assume) assumes needs:
+
+```
+s3:ListBucket                on arn:aws:s3:::<bucket>
+s3:GetObject, s3:PutObject,
+s3:DeleteObject              on arn:aws:s3:::<bucket>/<prefix>/*
+dynamodb:GetItem, PutItem,
+dynamodb:UpdateItem          on arn:aws:dynamodb:<region>:<acct>:table/commander-active
+                                 arn:aws:dynamodb:<region>:<acct>:table/commander-budget
+                                 arn:aws:dynamodb:<region>:<acct>:table/commander-memory-citations
+kms:Decrypt, kms:GenerateDataKey
+                              on the CMK used for the bucket (via key policy grant)
+```
+
+Keep this role scoped to the single prefix and the three tables. No `*:*`.
+
+### 3. Install `mount-s3`
+
+Mountpoint-for-Amazon-S3 is AWS's POSIX-ish layer over a bucket. Hydra does not bundle it.
+
+```bash
+# macOS
+brew install --cask mountpoint-s3
+
+# Linux — see https://github.com/awslabs/mountpoint-s3/blob/main/doc/INSTALL.md
+
+mount-s3 --version   # confirm install
+```
+
+### 4. Configure env
+
+```bash
+cp .env.hydra-phase2.example .env.hydra-phase2
+$EDITOR .env.hydra-phase2   # fill in bucket, prefix, region
+```
+
+Source it in whichever shell runs `./hydra`:
+```bash
+set -a; source .env.hydra-phase2; set +a
+```
+
+The file is gitignored — never commits.
+
+### 5. Mount and validate
+
+```bash
+./scripts/memory-mount.sh
+# → mounts s3://<bucket>/<prefix>/ at $HYDRA_EXTERNAL_MEMORY_DIR
+
+ls "$HYDRA_EXTERNAL_MEMORY_DIR"/memory/       # framework + per-instance files
+ls "$HYDRA_EXTERNAL_MEMORY_DIR"/logs/         # per-ticket logs
+
+./scripts/state-get.sh --key active           # reads active.json from DynamoDB
+```
+
+Unmount when finished (macOS: `umount $HYDRA_EXTERNAL_MEMORY_DIR`; Linux: `fusermount -u $HYDRA_EXTERNAL_MEMORY_DIR`).
+
+### 6. Rolling back
+
+Remove or unset `HYDRA_STATE_BACKEND` (or set it to `local`). Hydra's scripts revert to local JSON files with no other changes. The S3 bucket + DynamoDB rows are left intact so you can re-flip later.
+
+### Caveats — what's NOT automated
+
+- Bucket / table / IAM / KMS provisioning (by design — these are your account, not Hydra's).
+- Automatic migration of existing local memory into S3. Do that with `aws s3 sync memory/ s3://<bucket>/<prefix>/memory/` once, then delete the local copy.
+- mount-s3 supervision. If it dies, Hydra will see an empty `memory/` and escalate. Restart the mount.
+
 ## Updating Hydra
 
 ```bash

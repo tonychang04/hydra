@@ -20,6 +20,10 @@ PAUSE
 .hydra.env
 hydra
 
+# Phase 2 (cloud knowledge store) — real env is per-operator, contains
+# bucket + region + table names. Template committed as .example.
+.env.hydra-phase2
+
 # Operator-specific config with absolute paths
 .claude/settings.local.json
 !.claude/settings.local.json.example
