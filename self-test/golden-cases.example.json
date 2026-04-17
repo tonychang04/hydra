@@ -213,6 +213,101 @@
       "last_result": null
     },
     {
+      "id": "hydra-cli-subcommands-valid",
+      "_description": "Script-only self-test for the non-chat CLI subcommands added in ticket #25 (spec: docs/specs/2026-04-16-hydra-cli.md). Syntax-checks each new helper, exercises --help, runs list-repos against a deterministic fixture, and round-trips pause/resume. Runs locally; no worker spawn, no chat, no network. Commander runs this before committing changes to any scripts/hydra-*.sh that were introduced for the CLI subcommand set.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "bash -n passes on every new hydra-*.sh CLI helper",
+          "cmd": "for s in scripts/hydra-add-repo.sh scripts/hydra-remove-repo.sh scripts/hydra-list-repos.sh scripts/hydra-status.sh scripts/hydra-pause.sh scripts/hydra-resume.sh scripts/hydra-issue.sh; do bash -n \"$s\" || { echo \"FAIL: $s\"; exit 1; }; done && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-add-repo.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-add-repo.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra add-repo"
+        },
+        {
+          "name": "hydra-remove-repo.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-remove-repo.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra remove-repo"
+        },
+        {
+          "name": "hydra-list-repos.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-list-repos.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra list-repos"
+        },
+        {
+          "name": "hydra-status.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-status.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra status"
+        },
+        {
+          "name": "hydra-pause.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-pause.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra pause"
+        },
+        {
+          "name": "hydra-resume.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-resume.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra resume"
+        },
+        {
+          "name": "hydra-issue.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-issue.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra issue"
+        },
+        {
+          "name": "hydra-add-repo.sh refuses a bad slug (exit 1)",
+          "cmd": "NO_COLOR=1 scripts/hydra-add-repo.sh not-a-slug 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo BADSLUG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADSLUG_OK"
+        },
+        {
+          "name": "hydra-add-repo.sh refuses a nonexistent local-path (exit 1)",
+          "cmd": "NO_COLOR=1 scripts/hydra-add-repo.sh foo/bar --local-path /nonexistent/path/for/fixture --non-interactive 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo NOPATH_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NOPATH_OK"
+        },
+        {
+          "name": "hydra-list-repos.sh against fixture emits 3 rows + header",
+          "cmd": "NO_COLOR=1 scripts/hydra-list-repos.sh --state-file self-test/fixtures/hydra-cli/repos-fixture.json | grep -c '^fixture-org/'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "3"
+        },
+        {
+          "name": "hydra-list-repos.sh fixture shows NAME header",
+          "cmd": "NO_COLOR=1 scripts/hydra-list-repos.sh --state-file self-test/fixtures/hydra-cli/repos-fixture.json | grep -F 'NAME'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NAME"
+        },
+        {
+          "name": "hydra-issue.sh refuses garbage arg (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/hydra-issue.sh not-a-valid-ref 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo PARSE_ERR",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PARSE_ERR"
+        },
+        {
+          "name": "repos fixture is valid JSON",
+          "cmd": "jq empty self-test/fixtures/hydra-cli/repos-fixture.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "hydra-doctor-runs-clean",
       "_description": "Script-only self-test for scripts/hydra-doctor.sh. Exercises the Scripts category in isolation — deterministic, doesn't depend on external state, so it's safe to run in any Hydra worktree. Also asserts --help prints usage. Commander runs this before committing changes to scripts/hydra-doctor.sh. Spec: docs/specs/2026-04-16-hydra-doctor.md (ticket #36).",
       "kind": "script",

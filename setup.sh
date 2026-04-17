@@ -105,22 +105,48 @@ else
 #                            running?"). Does NOT exec claude.
 #   ./hydra doctor [args]    Run the install sanity-check (scripts/hydra-doctor.sh).
 #                            Diagnostic only; does not launch commander.
+#
+# Non-chat CLI subcommands (spec: docs/specs/2026-04-16-hydra-cli.md, ticket #25).
+# These dispatch to scripts/hydra-*.sh helpers WITHOUT launching a Claude session.
+# Safe for scripts / cron / SSH / daily-ops muscle memory.
+#
+#   ./hydra add-repo <owner>/<name> [args]   Interactive wizard: add a repo.
+#   ./hydra remove-repo <owner>/<name>       Remove a repo entry.
+#   ./hydra list-repos                       Table view of state/repos.json.
+#   ./hydra status [--with-tickets]          Read-only Hydra state snapshot.
+#   ./hydra pause [--reason <text>]          Toggle PAUSE on.
+#   ./hydra resume                           Toggle PAUSE off.
+#   ./hydra issue <url-or-owner/repo/num>    Queue a specific issue for next tick.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Subcommand: doctor — run scripts/hydra-doctor.sh and exit. No commander launch.
-if [[ "${1:-}" == "doctor" ]]; then
-  shift
-  [[ -x scripts/hydra-doctor.sh ]] || {
-    echo "✗ scripts/hydra-doctor.sh missing or not executable." >&2
+# ---------------------------------------------------------------------------
+# Subcommand dispatch — these never launch the Commander Claude session.
+# Each helper sources .hydra.env itself; we still source it here so the
+# helpers pick up HYDRA_ROOT even if they're invoked without the launcher.
+# ---------------------------------------------------------------------------
+hydra_exec_helper() {
+  local script="$1"; shift
+  [[ -x "$script" ]] || {
+    echo "✗ $script missing or not executable." >&2
     exit 1
   }
-  # Source .hydra.env if present so doctor sees HYDRA_ROOT / HYDRA_EXTERNAL_MEMORY_DIR.
   # shellcheck disable=SC1091
   [[ -f .hydra.env ]] && source .hydra.env
-  exec scripts/hydra-doctor.sh "$@"
-fi
+  exec "$script" "$@"
+}
+
+case "${1:-}" in
+  doctor)       shift; hydra_exec_helper scripts/hydra-doctor.sh "$@" ;;
+  add-repo)     shift; hydra_exec_helper scripts/hydra-add-repo.sh "$@" ;;
+  remove-repo)  shift; hydra_exec_helper scripts/hydra-remove-repo.sh "$@" ;;
+  list-repos)   shift; hydra_exec_helper scripts/hydra-list-repos.sh "$@" ;;
+  status)       shift; hydra_exec_helper scripts/hydra-status.sh "$@" ;;
+  pause)        shift; hydra_exec_helper scripts/hydra-pause.sh "$@" ;;
+  resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
+  issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
+esac
 
 # --version short-circuits before any env/auth sanity checks so it works on a
 # broken / partially-installed tree. Read the VERSION file verbatim (strip

@@ -12,6 +12,7 @@ state/repos.json
 state/linear.json
 state/autopickup.json
 state/commander.lock
+state/pending-dispatches.json
 
 # Live operational artifacts
 logs/*

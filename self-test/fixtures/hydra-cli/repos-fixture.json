@@ -1,0 +1,27 @@
+{
+  "_description": "Minimal fixture consumed by the hydra-cli-subcommands-valid self-test case (kind: script). 3 repos, each with full required fields. Used to assert scripts/hydra-list-repos.sh produces a table with the right row count and header shape without touching operator state.",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "fixture-org",
+      "name": "alpha",
+      "local_path": "/tmp/fixture/alpha",
+      "enabled": true,
+      "ticket_trigger": "assignee"
+    },
+    {
+      "owner": "fixture-org",
+      "name": "beta",
+      "local_path": "/tmp/fixture/beta",
+      "enabled": true,
+      "ticket_trigger": "label"
+    },
+    {
+      "owner": "fixture-org",
+      "name": "gamma",
+      "local_path": "/tmp/fixture/gamma",
+      "enabled": false,
+      "ticket_trigger": "assignee"
+    }
+  ]
+}

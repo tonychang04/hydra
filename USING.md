@@ -134,6 +134,8 @@ Commander `SendMessage`s the worker AND appends your answer to `memory/escalatio
 
 ## Daily operations
 
+### From the Commander chat (interactive)
+
 - **Morning check-in:** `status` — see what's running, today's numbers, anything stuck
 - **See the queue:** `show me 5 ready tickets` — inspection only, no spawning
 - **Burst:** `pick up 3` when you want parallel throughput
@@ -141,6 +143,29 @@ Commander `SendMessage`s the worker AND appends your answer to `memory/escalatio
 - **Going AFK:** `pause` before you step out, `resume` when back
 - **Emergency:** `kill <head-id>` for a runaway
 - **End of week:** `quota` / `cost today` to see usage; browse `logs/*.json` to see what shipped
+
+### From any terminal (no chat needed)
+
+Routine ops are also exposed as `./hydra <subcommand>` — no Claude session launch, no waiting for a greeting. Safe for scripts, cron, or SSH from your phone. Spec: `docs/specs/2026-04-16-hydra-cli.md` (ticket #25).
+
+```bash
+./hydra status                                   # read-only snapshot
+./hydra status --with-tickets                    # also count `gh issue list @me`
+./hydra pause --reason "debugging prod incident" # toggle PAUSE on
+./hydra resume                                   # toggle PAUSE off
+./hydra list-repos                               # table view of state/repos.json
+./hydra add-repo your-org/new-repo               # interactive wizard
+./hydra add-repo your-org/new-repo \             # non-interactive variant
+    --local-path ~/code/new-repo \
+    --trigger assignee \
+    --non-interactive
+./hydra remove-repo your-org/new-repo            # remove an entry
+./hydra issue https://github.com/foo/bar/issues/42  # queue for next tick
+./hydra issue foo/bar#42                         # same, shorter form
+./hydra doctor                                   # install sanity-check
+```
+
+These subcommands edit `state/repos.json` and `state/pending-dispatches.json` directly via atomic writes (tmp + mv); they never spawn a worker. `./hydra issue` appends to a queue that the Commander's autopickup tick drains first — useful when you want a specific ticket processed now but don't want to open chat. `pause` / `resume` toggle the `PAUSE` file that the Commander respects at spawn time.
 
 ## Self-testing Hydra itself
 
