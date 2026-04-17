@@ -1,0 +1,36 @@
+{
+  "_description": "Fixture: object-form merge_policy on three repos. Exercises Hydra-self-hosted's {T1:human, T2:human} lock-down, the sweet-spot {T1:auto, T2:auto_if_review_clean} for a team repo, and a repo with NO override (falls through to policy.md defaults). See docs/specs/2026-04-17-per-repo-merge-policy.md.",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "tonychang04",
+      "name": "hydra",
+      "local_path": "/fixture/hydra",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": {
+        "T1": "human",
+        "T2": "human",
+        "T3": "never"
+      }
+    },
+    {
+      "owner": "fixture-org",
+      "name": "team-repo",
+      "local_path": "/fixture/team-repo",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": {
+        "T1": "auto",
+        "T2": "auto_if_review_clean"
+      }
+    },
+    {
+      "owner": "fixture-org",
+      "name": "default-repo",
+      "local_path": "/fixture/default-repo",
+      "enabled": true,
+      "ticket_trigger": "assignee"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "_description": "Fixture: legacy string-form merge_policy. Pre-#20 shape that must keep working. `auto-t1` maps to T1→auto, T2→human; `human-all` maps all tiers to human; `refuse-all` maps all tiers to never.",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "fixture-org",
+      "name": "legacy-auto-t1",
+      "local_path": "/fixture/legacy-auto-t1",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": "auto-t1"
+    },
+    {
+      "owner": "fixture-org",
+      "name": "legacy-human-all",
+      "local_path": "/fixture/legacy-human-all",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": "human-all"
+    },
+    {
+      "owner": "fixture-org",
+      "name": "legacy-refuse-all",
+      "local_path": "/fixture/legacy-refuse-all",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": "refuse-all"
+    }
+  ]
+}

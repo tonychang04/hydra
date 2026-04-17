@@ -653,6 +653,152 @@
       "last_result": null
     },
     {
+      "id": "repo-merge-policy-override",
+      "_description": "Script-only self-test: exercises scripts/merge-policy-lookup.sh against fixtures under self-test/fixtures/merge-policy/. Covers: (a) object-form overrides — Hydra self-hosted {T1:human, T2:human} lock-down and the sweet-spot {T1:auto, T2:auto_if_review_clean} team-repo config; (b) back-compat fall-through when merge_policy is absent (T1→auto, T2→human per policy.md); (c) T3 hardcoded `never` regardless of override (safety rail); (d) legacy string-form merge_policy (`auto-t1`, `human-all`, `refuse-all`); (e) error paths (unknown repo, bad tier, bad slug). Also asserts the schema accepts both fixture shapes. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to scripts/merge-policy-lookup.sh, state/schemas/repos.schema.json, or state/repos.example.json's merge_policy block. Spec: docs/specs/2026-04-17-per-repo-merge-policy.md (ticket #20).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "bash -n clean on merge-policy-lookup.sh",
+          "cmd": "bash -n scripts/merge-policy-lookup.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "--help prints usage",
+          "cmd": "NO_COLOR=1 scripts/merge-policy-lookup.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: merge-policy-lookup.sh"
+        },
+        {
+          "name": "object form: Hydra self-hosted T1 → human (framework lock-down)",
+          "cmd": "scripts/merge-policy-lookup.sh tonychang04/hydra T1 --repos-file self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "human"
+        },
+        {
+          "name": "object form: Hydra self-hosted T2 → human (framework lock-down)",
+          "cmd": "scripts/merge-policy-lookup.sh tonychang04/hydra T2 --repos-file self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "human"
+        },
+        {
+          "name": "object form: team-repo T1 → auto",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/team-repo T1 --repos-file self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "auto"
+        },
+        {
+          "name": "object form: team-repo T2 → auto_if_review_clean",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/team-repo T2 --repos-file self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "auto_if_review_clean"
+        },
+        {
+          "name": "absent merge_policy: T1 falls through to auto (policy.md default)",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/default-repo T1 --repos-file self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "auto"
+        },
+        {
+          "name": "absent merge_policy: T2 falls through to human (policy.md default)",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/default-repo T2 --repos-file self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "human"
+        },
+        {
+          "name": "T3 hardcoded never even when override present",
+          "cmd": "scripts/merge-policy-lookup.sh tonychang04/hydra T3 --repos-file self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "never"
+        },
+        {
+          "name": "T3 hardcoded never on a repo with no merge_policy",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/default-repo T3 --repos-file self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "never"
+        },
+        {
+          "name": "legacy string: auto-t1 maps T1→auto",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/legacy-auto-t1 T1 --repos-file self-test/fixtures/merge-policy/repos-legacy-string.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "auto"
+        },
+        {
+          "name": "legacy string: auto-t1 maps T2→human",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/legacy-auto-t1 T2 --repos-file self-test/fixtures/merge-policy/repos-legacy-string.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "human"
+        },
+        {
+          "name": "legacy string: human-all maps T1→human",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/legacy-human-all T1 --repos-file self-test/fixtures/merge-policy/repos-legacy-string.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "human"
+        },
+        {
+          "name": "legacy string: refuse-all maps T1→never",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/legacy-refuse-all T1 --repos-file self-test/fixtures/merge-policy/repos-legacy-string.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "never"
+        },
+        {
+          "name": "legacy string: refuse-all maps T2→never",
+          "cmd": "scripts/merge-policy-lookup.sh fixture-org/legacy-refuse-all T2 --repos-file self-test/fixtures/merge-policy/repos-legacy-string.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "never"
+        },
+        {
+          "name": "unknown repo exits 1",
+          "cmd": "scripts/merge-policy-lookup.sh nonexistent/repo T1 --repos-file self-test/fixtures/merge-policy/repos-object-form.json 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo UNKNOWN_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "UNKNOWN_OK"
+        },
+        {
+          "name": "bad tier exits 2",
+          "cmd": "scripts/merge-policy-lookup.sh tonychang04/hydra T7 --repos-file self-test/fixtures/merge-policy/repos-object-form.json 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BAD_TIER_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BAD_TIER_OK"
+        },
+        {
+          "name": "bad slug exits 2",
+          "cmd": "scripts/merge-policy-lookup.sh not-a-slug T1 --repos-file self-test/fixtures/merge-policy/repos-object-form.json 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BAD_SLUG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BAD_SLUG_OK"
+        },
+        {
+          "name": "missing repos file exits 1",
+          "cmd": "scripts/merge-policy-lookup.sh tonychang04/hydra T1 --repos-file /nonexistent/path.json 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo NOFILE_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NOFILE_OK"
+        },
+        {
+          "name": "schema accepts object-form fixture",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/repos.schema.json self-test/fixtures/merge-policy/repos-object-form.json",
+          "expected_exit": 0
+        },
+        {
+          "name": "schema accepts legacy-string fixture",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/repos.schema.json self-test/fixtures/merge-policy/repos-legacy-string.json",
+          "expected_exit": 0
+        },
+        {
+          "name": "state/repos.example.json still validates after the merge_policy additions",
+          "cmd": "scripts/validate-state.sh --schema state/schemas/repos.schema.json state/repos.example.json",
+          "expected_exit": 0
+        },
+        {
+          "name": "lookup against state/repos.example.json: Hydra self-hosted T2 → human",
+          "cmd": "scripts/merge-policy-lookup.sh tonychang04/hydra T2 --repos-file state/repos.example.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "human"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "memory-validators",
       "_description": "Script-only self-test: exercises scripts/parse-citations.sh, scripts/validate-learning-entry.sh, and scripts/validate-citations.sh against fixtures under self-test/fixtures/memory-validator/. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to any of those scripts or the memory schema.",
       "kind": "script",

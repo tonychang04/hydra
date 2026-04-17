@@ -8,20 +8,29 @@
   },
   "repos": [
     {
-      "_comment": "DOGFOOD — Hydra working on Hydra itself. File issues on tonychang04/hydra (or your fork), assign to yourself, and let a worker implement a spec from docs/specs/. See DEVELOPING.md.",
+      "_comment": "DOGFOOD — Hydra working on Hydra itself. File issues on tonychang04/hydra (or your fork), assign to yourself, and let a worker implement a spec from docs/specs/. See DEVELOPING.md. `merge_policy` locks Hydra self-hosted to human-merge for every tier — framework changes are high-impact and irreversible on a live commander (per ticket #20). T3 is hardcoded `never` elsewhere; the key here is documentation only.",
       "owner": "tonychang04",
       "name": "hydra",
       "local_path": "REPLACE_WITH_ABSOLUTE_PATH_TO_YOUR_HYDRA_CLONE",
       "enabled": false,
-      "ticket_trigger": "assignee"
+      "ticket_trigger": "assignee",
+      "merge_policy": {
+        "T1": "human",
+        "T2": "human",
+        "T3": "never"
+      }
     },
     {
-      "_comment": "Your own repo — the normal use case. One entry per repo you want Hydra to clear tickets in.",
+      "_comment": "Your own repo — the normal use case. `merge_policy` is optional: omit it to inherit the global policy.md defaults (T1 auto-merge, T2 human). The example here is the sweet-spot config for a team repo — auto-merge T1, auto-merge T2 only if worker-review returns 0 blockers (operator sees only PRs that needed judgment). Remove the merge_policy block entirely to fall back to the default. See docs/specs/2026-04-17-per-repo-merge-policy.md.",
       "owner": "your-org",
       "name": "your-repo",
       "local_path": "/absolute/path/to/your/local/clone",
       "enabled": true,
-      "ticket_trigger": "assignee"
+      "ticket_trigger": "assignee",
+      "merge_policy": {
+        "T1": "auto",
+        "T2": "auto_if_review_clean"
+      }
     },
     {
       "_comment": "Another repo of yours, using the label trigger instead of assignee.",
