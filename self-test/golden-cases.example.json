@@ -164,6 +164,45 @@
       },
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "memory-validators",
+      "_description": "Script-only self-test: exercises scripts/parse-citations.sh, scripts/validate-learning-entry.sh, and scripts/validate-citations.sh against fixtures under self-test/fixtures/memory-validator/. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to any of those scripts or the memory schema.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "parse-citations emits citations delta from fixture report",
+          "cmd": "scripts/parse-citations.sh --memory-dir self-test/fixtures/memory-validator self-test/fixtures/memory-validator/worker-report-sample.txt",
+          "expected_exit": 0,
+          "expected_stdout_jq": ".citations | length == 3"
+        },
+        {
+          "name": "validate-learning-entry passes on valid fixture",
+          "cmd": "scripts/validate-learning-entry.sh self-test/fixtures/memory-validator/learnings-sample.md",
+          "expected_exit": 0
+        },
+        {
+          "name": "validate-learning-entry fails on fixture missing frontmatter",
+          "cmd": "scripts/validate-learning-entry.sh self-test/fixtures/memory-validator/learnings-sample-bad.md",
+          "expected_exit": 1,
+          "expected_stderr_contains": "missing frontmatter"
+        },
+        {
+          "name": "validate-citations passes when all quotes are live",
+          "cmd": "scripts/validate-citations.sh --memory-dir self-test/fixtures/memory-validator --citations self-test/fixtures/memory-validator/citations-live.json",
+          "expected_exit": 0
+        },
+        {
+          "name": "validate-citations fails on stale quotes",
+          "cmd": "scripts/validate-citations.sh --memory-dir self-test/fixtures/memory-validator --citations self-test/fixtures/memory-validator/citations-stale.json",
+          "expected_exit": 1,
+          "expected_stderr_contains": "quote not found"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

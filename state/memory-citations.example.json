@@ -1,0 +1,32 @@
+{
+  "_description": "Example / schema file for state/memory-citations.json (real file is gitignored — operator-specific). Copy to state/memory-citations.json when first initializing, or let commander create it lazily on first citation.",
+  "_schema": {
+    "key_format": "<file>#<quote> — e.g. \"learnings-CLI.md#\\\"npm install strips peer markers\\\"\". File part is relative to the memory dir ($HYDRA_EXTERNAL_MEMORY_DIR or ./memory/). Quote may be wrapped in straight double quotes.",
+    "entry": {
+      "count": "integer — total number of times this entry has been cited across all tickets",
+      "last_cited": "YYYY-MM-DD — date of the most recent citation",
+      "tickets": "array of ticket refs that cited this entry (de-duplicated)",
+      "promotion_threshold_reached": "boolean — set by commander when count >= 3 AND tickets.length >= 3 distinct"
+    },
+    "delta_schema": {
+      "_emitted_by": "scripts/parse-citations.sh",
+      "shape": {
+        "citations": {
+          "<file>#<quote>": {
+            "count_delta": "integer — how many MEMORY_CITED lines for this key appeared in one report (usually 1)",
+            "tickets_added": "array of ticket refs to add (usually [current_ticket] or [])"
+          }
+        }
+      },
+      "merge_semantics": "Commander merges delta into state/memory-citations.json by: (1) count += count_delta, (2) tickets = unique(tickets ++ tickets_added), (3) last_cited = today, (4) promotion_threshold_reached = (count >= 3 && distinct(tickets) >= 3)"
+    }
+  },
+  "citations": {
+    "learnings-CLI.md#npm install strips peer markers": {
+      "count": 4,
+      "last_cited": "2026-04-16",
+      "tickets": ["#50", "#61", "#63", "#64"],
+      "promotion_threshold_reached": true
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "_description": "Fixture for scripts/validate-citations.sh self-test. Every key's quoted text must be a live substring of the referenced file (learnings-sample.md).",
+  "citations": {
+    "learnings-sample.md#\"npm install strips peer markers\"": {
+      "count": 1,
+      "last_cited": "2026-04-16",
+      "tickets": ["sample#123"]
+    },
+    "learnings-sample.md#\"Commit specs before code changes\"": {
+      "count": 1,
+      "last_cited": "2026-04-16",
+      "tickets": ["sample#123"]
+    },
+    "learnings-sample.md#\"docker compose up -d\"": {
+      "count": 1,
+      "last_cited": "2026-04-16",
+      "tickets": ["sample#123"]
+    }
+  }
+}
