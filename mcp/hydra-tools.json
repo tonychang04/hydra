@@ -1,5 +1,6 @@
 {
   "_description": "Canonical MCP tool schema registry for Hydra's agent-only interface. Every public verb Commander exposes to an authorized client agent is declared here. This file is the single source of truth — docs/mcp-tool-contract.md mirrors it in prose, and a future MCP server binary reads it to serve tool definitions. Do NOT add tools here without a matching section in docs/mcp-tool-contract.md.",
+  "_see_also": "state/schemas/hydra-status-output.schema.json — canonical shape for ./hydra status --json / ./hydra ps --json. hydra.get_status's output_schema mirrors it. Spec: docs/specs/2026-04-17-json-output-mode.md (ticket #105).",
   "_version": "0.1.0-contract",
   "_scopes": {
     "read": "Non-mutating observation — status, lists, logs. Safe to grant any orchestration agent.",

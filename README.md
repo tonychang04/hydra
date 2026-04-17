@@ -295,7 +295,8 @@ Daily operations and repo management are exposed as `./hydra <subcommand>` calls
 | Command | What it does |
 |---|---|
 | `./hydra doctor [--verbose]` | Install sanity check. Non-destructive. |
-| `./hydra status [--with-tickets]` | Read-only snapshot: active workers, today's throughput, autopickup state, PAUSE, pending queue. |
+| `./hydra status [--with-tickets] [--json]` | Read-only snapshot: active workers, today's throughput, autopickup state, PAUSE, pending queue. `--json` emits the stable shape at `state/schemas/hydra-status-output.schema.json`. |
+| `./hydra ps [--json]` | Per-worker detail from `state/active.json` (id, ticket, tier, minutes_running, status). `--json` shares the status schema's `ps_output` definition. |
 | `./hydra add-repo <owner>/<name>` | Interactive wizard to add a repo to `state/repos.json`. Auto-suggests `local_path`, validates, atomic-writes. `--force` to overwrite an existing entry. |
 | `./hydra remove-repo <owner>/<name>` | Remove a repo entry from `state/repos.json`. |
 | `./hydra list-repos` | Table view of configured repos. |
@@ -305,6 +306,18 @@ Daily operations and repo management are exposed as `./hydra <subcommand>` calls
 | `./hydra activity [--json]` | Text-based observability — last 24h of ticket completions, active + stuck workers, top memory citations, retro counts. `--json` for agent parsing. See **What Hydra is doing** below. |
 
 All subcommands work from any terminal without Commander chat.
+
+#### Driving Hydra from an agent
+
+Any orchestrating agent (OpenClaw, the MCP server binary from #72, an external script) can drive Hydra using `--json` on `status` / `ps`. The output follows [`state/schemas/hydra-status-output.schema.json`](state/schemas/hydra-status-output.schema.json) — stable, additive-only, top-level `version` field. Spec: [`docs/specs/2026-04-17-json-output-mode.md`](docs/specs/2026-04-17-json-output-mode.md).
+
+```bash
+./hydra status --json | jq -r '.active_workers | length'       # how many workers running?
+./hydra status --json | jq -r '.autopickup.enabled, .paused'   # autopickup + pause flags
+./hydra ps --json | jq -r '.workers[] | "\(.id)\t\(.ticket)\t\(.minutes_running)m"'
+```
+
+Operators upgrading from an earlier install need to regenerate the launcher once to pick up the new `ps` subcommand (helpers work directly regardless): `rm hydra && ./setup.sh`.
 
 **Two paths from here:**
 - You want to **use Hydra on your own repos** → **[USING.md](USING.md)**

@@ -4,9 +4,14 @@
 # greeting. Does NOT open a chat / launch claude. Safe to run from scripts or
 # cron.
 #
-# Usage: ./hydra status [--with-tickets]
+# Usage: ./hydra status [--with-tickets] [--json]
+#
+# --json emits a stable machine-readable shape per
+# state/schemas/hydra-status-output.schema.json. Stable, additive-only,
+# versioned. See docs/specs/2026-04-17-json-output-mode.md (ticket #105).
 #
 # Spec: docs/specs/2026-04-16-hydra-cli.md (ticket #25)
+# Spec: docs/specs/2026-04-17-json-output-mode.md (ticket #105)
 
 set -euo pipefail
 
@@ -15,6 +20,10 @@ ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck disable=SC1091
 [[ -f "$ROOT_DIR/.hydra.env" ]] && source "$ROOT_DIR/.hydra.env"
+
+# HYDRA_STATE_DIR lets callers (notably self-tests) point the script at a
+# fixture directory instead of the real state/ tree. Defaults to $ROOT_DIR/state.
+STATE_DIR="${HYDRA_STATE_DIR:-$ROOT_DIR/state}"
 
 usage() {
   cat <<'EOF'
@@ -33,7 +42,14 @@ Does NOT launch a Claude session. Safe for scripts / cron / SSH.
 Options:
   --with-tickets    Also count `gh issue list --assignee @me` across enabled
                     repos. Requires gh CLI + auth. Slower (N network calls).
+  --json            Emit machine-readable JSON per
+                    state/schemas/hydra-status-output.schema.json.
+                    Suppresses ANSI colors and the human rules.
   -h, --help        Show this help.
+
+Environment:
+  HYDRA_STATE_DIR   Override the state/ directory (default: $ROOT/state).
+                    Used by self-tests to point at deterministic fixtures.
 
 Exit codes:
   0   OK (including when state files are missing — prints "unset")
@@ -41,21 +57,24 @@ Exit codes:
 EOF
 }
 
-if [[ -t 1 ]] && [[ "${NO_COLOR:-}" != "1" ]]; then
+with_tickets=0
+json_mode=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --with-tickets) with_tickets=1; shift ;;
+    --json) json_mode=1; shift ;;
+    *) echo "✗ unknown arg: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+# JSON mode suppresses ANSI colors unconditionally.
+if [[ "$json_mode" -eq 0 ]] && [[ -t 1 ]] && [[ "${NO_COLOR:-}" != "1" ]]; then
   C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_GREEN=$'\033[32m'; C_RED=$'\033[31m'
   C_YELLOW=$'\033[33m'; C_RESET=$'\033[0m'
 else
   C_BOLD=""; C_DIM=""; C_GREEN=""; C_RED=""; C_YELLOW=""; C_RESET=""
 fi
-
-with_tickets=0
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -h|--help) usage; exit 0 ;;
-    --with-tickets) with_tickets=1; shift ;;
-    *) echo "✗ unknown arg: $1" >&2; usage >&2; exit 2 ;;
-  esac
-done
 
 # -----------------------------------------------------------------------------
 # helpers
@@ -73,24 +92,27 @@ jq_or() {
 # -----------------------------------------------------------------------------
 # read state
 # -----------------------------------------------------------------------------
-active_count="$(jq_or "$ROOT_DIR/state/active.json" '(.workers // []) | length' "0")"
-budget_file="$ROOT_DIR/state/budget-used.json"
+active_file="$STATE_DIR/active.json"
+active_count="$(jq_or "$active_file" '(.workers // []) | length' "0")"
+budget_file="$STATE_DIR/budget-used.json"
 tickets_done="$(jq_or "$budget_file" '.tickets_completed_today // 0' "0")"
 tickets_failed="$(jq_or "$budget_file" '.tickets_failed_today // 0' "0")"
 wall_clock_min="$(jq_or "$budget_file" '.total_worker_wall_clock_minutes_today // 0' "0")"
 
-auto_file="$ROOT_DIR/state/autopickup.json"
+auto_file="$STATE_DIR/autopickup.json"
 auto_enabled="$(jq_or "$auto_file" '.enabled // false' "false")"
 auto_interval="$(jq_or "$auto_file" '.interval_min // 30' "30")"
 auto_last="$(jq_or "$auto_file" '.last_run // "never"' "never")"
 auto_streak="$(jq_or "$auto_file" '.consecutive_rate_limit_hits // 0' "0")"
 
 pause_state="off"
+# PAUSE sentinel lives at repo root regardless of HYDRA_STATE_DIR overrides —
+# the override is for the state/ tree only.
 if [[ -f "$ROOT_DIR/PAUSE" ]] || [[ -f "$ROOT_DIR/commander/PAUSE" ]]; then
   pause_state="on"
 fi
 
-pending_file="$ROOT_DIR/state/pending-dispatches.json"
+pending_file="$STATE_DIR/pending-dispatches.json"
 pending_count="0"
 if [[ -f "$pending_file" ]] && jq empty "$pending_file" 2>/dev/null; then
   pending_count="$(jq -r '(.queue // []) | length' "$pending_file" 2>/dev/null || echo 0)"
@@ -99,7 +121,7 @@ fi
 # -----------------------------------------------------------------------------
 # repo counts
 # -----------------------------------------------------------------------------
-repos_file="$ROOT_DIR/state/repos.json"
+repos_file="$STATE_DIR/repos.json"
 enabled_repos_count="0"
 total_repos_count="0"
 if [[ -f "$repos_file" ]] && jq empty "$repos_file" 2>/dev/null; then
@@ -138,7 +160,90 @@ if [[ "$with_tickets" -eq 1 ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# print
+# JSON mode — emit a single object matching hydra-status-output.schema.json
+# and exit 0. This path intentionally reads the exact same files the prose
+# path reads; drift is prevented by the json-output-schema-valid self-test.
+# -----------------------------------------------------------------------------
+if [[ "$json_mode" -eq 1 ]]; then
+  generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  # active_workers: pass through the array from state/active.json verbatim
+  # (matching state/schemas/active.schema.json), falling back to [] if the
+  # file is missing or malformed.
+  if [[ -f "$active_file" ]] && jq empty "$active_file" 2>/dev/null; then
+    active_workers_json="$(jq -c '(.workers // [])' "$active_file")"
+  else
+    active_workers_json="[]"
+  fi
+
+  # tickets_ready: integer if --with-tickets produced a number, else the
+  # literal "skipped (no gh)" / "unknown" strings, or null if never requested.
+  if [[ "$with_tickets" -eq 0 ]]; then
+    tickets_ready_json="null"
+  elif [[ "$tickets_ready" =~ ^[0-9]+$ ]]; then
+    tickets_ready_json="$tickets_ready"
+  else
+    tickets_ready_json="$(jq -cn --arg s "$tickets_ready" '$s')"
+  fi
+
+  # autopickup.last_run: null if literal "never" (i.e. file missing / field null).
+  if [[ "$auto_last" == "never" ]]; then
+    auto_last_json="null"
+  else
+    auto_last_json="$(jq -cn --arg s "$auto_last" '$s')"
+  fi
+
+  paused_bool="false"
+  [[ "$pause_state" == "on" ]] && paused_bool="true"
+
+  # Build the top-level object with jq -n so type coercion is strict and the
+  # output is guaranteed to be valid JSON.
+  jq -n \
+    --arg version "1.0" \
+    --arg generated_at "$generated_at" \
+    --argjson active_workers "$active_workers_json" \
+    --argjson done "$tickets_done" \
+    --argjson failed "$tickets_failed" \
+    --argjson wall_clock_min "$wall_clock_min" \
+    --argjson paused "$paused_bool" \
+    --argjson auto_enabled "$auto_enabled" \
+    --argjson auto_interval "$auto_interval" \
+    --argjson auto_streak "$auto_streak" \
+    --argjson auto_last "$auto_last_json" \
+    --argjson repos_enabled "$enabled_repos_count" \
+    --argjson repos_total "$total_repos_count" \
+    --argjson pending_count "$pending_count" \
+    --argjson tickets_ready "$tickets_ready_json" \
+    '{
+      version: $version,
+      generated_at: $generated_at,
+      active_workers: $active_workers,
+      today: {
+        done: $done,
+        failed: $failed,
+        wall_clock_min: $wall_clock_min
+      },
+      paused: $paused,
+      autopickup: {
+        enabled: $auto_enabled,
+        interval_min: $auto_interval,
+        last_run: $auto_last,
+        consecutive_rate_limit_hits: $auto_streak
+      },
+      repos: {
+        enabled: $repos_enabled,
+        total: $repos_total
+      },
+      pending: {
+        count: $pending_count
+      },
+      tickets_ready: $tickets_ready
+    }'
+  exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# print (prose path — unchanged)
 # -----------------------------------------------------------------------------
 printf "%s▸ Hydra status%s\n" "$C_BOLD" "$C_RESET"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
