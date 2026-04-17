@@ -594,6 +594,71 @@
       },
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "hello-hydra-demo-integrity",
+      "_description": "Script-only self-test for the runnable 10-minute demo under examples/hello-hydra-demo/ (spec: docs/specs/2026-04-16-demo-repo.md, ticket #29). Runs the demo's node:test suite, checks gh-filings.sh syntax, and verifies the fixture-issue + DEMO.md shape is intact. Guarantees the demo never silently rots — if somebody breaks the tests, the fixture frontmatter, or the DEMO.md cross-links, commander catches it before committing. Zero external deps: node 18+ is the only requirement.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "demo tests pass under node:test",
+          "cmd": "node --test examples/hello-hydra-demo/src/greet.test.js 2>&1 | tail -1 | grep -E 'duration_ms' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "gh-filings.sh bash -n clean",
+          "cmd": "bash -n examples/hello-hydra-demo/gh-filings.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "all 3 fixture issue markdown files exist",
+          "cmd": "ls examples/hello-hydra-demo/fixture-issues/01-t1-typo.md examples/hello-hydra-demo/fixture-issues/02-t2-farewell.md examples/hello-hydra-demo/fixture-issues/03-t3-rotate-key.md >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "fixture issue #1 has YAML-ish title/body shape",
+          "cmd": "head -5 examples/hello-hydra-demo/fixture-issues/01-t1-typo.md | grep -E '^title:' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "fixture issue #2 has YAML-ish title/body shape",
+          "cmd": "head -5 examples/hello-hydra-demo/fixture-issues/02-t2-farewell.md | grep -E '^title:' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "fixture issue #3 has YAML-ish title/body shape",
+          "cmd": "head -5 examples/hello-hydra-demo/fixture-issues/03-t3-rotate-key.md | grep -E '^title:' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "DEMO.md exists and references all 3 fixture files",
+          "cmd": "test -f examples/hello-hydra-demo/DEMO.md && grep -q '01-t1-typo.md' examples/hello-hydra-demo/DEMO.md && grep -q '02-t2-farewell.md' examples/hello-hydra-demo/DEMO.md && grep -q '03-t3-rotate-key.md' examples/hello-hydra-demo/DEMO.md && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "README intentionally retains the 'hollo' typo (it's the T1 target)",
+          "cmd": "grep -q 'hollo-hydra-demo' examples/hello-hydra-demo/README.md && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "package.json is zero-dep (no dependencies / devDependencies keys with entries)",
+          "cmd": "jq -e '((.dependencies // {}) | length) == 0 and ((.devDependencies // {}) | length) == 0' examples/hello-hydra-demo/package.json >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
