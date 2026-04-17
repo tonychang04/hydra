@@ -20,9 +20,17 @@
       "tier": "T2",
       "ticket_body_summary": "Short description of what the ticket asked for, as you'd write it if re-opening the issue today",
       "assertions": {
-        "must_touch_paths": ["src/path/to/expected/file.ts"],
-        "must_not_touch_paths": ["package-lock.json", ".github/**"],
-        "must_include_patterns": ["ExpectedClassName", "specificKeyword"],
+        "must_touch_paths": [
+          "src/path/to/expected/file.ts"
+        ],
+        "must_not_touch_paths": [
+          "package-lock.json",
+          ".github/**"
+        ],
+        "must_include_patterns": [
+          "ExpectedClassName",
+          "specificKeyword"
+        ],
         "tests_expected": true,
         "build_must_pass": true,
         "lint_must_pass": true,
@@ -105,10 +113,19 @@
             "active_workers": 0,
             "pause_file_exists": false,
             "quota_health": "ok",
-            "ready_tickets": ["repoA#10", "repoA#11"],
-            "tiers": {"repoA#10": "T1", "repoA#11": "T2"},
+            "ready_tickets": [
+              "repoA#10",
+              "repoA#11"
+            ],
+            "tiers": {
+              "repoA#10": "T1",
+              "repoA#11": "T2"
+            },
             "expected_spawn_count": 2,
-            "expected_spawns": ["worker-implementation:repoA#10", "worker-implementation:repoA#11"],
+            "expected_spawns": [
+              "worker-implementation:repoA#10",
+              "worker-implementation:repoA#11"
+            ],
             "expected_chat_surface": true,
             "expected_state_after": {
               "enabled": true,
@@ -122,8 +139,12 @@
             "active_workers": 2,
             "pause_file_exists": false,
             "quota_health": "rate_limited",
-            "ready_tickets": ["repoA#12"],
-            "tiers": {"repoA#12": "T1"},
+            "ready_tickets": [
+              "repoA#12"
+            ],
+            "tiers": {
+              "repoA#12": "T1"
+            },
             "expected_spawn_count": 0,
             "expected_spawns": [],
             "expected_chat_surface": false,
@@ -139,8 +160,12 @@
             "active_workers": 2,
             "pause_file_exists": false,
             "quota_health": "rate_limited",
-            "ready_tickets": ["repoA#12"],
-            "tiers": {"repoA#12": "T1"},
+            "ready_tickets": [
+              "repoA#12"
+            ],
+            "tiers": {
+              "repoA#12": "T1"
+            },
             "expected_spawn_count": 0,
             "expected_spawns": [],
             "expected_chat_surface": true,
@@ -177,7 +202,9 @@
       "id": "autopickup-default-on-smoke",
       "_description": "Script-only self-test for the default-on autopickup behavior (spec: docs/specs/2026-04-16-autopickup-default-on.md, ticket #17). Verifies that a fresh setup.sh seeds state/autopickup.json with auto_enable_on_session_start=true, and that the ./hydra launcher's --no-autopickup flag exports HYDRA_NO_AUTOPICKUP=1. Runs locally; no worker spawn, no worktree. setup.sh is run non-interactively with an empty stdin so the external-memory-dir prompt accepts the default. setup.sh hard-fails its prereq check if `claude` is not on PATH, so this case is marked requires_claude_cli — it SKIPs on CI runners where the Claude Code CLI isn't installed.",
       "kind": "script",
-      "requires": ["requires_claude_cli"],
+      "requires": [
+        "requires_claude_cli"
+      ],
       "worker_type": null,
       "tier": "T1",
       "steps": [
@@ -744,7 +771,9 @@
       "id": "s3-backend-roundtrip",
       "_description": "Script-only self-test for scripts/state-get.sh + scripts/state-put.sh against a localstack-backed DynamoDB (Phase 2 adapter — see docs/specs/2026-04-16-s3-knowledge-store.md and ticket #13). Spins up localstack via docker compose, creates the bucket + commander-* tables, puts a JSON blob via state-put.sh (dynamodb backend, localstack endpoint), reads it back via state-get.sh, compares bit-for-bit, tears down. Marked requires_docker: skipped on machines where `docker info` fails.",
       "kind": "script",
-      "requires": ["requires_docker"],
+      "requires": [
+        "requires_docker"
+      ],
       "worker_type": null,
       "tier": "T1",
       "steps": [
@@ -780,7 +809,9 @@
       "fixture_dir": "self-test/fixtures/conflict-resolver",
       "ticket_body_summary": "Two open PRs both add a new row to the same markdown commands table in CLAUDE.md. Commander invokes worker-conflict-resolver to merge them deterministically into one superseding PR.",
       "assertions": {
-        "must_touch_paths": ["CLAUDE.md"],
+        "must_touch_paths": [
+          "CLAUDE.md"
+        ],
         "must_not_touch_paths": [
           "policy.md",
           "budget.json",
@@ -810,7 +841,9 @@
       "fixture_repo_path": "self-test/fixtures/test-discovery/fixture-repo",
       "ticket_body_summary": "Worker-implementation has asked 'test procedure unclear' twice on this repo. Commander auto-dispatched worker-test-discovery to document how to run + verify the service.",
       "assertions": {
-        "must_touch_paths": ["TESTING.md"],
+        "must_touch_paths": [
+          "TESTING.md"
+        ],
         "must_not_touch_paths": [
           "package.json",
           "docker-compose.yml",
@@ -1063,7 +1096,9 @@
       "id": "fly-toml-valid",
       "_description": "Script-only self-test for infra/fly.toml (landed in ticket #48). Runs `fly config validate` to catch drift from Fly.io's schema before a deploy breaks. Marked requires_flyctl: SKIPs on machines where the flyctl (`fly`) CLI isn't installed — including CI runners. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
       "kind": "script",
-      "requires": ["requires_flyctl"],
+      "requires": [
+        "requires_flyctl"
+      ],
       "worker_type": null,
       "tier": "T1",
       "steps": [
@@ -1081,7 +1116,9 @@
       "id": "dockerfile-lintable",
       "_description": "Script-only self-test for infra/Dockerfile (landed in ticket #48). Runs hadolint to catch common Dockerfile anti-patterns (bad ordering, missing --no-install-recommends, unpinned tags, etc). Marked requires_hadolint: SKIPs on machines where hadolint isn't installed. `docker build --check` was considered as a fallback but only exists in recent Docker Buildx — hadolint is the portable option. Spec: docs/specs/2026-04-16-dual-mode-workflow.md (ticket #51).",
       "kind": "script",
-      "requires": ["requires_hadolint"],
+      "requires": [
+        "requires_hadolint"
+      ],
       "worker_type": null,
       "tier": "T1",
       "steps": [
@@ -1125,6 +1162,113 @@
           "cmd": "env -i HOME=\"$HOME\" PATH=\"$PATH\" bash infra/entrypoint.sh 2>&1 | grep -F 'CLAUDE_CODE_OAUTH_TOKEN'",
           "expected_exit": 0,
           "expected_stdout_contains": "CLAUDE_CODE_OAUTH_TOKEN"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "slack-config-example-valid",
+      "_description": "Script-only self-test for the Slack bot config template (spec: docs/specs/2026-04-17-slack-bot.md, ticket #74). jq-validates that state/connectors/slack.json.example declares every field bin/hydra-slack-bot reads at startup: enabled (default false), token-env-var pointers, single allowed_user_id, default_channel, poll interval, repos array, seen-PRs cache path. Also smoke-tests the launcher's refuse-to-start paths: missing config, disabled config, and missing env-var tokens — each must exit non-zero (refuse) or zero with a clean log (disabled). No live Slack API test — that would require a real workspace. Runs locally; no worker spawn, no worktree.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "slack.json.example is valid JSON",
+          "cmd": "jq empty state/connectors/slack.json.example && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares enabled=false (default)",
+          "cmd": "jq -r .enabled state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "false"
+        },
+        {
+          "name": "slack.json.example declares bot_token_env",
+          "cmd": "jq -r .bot_token_env state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HYDRA_SLACK_BOT_TOKEN"
+        },
+        {
+          "name": "slack.json.example declares app_token_env",
+          "cmd": "jq -r .app_token_env state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HYDRA_SLACK_APP_TOKEN"
+        },
+        {
+          "name": "slack.json.example declares allowed_user_id starting with U",
+          "cmd": "jq -r .allowed_user_id state/connectors/slack.json.example | grep -E '^U'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "U"
+        },
+        {
+          "name": "slack.json.example declares default_channel",
+          "cmd": "jq -r .default_channel state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "D"
+        },
+        {
+          "name": "slack.json.example declares notification_poll_interval_sec >= 30",
+          "cmd": "jq -e '.notification_poll_interval_sec >= 30' state/connectors/slack.json.example >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares repos as an array of owner/name strings",
+          "cmd": "jq -e '.repos | type == \"array\" and (length > 0) and all(test(\"/\"))' state/connectors/slack.json.example >/dev/null && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "slack.json.example declares seen_prs_state_path",
+          "cmd": "jq -r .seen_prs_state_path state/connectors/slack.json.example",
+          "expected_exit": 0,
+          "expected_stdout_contains": "state/"
+        },
+        {
+          "name": "bin/hydra-slack-bot is executable",
+          "cmd": "test -x bin/hydra-slack-bot && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "bin/hydra-slack-bot parses as valid Python",
+          "cmd": "python3 -c 'import ast; ast.parse(open(\"bin/hydra-slack-bot\").read())' && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "bin/hydra-slack-bot refuses to start on missing config",
+          "cmd": "tmp=$(mktemp -d) && cp bin/hydra-slack-bot \"$tmp/\" && mkdir -p \"$tmp/bin\" && mv \"$tmp/hydra-slack-bot\" \"$tmp/bin/\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REFUSED_NO_CONFIG",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REFUSED_NO_CONFIG"
+        },
+        {
+          "name": "bin/hydra-slack-bot exits 0 when enabled=false",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/bin\" \"$tmp/state/connectors\" && cp bin/hydra-slack-bot \"$tmp/bin/\" && echo '{\"enabled\":false,\"bot_token_env\":\"X\",\"app_token_env\":\"Y\",\"allowed_user_id\":\"U1\",\"default_channel\":\"D1\",\"notification_poll_interval_sec\":60,\"repos\":[\"a/b\"]}' > \"$tmp/state/connectors/slack.json\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 0 ] && echo DISABLED_CLEAN",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DISABLED_CLEAN"
+        },
+        {
+          "name": "bin/hydra-slack-bot refuses to start when env tokens missing",
+          "cmd": "tmp=$(mktemp -d) && mkdir -p \"$tmp/bin\" \"$tmp/state/connectors\" && cp bin/hydra-slack-bot \"$tmp/bin/\" && echo '{\"enabled\":true,\"bot_token_env\":\"HYDRA_SELFTEST_MISSING_BOT\",\"app_token_env\":\"HYDRA_SELFTEST_MISSING_APP\",\"allowed_user_id\":\"U1\",\"default_channel\":\"D1\",\"notification_poll_interval_sec\":60,\"repos\":[\"a/b\"]}' > \"$tmp/state/connectors/slack.json\" && cd \"$tmp\" && ./bin/hydra-slack-bot 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REFUSED_NO_TOKENS",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REFUSED_NO_TOKENS"
+        },
+        {
+          "name": "requirements.txt pins slack-bolt",
+          "cmd": "grep -E '^slack-bolt' requirements.txt",
+          "expected_exit": 0,
+          "expected_stdout_contains": "slack-bolt"
+        },
+        {
+          "name": "bin/hydra-slack-bot marks PHASE1-FALLBACK swap points for post-#72",
+          "cmd": "grep -c 'PHASE1-FALLBACK' bin/hydra-slack-bot",
+          "expected_exit": 0,
+          "expected_stdout_jq": "tonumber >= 3"
         }
       ],
       "last_run": null,
