@@ -338,6 +338,41 @@
       "last_result": null
     },
     {
+      "id": "activity-command-smoke",
+      "_description": "Script-only self-test for scripts/hydra-activity.sh (spec: docs/specs/2026-04-17-hydra-activity.md, ticket #19). Text-based observability layer. Exercises --help, runs the smoke fixture under self-test/fixtures/hydra-activity/ (which stages deterministic mtimes on 3 in-window logs + 1 out-of-window log, seeds state/active.json with 1 running + 1 paused-on-question worker, state/memory-citations.json with 3 entries, and memory/retros/ with 2 retro markdown files), and asserts both human-mode grep substrings and --json-mode jq shape. Corrupt-JSON path is also exercised (truncated active.json must not crash the script). No network, no gh, no Claude auth — runs anywhere bash + jq is installed.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "bash -n passes on hydra-activity.sh",
+          "cmd": "bash -n scripts/hydra-activity.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "hydra-activity.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-activity.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: ./hydra activity"
+        },
+        {
+          "name": "hydra-activity.sh rejects an unknown flag",
+          "cmd": "NO_COLOR=1 scripts/hydra-activity.sh --bogus 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BADFLAG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADFLAG_OK"
+        },
+        {
+          "name": "activity smoke harness (human + --json + corrupt-JSON)",
+          "cmd": "self-test/fixtures/hydra-activity/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "ensure-repo-cloned-idempotent",
       "_description": "Script-only self-test for scripts/ensure-repo-cloned.sh (spec: docs/specs/2026-04-17-cloud-repo-clone.md, ticket #73). Uses the public octocat/Hello-World repo so no GITHUB_TOKEN is required in CI; the unauthenticated HTTPS clone path is the same code path the cloud commander takes for public repos. Each step builds a fresh tmpdir fixture, runs the script, and asserts behavior via exit code + shell grep. Guardrails: bad-slug + missing-repo arguments both exit non-zero; first clone produces a .git dir; second run re-fetches without re-cloning (same SHA and same .git/config inode).",
       "kind": "script",

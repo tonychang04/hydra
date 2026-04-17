@@ -1,0 +1,22 @@
+{
+  "citations": {
+    "learnings-repoA.md#npm install strips peer markers": {
+      "count": 7,
+      "last_cited": "2026-04-16",
+      "tickets": ["#50", "#61", "#63"],
+      "promotion_threshold_reached": true
+    },
+    "learnings-repoA.md#baseline typecheck trick": {
+      "count": 3,
+      "last_cited": "2026-04-15",
+      "tickets": ["#51", "#60", "#62"],
+      "promotion_threshold_reached": true
+    },
+    "learnings-repoB.md#docker-compose timeout 120s not enough": {
+      "count": 2,
+      "last_cited": "2026-04-14",
+      "tickets": ["#103", "#105"],
+      "promotion_threshold_reached": false
+    }
+  }
+}

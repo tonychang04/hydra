@@ -1,0 +1,2 @@
+# The smoke harness creates these at runtime; don't commit them.
+memory/

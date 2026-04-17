@@ -1,0 +1,23 @@
+{
+  "workers": [
+    {
+      "id": "w-fixture-a",
+      "ticket": "fixture-org/repoA#120",
+      "repo": "fixture-org/repoA",
+      "tier": "T1",
+      "started_at": "2026-04-17T12:00:00Z",
+      "subagent_type": "worker-implementation",
+      "status": "running"
+    },
+    {
+      "id": "w-fixture-b",
+      "ticket": "fixture-org/repoB#121",
+      "repo": "fixture-org/repoB",
+      "tier": "T2",
+      "started_at": "2026-04-17T11:00:00Z",
+      "subagent_type": "worker-implementation",
+      "status": "paused-on-question"
+    }
+  ],
+  "last_updated": "2026-04-17T12:05:00Z"
+}
