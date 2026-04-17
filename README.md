@@ -34,9 +34,15 @@ Assumes `git`, `claude`, and `gh` are installed and `gh auth login` is done. If 
 
 ## Demo
 
-A recorded terminal session of the auto-loop end-to-end lives at [`docs/demo/`](docs/demo/). It runs against the [`hello-hydra-demo`](examples/hello-hydra-demo/) fixture (one T1 auto-merge, one T2 human-merge, one T3 refusal) in about 90 seconds.
+**Run the demo yourself in ~10 minutes** — no video required. The [`hello-hydra-demo`](examples/hello-hydra-demo/) fixture is a tiny Node repo with three pre-written issues that exercise all three Hydra outcomes (T1 auto-merge, T2 human-merge, T3 refusal). Follow **[examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md)** — it's the fastest honest proof that Hydra works end-to-end.
 
-> **Note:** The cast file in this commit is a placeholder. Regenerate a real recording with [`./scripts/record-demo.sh`](scripts/record-demo.sh) (takes ~2 minutes plus `pip install asciinema`). See [docs/demo/README.md](docs/demo/README.md) for the full procedure. To try the same flow yourself instead of watching, follow [examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md).
+What you'll have when it's done:
+
+- 2 PRs merged (1 auto, 1 with your one-click approval after Commander's review gate clears it)
+- 1 ticket refused with a clear reason (policy working as designed — the T3 path)
+- 1 populated `memory/learnings-hello-hydra-demo.md` — the learning loop in motion
+
+> A recorded asciinema cast lives at [`docs/demo/`](docs/demo/) for readers who just want to watch. It's currently a placeholder — regenerate a real one with [`./scripts/record-demo.sh`](scripts/record-demo.sh). The hands-on walkthrough above is what this README recommends; the cast is a bonus for passive viewers.
 
 ## Who's who (read this first)
 
