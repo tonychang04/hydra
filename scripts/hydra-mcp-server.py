@@ -229,8 +229,14 @@ def audit(
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
     with _AUDIT_LOCK:
-        with path.open("a") as f:
-            f.write(line)
+        # Open with 0o600 perms on first create — audit entries include agent
+        # IDs and tool names; keep them readable only to the owner rather than
+        # relying on process umask.
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, line.encode("utf-8"))
+        finally:
+            os.close(fd)
 
 
 # -----------------------------------------------------------------------------
@@ -557,9 +563,10 @@ class McpHandler(http.server.BaseHTTPRequestHandler):
         method = req.get("method")
         params = req.get("params") or {}
 
-        # Auth.
+        # Auth. Bearer scheme is case-insensitive per RFC 7235 §2.1.
         auth_hdr = self.headers.get("Authorization", "")
-        if not auth_hdr.startswith("Bearer "):
+        scheme, _, raw_token = auth_hdr.partition(" ")
+        if scheme.lower() != "bearer" or not raw_token:
             audit(
                 caller_agent_id=None, tool=None,
                 scope_check="unauthenticated",
@@ -567,7 +574,7 @@ class McpHandler(http.server.BaseHTTPRequestHandler):
             )
             self._send_json(401, {"error": "missing Authorization: Bearer header"})
             return
-        token = auth_hdr[len("Bearer "):].strip()
+        token = raw_token.strip()
         agent = match_agent(self.config, token)
         if agent is None:
             audit(

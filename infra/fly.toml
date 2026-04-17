@@ -97,10 +97,10 @@ kill_timeout = "30s"
   [[services.ports]]
     port     = 443
     handlers = ["tls", "http"]
-
-  [[services.ports]]
-    port     = 8765
-    handlers = ["http"]
+    # NOTE: plaintext port 8765 was removed per security review — bearer tokens
+    # must not travel over cleartext on the public internet. Fly's edge handles
+    # TLS termination, so internal_port=8765 is reached by clients via
+    # https://<app>.fly.dev/mcp (port 443 → TLS-terminated → internal 8765).
 
   [[services.tcp_checks]]
     grace_period  = "30s"
