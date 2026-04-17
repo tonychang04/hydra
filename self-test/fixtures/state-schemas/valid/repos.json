@@ -1,0 +1,12 @@
+{
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "tonychang04",
+      "name": "hydra",
+      "local_path": "/home/op/projects/hydra",
+      "enabled": true,
+      "ticket_trigger": "assignee"
+    }
+  ]
+}

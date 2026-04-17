@@ -1,6 +1,6 @@
 # Commander helper scripts
 
-These are **helper scripts invoked by Commander during memory lifecycle operations** (see `memory/memory-lifecycle.md`). They are not standalone tools — Commander calls them from its operating loop and merges / interprets their output.
+These are **helper scripts invoked by Commander during memory lifecycle operations + state preflight** (see `memory/memory-lifecycle.md`). They are not standalone tools — Commander calls them from its operating loop and merges / interprets their output.
 
 ## Overview
 
@@ -9,10 +9,14 @@ These are **helper scripts invoked by Commander during memory lifecycle operatio
 | `parse-citations.sh` | Commander, after every worker report comes back | Extract `MEMORY_CITED:` markers from a worker report and emit a JSON delta that Commander merges into `state/memory-citations.json` |
 | `validate-learning-entry.sh` | Commander, before appending/committing a learnings file; pre-commit hook material | Sanity-check a `learnings-<repo>.md` file against the schema (frontmatter keys, section headings, line length, date format) |
 | `validate-citations.sh` | Commander, during `compact memory` / `promote learnings` hygiene passes | Walk `state/memory-citations.json`, check every citation quote still exists in its referenced file. Flags stale references that need cleanup. |
+| `validate-state.sh` | Commander, before reading any `state/*.json` file (and the Preflight step of every spawn — see CLAUDE.md). Pre-commit hook material for contributors editing state files. | Validate one `state/*.json` against its schema under `state/schemas/*.schema.json`. Minimal bash+jq path by default (required-keys check); delegates to `ajv-cli` when available for full Draft-07 validation (types, enums, patterns, ranges). `--strict` forces the ajv path. Flags `--schema <file>` / `--schema-dir <dir>` override auto-detection so fixtures don't need duplicated schemas. |
+| `validate-state-all.sh` | Commander, as the first preflight item before any spawn | Bulk-validate every known `state/*.json` against its schema in one pass. Iterates `state/schemas/*.schema.json`, skips state files that don't exist yet, reports every failure in one summary (does NOT short-circuit). Same `--strict` semantics as the per-file script. |
 | `state-get.sh` / `state-put.sh` | Commander + any adapter call site | Read / write a logical state blob. Defaults to `state/<key>.json` (Phase 1). Flips to DynamoDB when `HYDRA_STATE_BACKEND=dynamodb` (Phase 2). Awscli + jq. |
 | `memory-mount.sh` | Operator, once per host | Mount an S3 bucket at `$HYDRA_EXTERNAL_MEMORY_DIR` via `mount-s3`. Prints clear install instructions if mount-s3 isn't on PATH. `--dry-run` previews the invocation. |
+| `test-cloud-config.sh` | Operator pre-push, or CI | Validate cloud-mode deployment artifacts (`infra/fly.toml`, `infra/Dockerfile`, `infra/entrypoint.sh`, `scripts/deploy-vps.sh`, `mcp/hydra-tools.json`, `state/connectors/mcp.json.example`) without deploying. Skips individual checks gracefully if flyctl/docker/shellcheck are absent. Spec: `docs/specs/2026-04-16-dual-mode-workflow.md`. |
+| `test-local-config.sh` | Operator pre-push, or CI | Validate local-mode install artifacts (`setup.sh`, `.hydra.env` template, `state/repos.json` seeding, `./hydra` launcher) by running the full install flow inside a mktemp'd tree. Never touches the live worktree. Same spec as above. |
 
-Each script is self-contained bash with a `usage()` block. `jq` is the only non-standard dependency — it's already required by Hydra at install time (`INSTALL.md`).
+Each script is self-contained bash with a `usage()` block. `jq` is the only required non-standard dependency — it's already required by Hydra at install time (`INSTALL.md`). `ajv-cli` is an optional strict-validation upgrade for `validate-state.sh` / `validate-state-all.sh`; install with `npm i -g ajv-cli ajv-formats`.
 
 ## Memory directory resolution
 
@@ -51,7 +55,8 @@ Follow the existing convention:
 - `#!/usr/bin/env bash` + `set -euo pipefail`
 - A `usage()` function printed on `-h` / `--help` / bad args
 - Accept `--memory-dir <path>` if the script touches memory files
+- Accept `--state-dir <path>` / `--schema-dir <path>` if the script touches `state/*.json` (lets fixtures reuse the canonical schemas without duplication)
 - Exit codes per table above
 - `bash -n` clean
-- A matching fixture under `self-test/fixtures/memory-validator/`
+- A matching fixture under `self-test/fixtures/<topic>/` (memory-validator, state-schemas, linear, etc.)
 - A case in `self-test/golden-cases.example.json`

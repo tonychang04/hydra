@@ -33,6 +33,11 @@
           "promotion_threshold_reached": {
             "type": "boolean",
             "description": "True when count >= 3 AND distinct tickets.length >= 3."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["operator", "supervisor"],
+            "description": "Provenance of the citation answer. 'operator' means a human answered this via the direct-drive chat path (legacy). 'supervisor' means the citation was produced by a supervisor agent answering supervisor.resolve_question — via the MCP escalation path (Phase 2 agent-only interface). Optional; absent means legacy 'operator' (Phase 1 direct-drive, pre-MCP)."
           }
         }
       }
