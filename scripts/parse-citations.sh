@@ -145,24 +145,44 @@ fi
 if [[ -z "$keys_tsv" ]]; then
   # No citations — emit empty delta.
   jq -n '{citations: {}}'
-  exit 0
+else
+  printf '%s\n' "$keys_tsv" \
+    | jq -R -s \
+        --arg ticket "$ticket_ref" \
+        '
+        split("\n")
+        | map(select(length > 0))
+        | reduce .[] as $k (
+            {};
+            .[$k] = ((.[$k] // {count_delta: 0, tickets_added: []})
+                     | .count_delta += 1
+                     | if ($ticket | length) > 0
+                         and (.tickets_added | index($ticket) | not)
+                       then .tickets_added += [$ticket]
+                       else .
+                       end)
+          )
+        | {citations: .}
+        '
 fi
 
-printf '%s\n' "$keys_tsv" \
-  | jq -R -s \
-      --arg ticket "$ticket_ref" \
-      '
-      split("\n")
-      | map(select(length > 0))
-      | reduce .[] as $k (
-          {};
-          .[$k] = ((.[$k] // {count_delta: 0, tickets_added: []})
-                   | .count_delta += 1
-                   | if ($ticket | length) > 0
-                       and (.tickets_added | index($ticket) | not)
-                     then .tickets_added += [$ticket]
-                     else .
-                     end)
-        )
-      | {citations: .}
-      '
+# --- S3 sync hook ---------------------------------------------------------
+# If HYDRA_MEMORY_BACKEND=s3 or s3-strict, push the memory dir to S3. This is
+# a no-op for parse-citations (stateless; does not mutate files) but the
+# ticket specifies all three memory-layer scripts get the identical hook for
+# auditability. Sync output goes to stderr so it never contaminates the JSON
+# delta we just emitted on stdout. Spec: docs/specs/2026-04-17-dual-mode-memory.md
+if [[ "${HYDRA_MEMORY_BACKEND:-local}" =~ ^s3(-strict)?$ ]]; then
+  sync_script="$(dirname "${BASH_SOURCE[0]}")/hydra-memory-sync.sh"
+  if [[ -x "$sync_script" ]]; then
+    if ! "$sync_script" --push --memory-dir "$memory_dir" >&2; then
+      if [[ "${HYDRA_MEMORY_BACKEND}" == "s3-strict" ]]; then
+        echo "parse-citations: S3 push failed and backend=s3-strict; exiting" >&2
+        exit 1
+      fi
+      echo "parse-citations: warning — S3 push failed, continuing (backend=s3)" >&2
+    fi
+  fi
+fi
+
+exit 0

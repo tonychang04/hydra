@@ -849,6 +849,51 @@
       "last_result": null
     },
     {
+      "id": "memory-sync-roundtrip",
+      "_description": "Round-trip scripts/hydra-memory-sync.sh (dual-mode memory, ticket #103, spec docs/specs/2026-04-17-dual-mode-memory.md) through a localstack-backed S3 bucket. Builds a fake memory tree in a tmpdir, --push'es it to s3://<bucket>/<prefix>/memory/, verifies both files appear remotely, --pull's into a clean dir, diffs bit-for-bit, and exercises the strict-mode negative path (unreachable endpoint must exit !=0). Re-uses self-test/fixtures/s3-backend/docker-compose.yml + setup-fixture.sh so there's exactly one localstack container per test run. Marked requires_docker + requires_aws: skipped when either is absent.",
+      "kind": "script",
+      "requires": [
+        "requires_docker",
+        "requires_aws"
+      ],
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-memory-sync.sh --help renders usage + exits 0",
+          "cmd": "scripts/hydra-memory-sync.sh --help | grep -q 'Usage: hydra-memory-sync.sh'",
+          "expected_exit": 0
+        },
+        {
+          "name": "missing required env exits 2 (usage error) with clear message",
+          "cmd": "env -u HYDRA_S3_BUCKET -u HYDRA_S3_PREFIX -u HYDRA_AWS_REGION scripts/hydra-memory-sync.sh --push 2>&1 | grep -q 'missing required config' && env -u HYDRA_S3_BUCKET -u HYDRA_S3_PREFIX -u HYDRA_AWS_REGION scripts/hydra-memory-sync.sh --push; [ $? -eq 2 ]",
+          "expected_exit": 0
+        },
+        {
+          "name": "--push and --pull are mutually exclusive",
+          "cmd": "scripts/hydra-memory-sync.sh --push --pull 2>&1 | grep -q 'mutually exclusive'",
+          "expected_exit": 0
+        },
+        {
+          "name": "HYDRA_MEMORY_BACKEND unset → memory-layer scripts unchanged (no S3 attempt)",
+          "cmd": "out=$(scripts/validate-learning-entry.sh self-test/fixtures/memory-validator/learnings-sample.md 2>&1); ec=$?; if [ $ec -ne 0 ]; then echo \"FAIL: ec=$ec\"; exit 1; fi; if echo \"$out\" | grep -q 'hydra-memory-sync'; then echo 'FAIL: sync hook fired with backend unset'; exit 1; fi; echo OK",
+          "expected_exit": 0
+        },
+        {
+          "name": "HYDRA_MEMORY_BACKEND=s3-strict + no creds → script exits 1 with clear error",
+          "cmd": "out=$(HYDRA_MEMORY_BACKEND=s3-strict scripts/validate-learning-entry.sh self-test/fixtures/memory-validator/learnings-sample.md 2>&1); ec=$?; if [ $ec -ne 1 ]; then echo \"FAIL: expected ec=1 got $ec\"; exit 1; fi; echo \"$out\" | grep -q 'backend=s3-strict' || { echo 'FAIL: missing strict-mode error msg'; exit 1; }; echo OK",
+          "expected_exit": 0
+        },
+        {
+          "name": "localstack e2e roundtrip (push, verify remote, pull, diff, strict-negative)",
+          "cmd": "self-test/fixtures/memory-sync/run-e2e.sh | tee /dev/stderr | grep -q '^PASS$'",
+          "expected_exit": 0
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "conflict-resolver-additive",
       "_description": "Exercises worker-conflict-resolver on two PRs that both added rows to the same markdown commands table in CLAUDE.md. Spec: docs/specs/2026-04-16-worker-conflict-resolver.md (ticket #7). SKIPped in the current runner — needs a worker-subagent-kind executor (same path that ticket #15 blocks on). Fixture under self-test/fixtures/conflict-resolver/: base-commands-table.md (starting state, 5 rows), pr-a-diff.patch (adds 'retro'), pr-b-diff.patch (adds 'autopickup'), expected-resolution.md (both rows, no dupes), semantic-conflict-example.md (documented STOP-and-escalate case, for contrast).",
       "kind": "worker-subagent",

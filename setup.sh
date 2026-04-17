@@ -228,6 +228,28 @@ if [[ -n "$HYDRA_NO_AUTOPICKUP_FLAG" ]]; then
   export HYDRA_NO_AUTOPICKUP=1
 fi
 
+# --- Dual-mode memory: S3 pull at session start ----------------------------
+# If the operator has flipped HYDRA_MEMORY_BACKEND to s3 or s3-strict
+# (via .hydra.env or their shell), pull the memory dir from S3 BEFORE
+# launching Claude so this session starts with the freshest shared state.
+# - s3          → warn on failure, continue (fail-soft)
+# - s3-strict   → exit 1 on failure (cloud commander must not boot stale)
+# Spec: docs/specs/2026-04-17-dual-mode-memory.md
+case "${HYDRA_MEMORY_BACKEND:-local}" in
+  s3|s3-strict)
+    if [[ -x scripts/hydra-memory-sync.sh ]]; then
+      echo "▸ Dual-mode memory: pulling ${HYDRA_MEMORY_BACKEND} memory from S3..."
+      if ! scripts/hydra-memory-sync.sh --pull; then
+        if [[ "$HYDRA_MEMORY_BACKEND" == "s3-strict" ]]; then
+          echo "✗ s3-strict: memory pull failed; refusing to launch" >&2
+          exit 1
+        fi
+        echo "⚠ memory pull failed; continuing with local copy (backend=s3)" >&2
+      fi
+    fi
+    ;;
+esac
+
 exec claude ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}
 EOF
   chmod +x hydra
