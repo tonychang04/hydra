@@ -353,6 +353,15 @@ cat > "$LAUNCHER_TMP" <<'EOF'
 #                                            snapshot + top memory citations
 #                                            (spec: docs/specs/2026-04-17-hydra-activity.md,
 #                                            ticket #19).
+#   ./hydra watch [--once] [--interval N]    Live auto-refreshing terminal
+#                                            dashboard. Three panes: commander
+#                                            state / active workers / recent
+#                                            completions. --once prints a
+#                                            single snapshot (for scripts).
+#                                            Pure bash + tput (no external
+#                                            deps; works over SSH). Spec:
+#                                            docs/specs/2026-04-17-hydra-watch.md,
+#                                            ticket #130.
 #   ./hydra pair-agent <agent-id> [opts]     One-command setup for a new
 #                                            MCP-speaking agent: generates a
 #                                            bearer, prints paste-ready config
@@ -417,6 +426,9 @@ Subcommands:
                                Queue a specific issue for next tick.
   activity [--json]            Text-based observability: last 24h of log
                                activity + live workers + top memory citations.
+  watch [--once] [--interval N]
+                               Live auto-refreshing dashboard (3 panes).
+                               --once for scripts, default refresh 2s.
   pair-agent <agent-id> [opts] One-command setup for an MCP-speaking agent:
                                generates a bearer, prints paste-ready recipes,
                                runs a live sanity check.
@@ -449,6 +461,7 @@ HYDRAHELP
   resume)       shift; hydra_exec_helper scripts/hydra-resume.sh "$@" ;;
   issue)        shift; hydra_exec_helper scripts/hydra-issue.sh "$@" ;;
   activity)     shift; hydra_exec_helper scripts/hydra-activity.sh "$@" ;;
+  watch)        shift; hydra_exec_helper scripts/hydra-watch.sh "$@" ;;
   pair-agent)   shift; hydra_exec_helper scripts/hydra-pair-agent.sh "$@" ;;
   mcp)
     shift
