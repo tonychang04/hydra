@@ -12,8 +12,14 @@
 #      `fly ssh console`, or by `fly secrets set` for HYDRA_* env vars.
 #   4. Start a tiny python3 http.server on :8080 serving /health (for Fly's
 #      [[http_service]] probe).
-#   5. Launch `claude` under `tmux` so the operator can `tmux attach` later.
-#   6. Tail the commander log so this process stays PID 1 and `fly logs` sees
+#   5. Start the Hydra MCP server on :8765 serving the agent-only interface
+#      (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72). Gated
+#      by HYDRA_MCP_ENABLED (default "1") and state/connectors/mcp.json being
+#      present with an authorized_agents[] entry. If either check fails, the
+#      MCP server is NOT launched and the container proceeds — the MCP surface
+#      is additive, not required.
+#   6. Launch `claude` under `tmux` so the operator can `tmux attach` later.
+#   7. Tail the commander log so this process stays PID 1 and `fly logs` sees
 #      everything on stdout.
 #
 # This script is deliberately simple — webhook handler, Slack bot, and
@@ -61,6 +67,9 @@ HYDRA_ROOT="${HYDRA_ROOT:-/hydra}"
 HYDRA_DATA_DIR="${HYDRA_DATA_DIR:-/hydra/data}"
 HYDRA_HEALTH_PORT="${HYDRA_HEALTH_PORT:-8080}"
 HYDRA_TMUX_SESSION="${HYDRA_TMUX_SESSION:-commander}"
+HYDRA_MCP_PORT="${HYDRA_MCP_PORT:-8765}"
+HYDRA_MCP_BIND="${HYDRA_MCP_BIND:-0.0.0.0}"
+HYDRA_MCP_ENABLED="${HYDRA_MCP_ENABLED:-1}"
 
 log "Hydra commander entrypoint starting (root=${HYDRA_ROOT}, data=${HYDRA_DATA_DIR})"
 
@@ -168,7 +177,39 @@ with socketserver.TCPServer(('0.0.0.0', port), H) as srv:
 HEALTH_PID=$!
 log "/health server pid=${HEALTH_PID}"
 
-# ---------- 5. Launch claude under tmux ----------
+# ---------- 5. Launch MCP server (agent-only interface) ----------
+# Gated: only start if HYDRA_MCP_ENABLED != 0 AND state/connectors/mcp.json
+# exists with at least one authorized_agents[] entry. Missing config is
+# explicitly NOT fatal — the MCP surface is additive, and the operator may
+# intentionally run without it (legacy direct-drive mode). The server's own
+# startup path refuses to bind without authorized agents, so this script
+# only probes the config file shape before invoking it (to avoid spamming
+# logs with "refusing to serve" messages on every restart of a commander
+# that never wanted an MCP surface in the first place).
+MCP_LOG="${HYDRA_ROOT}/logs/mcp.log"
+MCP_PID=""
+if [[ "${HYDRA_MCP_ENABLED}" == "1" ]]; then
+  MCP_CFG="${HYDRA_ROOT}/state/connectors/mcp.json"
+  if [[ -f "${MCP_CFG}" ]] && grep -q '"authorized_agents"' "${MCP_CFG}" 2>/dev/null; then
+    : > "${MCP_LOG}" || true
+    log "Starting MCP server on ${HYDRA_MCP_BIND}:${HYDRA_MCP_PORT} (spec: docs/specs/2026-04-17-mcp-server-binary.md)"
+    (cd "${HYDRA_ROOT}" && \
+      HYDRA_ROOT="${HYDRA_ROOT}" \
+      python3 scripts/hydra-mcp-server.py \
+        --transport http \
+        --bind "${HYDRA_MCP_BIND}" \
+        --port "${HYDRA_MCP_PORT}" \
+      ) >"${MCP_LOG}" 2>&1 &
+    MCP_PID=$!
+    log "MCP server pid=${MCP_PID}"
+  else
+    log "MCP: state/connectors/mcp.json missing or no authorized_agents — skipping MCP surface"
+  fi
+else
+  log "HYDRA_MCP_ENABLED=0 — skipping MCP server launch (operator opt-out)"
+fi
+
+# ---------- 6. Launch claude under tmux ----------
 COMMANDER_LOG="${HYDRA_ROOT}/logs/commander.log"
 : > "${COMMANDER_LOG}" || true
 
@@ -191,17 +232,35 @@ if ! tmux has-session -t "${HYDRA_TMUX_SESSION}" 2>/dev/null; then
 fi
 log "tmux session '${HYDRA_TMUX_SESSION}' live. Attach via: fly ssh console -C 'tmux attach -t ${HYDRA_TMUX_SESSION}'"
 
-# ---------- 6. Keep PID 1 alive + ship logs to stdout ----------
+# ---------- 7. Keep PID 1 alive + ship logs to stdout ----------
 # tail -F tolerates the log being rotated/truncated. The `wait` on the health
-# server ensures we exit (and Fly restarts us) if health dies.
-trap 'log "shutdown signal received"; tmux kill-session -t '"${HYDRA_TMUX_SESSION}"' 2>/dev/null || true; kill '"${HEALTH_PID}"' 2>/dev/null || true; exit 0' TERM INT
+# server ensures we exit (and Fly restarts us) if health dies. The MCP server
+# is NOT gating — if it crashes, the container keeps running (it's additive,
+# not core to Commander's loop). Its pid is tracked so the shutdown trap can
+# clean it up politely.
+trap '
+  log "shutdown signal received"
+  tmux kill-session -t '"${HYDRA_TMUX_SESSION}"' 2>/dev/null || true
+  [[ -n "${MCP_PID}" ]] && kill "${MCP_PID}" 2>/dev/null || true
+  kill '"${HEALTH_PID}"' 2>/dev/null || true
+  exit 0
+' TERM INT
 
-tail -n +1 -F "${COMMANDER_LOG}" "${HEALTH_LOG}" &
+# Tail commander, health, and (if running) the MCP server log so `fly logs`
+# surfaces every subsystem on the same stdout stream.
+if [[ -n "${MCP_PID}" && -f "${MCP_LOG}" ]]; then
+  tail -n +1 -F "${COMMANDER_LOG}" "${HEALTH_LOG}" "${MCP_LOG}" &
+else
+  tail -n +1 -F "${COMMANDER_LOG}" "${HEALTH_LOG}" &
+fi
 TAIL_PID=$!
 
-# If the health server exits, bail so the platform restarts us.
+# If the health server exits, bail so the platform restarts us. (The MCP
+# server is intentionally NOT in this wait set — we don't want a crash in
+# the sidecar to kill the core commander loop.)
 wait "${HEALTH_PID}" || true
-log "health server exited — killing tail + tmux and shutting down"
+log "health server exited — killing tail + tmux + mcp and shutting down"
 kill "${TAIL_PID}" 2>/dev/null || true
+[[ -n "${MCP_PID}" ]] && kill "${MCP_PID}" 2>/dev/null || true
 tmux kill-session -t "${HYDRA_TMUX_SESSION}" 2>/dev/null || true
 exit 1
