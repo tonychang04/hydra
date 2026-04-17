@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 date: 2026-04-16
 author: hydra design
 ---
@@ -70,4 +70,17 @@ When the operator types anything in chat, the scheduler pauses until the operato
 
 ## Implementation notes
 
-(To fill after PR lands.)
+Landed in PR closing #2. Scope is intentionally prompt-only — no new shell scripts, no daemon, no CronCreate. Files touched:
+
+- `CLAUDE.md` — added `autopickup every N min` / `autopickup off` rows to the commands table (placed next to `pause`/`resume` since both are spawn-control), plus a new "Scheduled autopickup (runs silently)" section just before "Memory hygiene" that documents the tick procedure, state schema, yield-to-foreground behavior, and the 2-strike rate-limit auto-disable rule.
+- `state/autopickup.json.example` — committed template matching the spec schema (`enabled`, `interval_min`, `last_run`, `last_picked_count`, `consecutive_rate_limit_hits`). Runtime `state/autopickup.json` is gitignored alongside the other runtime state files.
+- `.gitignore` — added `state/autopickup.json`.
+- `budget.json` — extended `notes` to record that autopickup rides on the existing preflight gate and auto-disables after 2 consecutive rate-limit ticks, so operators reading `budget.json` in isolation find the cross-reference.
+- `self-test/golden-cases.example.json` — added a `worker-commander` fixture-style case that simulates three ticks (ready queue, rate-limit, then PAUSE) and asserts the commander-side spawn counts + yield behavior. It's a template case operators can copy into `golden-cases.json`.
+
+Design points worth remembering:
+- Quiet-by-default is enforced by the tick procedure in CLAUDE.md ("only chat-surface on state changes"). The loop skill itself is already silent when the subagent produces no output, so there's nothing else to wire up.
+- Yield-to-foreground is inherent to `/loop` semantics — ticks run in the same session, so a live operator turn naturally blocks the next tick. We documented the expectation rather than adding enforcement code.
+- The 2-strike rate-limit counter is the only new piece of runtime state that didn't already exist. It lives on `state/autopickup.json` itself (not `state/quota-health.json`) so that disabling autopickup doesn't mutate the shared quota-health signal used by regular `pick up N`.
+- We did NOT touch `.claude/settings.local.json*`, `policy.md`, or any worker subagent. Autopickup is purely a commander-side scheduling wrapper over existing primitives.
+- Known soft-conflict: PR #3 on `main` also edits `CLAUDE.md` (adds a `retro` command row). Conflict resolution is a separate concern; this PR simply appends to the commands table and inserts a new section, so the textual overlap is small.

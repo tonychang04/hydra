@@ -10,6 +10,7 @@ state/memory-citations.json
 state/quota-health.json
 state/repos.json
 state/linear.json
+state/autopickup.json
 state/commander.lock
 
 # Live operational artifacts

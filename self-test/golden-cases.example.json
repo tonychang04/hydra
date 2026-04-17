@@ -67,6 +67,103 @@
       "human_baseline": null,
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "autopickup-tick-behavior",
+      "_comment": "Commander-side fixture — not a PR regression. Validates scheduled autopickup's tick procedure against simulated queue/PAUSE/rate-limit states. Verifies quiet-by-default, yield-to-foreground, and 2-strike rate-limit auto-disable. See docs/specs/2026-04-16-scheduled-autopickup.md and CLAUDE.md 'Scheduled autopickup'.",
+      "repo": "tonychang04/hydra",
+      "local_path": "REPLACE_WITH_ABSOLUTE_PATH_TO_YOUR_HYDRA_CLONE",
+      "pr_num": null,
+      "parent_commit": "HEAD",
+      "worker_type": "commander-self",
+      "tier": "framework",
+      "ticket_body_summary": "Operator runs `autopickup every 5 min`. Simulate 3 consecutive ticks under different fixture conditions and verify commander-side behavior.",
+      "fixture": {
+        "budget": {
+          "max_concurrent_workers": 3,
+          "daily_ticket_cap": 20
+        },
+        "initial_autopickup_state": {
+          "enabled": true,
+          "interval_min": 5,
+          "last_run": null,
+          "last_picked_count": 0,
+          "consecutive_rate_limit_hits": 0
+        },
+        "ticks": [
+          {
+            "tick": 1,
+            "_comment": "Healthy queue; two ready tickets, no active workers, no pause, no rate-limit.",
+            "active_workers": 0,
+            "pause_file_exists": false,
+            "quota_health": "ok",
+            "ready_tickets": ["repoA#10", "repoA#11"],
+            "tiers": {"repoA#10": "T1", "repoA#11": "T2"},
+            "expected_spawn_count": 2,
+            "expected_spawns": ["worker-implementation:repoA#10", "worker-implementation:repoA#11"],
+            "expected_chat_surface": true,
+            "expected_state_after": {
+              "enabled": true,
+              "last_picked_count": 2,
+              "consecutive_rate_limit_hits": 0
+            }
+          },
+          {
+            "tick": 2,
+            "_comment": "Rate-limit preflight fails — no spawn, increment consecutive_rate_limit_hits, stay quiet (this is the FIRST strike, not yet at the 2-strike threshold).",
+            "active_workers": 2,
+            "pause_file_exists": false,
+            "quota_health": "rate_limited",
+            "ready_tickets": ["repoA#12"],
+            "tiers": {"repoA#12": "T1"},
+            "expected_spawn_count": 0,
+            "expected_spawns": [],
+            "expected_chat_surface": false,
+            "expected_state_after": {
+              "enabled": true,
+              "last_picked_count": 0,
+              "consecutive_rate_limit_hits": 1
+            }
+          },
+          {
+            "tick": 3,
+            "_comment": "Second consecutive rate-limit preflight failure — hit the 2-strike auto-disable. enabled flips to false, ONE chat message surfaces, /loop exits.",
+            "active_workers": 2,
+            "pause_file_exists": false,
+            "quota_health": "rate_limited",
+            "ready_tickets": ["repoA#12"],
+            "tiers": {"repoA#12": "T1"},
+            "expected_spawn_count": 0,
+            "expected_spawns": [],
+            "expected_chat_surface": true,
+            "expected_chat_message_includes": "Autopickup disabled after 2 consecutive rate-limit",
+            "expected_state_after": {
+              "enabled": false,
+              "last_picked_count": 0,
+              "consecutive_rate_limit_hits": 2
+            },
+            "expected_loop_exit": true
+          }
+        ],
+        "yield_behavior_check": {
+          "_comment": "Separate assertion: if operator types a message during a tick window, the tick must NOT race the foreground turn. Commander handles the operator first, resumes on next scheduled tick.",
+          "scenario": "Operator sends 'status' mid-tick",
+          "expected": "Tick #2 is deferred; 'status' gets a normal response; tick runs at next interval boundary."
+        }
+      },
+      "assertions": {
+        "clamp_interval_min": 5,
+        "clamp_interval_max": 120,
+        "default_interval_min": 30,
+        "quiet_by_default": true,
+        "auto_disable_threshold": 2,
+        "never_auto_merges_above_T1": true,
+        "respects_pause_file": true,
+        "respects_max_concurrent_workers": true,
+        "respects_daily_ticket_cap": true
+      },
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

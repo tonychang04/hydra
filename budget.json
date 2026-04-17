@@ -13,5 +13,5 @@
     "daily_cap_usd": 50,
     "per_ticket_cap_usd": 5
   },
-  "notes": "Phase 1 (Claude Code subscription): cost is flat; real constraints are rate-limit quota, wall-clock, and concurrency. Phase 2 (Anthropic API on VM): $ caps re-activate."
+  "notes": "Phase 1 (Claude Code subscription): cost is flat; real constraints are rate-limit quota, wall-clock, and concurrency. Phase 2 (Anthropic API on VM): $ caps re-activate. Scheduled autopickup (`state/autopickup.json`) rides on the SAME preflight gate — it never exceeds max_concurrent_workers or daily_ticket_cap, and it auto-disables after 2 consecutive rate-limit ticks. See CLAUDE.md 'Scheduled autopickup' and docs/specs/2026-04-16-scheduled-autopickup.md."
 }

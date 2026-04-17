@@ -133,6 +133,8 @@ This is deliberately separate from the implementer so the reviewer isn't biased 
 | `retry #42` | Remove `commander-stuck`, re-spawn implementation with prior failure log as hint |
 | `undo #501` | Revert a previously-merged commander PR. Check: is it merged? Is main CI still green? → create revert PR, label `commander-undo`, surface to the operator for merge. Refuse if >72hr old without the operator's confirm. |
 | `pause` / `resume` | Toggle `PAUSE` file |
+| `autopickup every N min` | Enter scheduled auto-pickup mode (N clamped to [5, 120], default 30). Writes `state/autopickup.json` and invokes the `/loop` skill to re-enter commander each tick. Quiet by default — see "Scheduled autopickup" below. |
+| `autopickup off` | Set `state/autopickup.json:enabled=false` and exit the loop. In-flight workers continue; no new ticks. |
 | `kill <id>` | `TaskStop <id>`, update `active.json`, label `commander-stuck` |
 | `merge #501` | Tier-aware; T1 auto-merge if CI green; T2 requires the operator confirmation; T3 refuse |
 | `reject #501 reason: ...` | `gh pr close`, label `commander-rejected` |
@@ -164,6 +166,59 @@ This is deliberately separate from the implementer so the reviewer isn't biased 
 - `memory/escalation-faq.md` — recurring worker questions
 - `memory/memory-lifecycle.md` — compaction + promotion rules
 - `logs/<ticket>.json` — completed work audit
+
+## Scheduled autopickup (runs silently)
+
+`autopickup every N min` turns commander into a cron-like ticket-clearing machine while the operator is away. Built on the existing `/loop` skill — no cron daemon, no remote agent. One scheduler per commander session. Spec: `docs/specs/2026-04-16-scheduled-autopickup.md`.
+
+**State** lives in `state/autopickup.json` (gitignored; template in `state/autopickup.json.example`):
+```
+{
+  "enabled": false,
+  "interval_min": 30,
+  "last_run": null,
+  "last_picked_count": 0,
+  "consecutive_rate_limit_hits": 0
+}
+```
+
+**Activating:** on `autopickup every N min`:
+1. Clamp N to `[5, 120]`; default 30 if omitted
+2. Write `state/autopickup.json` with `enabled=true`, `interval_min=N`, `consecutive_rate_limit_hits=0`
+3. Invoke the `/loop` skill with interval `Nm` and a prompt template equivalent to: "run the autopickup tick procedure below; on completion, sleep N minutes unless `state/autopickup.json:enabled` is false"
+
+**Tick procedure** (each interval):
+1. **Preflight — ALL must pass; any failure = quiet skip, NO spawn:**
+   - Read `state/autopickup.json:enabled` — if false, exit the loop entirely
+   - `commander/PAUSE` absent
+   - Concurrent workers in `state/active.json` < `budget.json:phase1_subscription_caps.max_concurrent_workers`
+   - Today's ticket count < `daily_ticket_cap`
+   - No recent rate-limit error in `state/quota-health.json`
+2. **Pick tickets** per the usual trigger in `state/repos.json` (assignee / label / linear). Skip state-labeled tickets as usual.
+3. **Classify tier** per `policy.md`. Skip T3. T2+ go through the normal commander review gate and still require human merge — autopickup never changes merge policy.
+4. **Spawn** up to `(max_concurrent_workers - current_active)` `worker-implementation` agents.
+5. **Update state** — write `last_run` (ISO timestamp), `last_picked_count` (this tick's spawn count).
+6. **Report — quiet by default.** Only chat-surface on state changes:
+   - A new ticket was picked up (one-line status)
+   - A worker finished (the usual review-gate surfacing)
+   - A rate-limit was hit (see auto-disable rule below)
+   - PAUSE was tripped externally
+   - A worker returned a `QUESTION:` block with no memory match
+   If nothing changed, stay silent. No "tick #47: 0 picked up" spam.
+
+**Yield to foreground chat:** if the operator types anything during the scheduler window, the `/loop` interval pauses — commander handles the operator's request first, then resumes on the next scheduled tick. Do not race against an active chat turn.
+
+**Auto-disable on rate-limit hits:** each tick that preflights a rate-limit error increments `consecutive_rate_limit_hits`. A successful spawn (or the operator typing `resume` after a pause) resets it to 0. On **2 consecutive hits**, set `enabled=false`, exit the loop, and surface one message to the operator: "Autopickup disabled after 2 consecutive rate-limit ticks. Re-enable with `autopickup every N min` once quota recovers."
+
+**Disengaging:** `autopickup off` sets `enabled=false`. In-flight workers continue to completion; no new ticks scheduled. Safe rollback: delete `state/autopickup.json` entirely.
+
+**Budget interaction:** autopickup never exceeds `max_concurrent_workers` or `daily_ticket_cap` — it rides on the same preflight gate as interactive `pick up N`. The only new constraint is the 2-strike rate-limit auto-disable above.
+
+**What autopickup does NOT do:**
+- Auto-merge anything above T1 (policy unchanged)
+- Bypass any safety rail listed in "Operating loop"
+- Run a background daemon or real cron — it's `/loop` all the way down
+- Support multiple concurrent schedules (one per commander session)
 
 ## Memory hygiene (runs silently)
 
