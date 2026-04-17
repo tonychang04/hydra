@@ -120,16 +120,22 @@ Worker returns with QUESTION: block + agentId
 Commander scans memory/escalation-faq.md + learnings-<repo>.md
    ↓
    ├─ Match found  → SendMessage(agentId, answer) — worker continues, no upstream call
-   └─ No match     → call supervisor.resolve_question(...) with nearest_memory_match
+   └─ No match     → pipe envelope to scripts/hydra-supervisor-escalate.py
                      ↓
-                     supervisor returns {answer, confidence, human_involved}
-                     ↓
+                     script reads state/connectors/mcp.json:upstream_supervisor,
+                     calls supervisor.resolve_question(...), returns by exit code:
+                       exit 0 → stdout has {answer, confidence, human_involved}
+                       exit 2 → not-configured; fall through to legacy commander-stuck
+                       exit 3 → timeout; label commander-stuck
+                       exit 1 → runtime error; surface to operator (don't retry blindly)
+                     ↓ (exit 0 only)
                      SendMessage(agentId, answer) AND append Q+A to escalation-faq.md
+                     with source: "supervisor" on the citation entry
 ```
 
 Memory gets smarter over time. The supervisor gets pinged only for genuinely novel questions; when configured, the supervisor handles its own decision of whether to loop a human. Hydra doesn't know or care.
 
-**Upstream supervisor configuration** lives in `state/connectors/mcp.json:upstream_supervisor`. When `enabled=false` (default until an operator wires it up), the "no match" branch falls back to labeling the ticket `commander-stuck` and stopping retries — this is the legacy behavior. When `enabled=true`, Commander calls `supervisor.resolve_question` with timeout `upstream_supervisor.timeout_sec` (default 300). Contract and handshake: `docs/mcp-tool-contract.md` (escalation flow section) and `docs/specs/2026-04-16-mcp-agent-interface.md`.
+**Upstream supervisor configuration** lives in `state/connectors/mcp.json:upstream_supervisor`. When `enabled=false` (default until an operator wires it up), the escalate script exits 2 ("not-configured") and the "no match" branch falls back to labeling the ticket `commander-stuck` and stopping retries — this is the legacy behavior. When `enabled=true`, Commander pipes the `{worker_id, question, context, options, recommendation, nearest_memory_match}` envelope to `scripts/hydra-supervisor-escalate.py` as stdin; the script handles bearer-token auth (env var named by `auth_token_env`, default `HYDRA_SUPERVISOR_TOKEN`), enforces `upstream_supervisor.timeout_sec` (default 300), validates that `scope_granted` is exactly `["resolve_question"]`, and prints the supervisor's response on stdout. Contract and handshake: `docs/mcp-tool-contract.md` (escalation flow section), `docs/specs/2026-04-16-mcp-agent-interface.md` (envelope shape), and `docs/specs/2026-04-17-supervisor-escalate-client.md` (exit-code contract + security notes). Use `--check` for a dry-run that validates config + envelope without a network call.
 
 **Legacy direct-drive surfacing** (when the operator is live in a terminal and there's no supervisor agent configured):
 ```
