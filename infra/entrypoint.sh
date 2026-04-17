@@ -34,18 +34,31 @@ Usage: entrypoint.sh
 Container entrypoint for the Hydra commander on a VPS. Not intended to be run
 interactively — Docker / systemd / Fly.io invokes it as PID 1.
 
-Required env:
-  CLAUDE_CODE_OAUTH_TOKEN   1-year OAuth token (preferred). Generate on a host
-                            where you're already logged into Claude Code Max:
+Required env (at least ONE provider — Claude OR Codex):
+  Claude provider (pick one):
+    CLAUDE_CODE_OAUTH_TOKEN 1-year OAuth token (preferred — uses your Max
+                            subscription, flat-rate billing). Generate on a
+                            host where you're already logged into Claude
+                            Code Max:
                                 claude setup-token
                             Then:
                                 fly secrets set CLAUDE_CODE_OAUTH_TOKEN=...
-  --- OR ---
-  ANTHROPIC_API_KEY         Metered API key (fallback; does NOT use your Max
+    ANTHROPIC_API_KEY       Metered API key (fallback; does NOT use your Max
                             subscription, so this path costs per-token).
 
+  Codex provider (pick one):
+    OPENAI_API_KEY          Preferred for Codex on headless deploys. Works
+                            with any account tier that has API access.
+    $HYDRA_CODEX_AUTH_ENV   ChatGPT-session OAuth token (default env-var name
+                            CODEX_SESSION_TOKEN; override via HYDRA_CODEX_AUTH_ENV).
+
+  Commander boots as long as at least one provider is set. Workers that need
+  a specific backend (per state/repos.json:preferred_backend) will fail at
+  spawn time if that backend's auth is missing — the entrypoint's job is to
+  let commander itself come up.
+
   GITHUB_TOKEN              gh token with repo + workflow scope. Workers use
-                            this to open PRs.
+                            this to open PRs. Required regardless of provider.
 
 Optional env:
   HYDRA_DATA_DIR            Persistent volume mountpoint. Default: /hydra/data
@@ -53,6 +66,10 @@ Optional env:
   HYDRA_TMUX_SESSION        tmux session name. Default: commander
   HYDRA_SKIP_SETUP          If set to "1", skip the automatic ./setup.sh
                             bootstrap even when state/repos.json is missing.
+  HYDRA_CODEX_AUTH_ENV      Name of the env var that carries Codex's ChatGPT-
+                            session OAuth. Default: CODEX_SESSION_TOKEN.
+                            Configurable because upstream Codex-CLI hasn't
+                            settled on a canonical env-var name yet.
 EOF
 }
 
@@ -74,13 +91,46 @@ HYDRA_MCP_ENABLED="${HYDRA_MCP_ENABLED:-1}"
 log "Hydra commander entrypoint starting (root=${HYDRA_ROOT}, data=${HYDRA_DATA_DIR})"
 
 # ---------- 1. Env verification ----------
-if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  fail "Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set. Set one via 'fly secrets set'."
+# Dual-provider acceptance: commander boots as long as at least ONE of
+# {Claude, Codex} has usable auth. Workers route to their preferred backend
+# per state/repos.json:preferred_backend (spec: docs/specs/2026-04-17-
+# codex-worker-backend.md). A Codex-only deploy is valid; a Claude-only deploy
+# is today's default. Spec: docs/specs/2026-04-17-cloud-default-oauth.md (#106).
+#
+# Detection rules:
+#   - Claude provider present if CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY is set.
+#   - Codex provider present if OPENAI_API_KEY or ${!HYDRA_CODEX_AUTH_ENV} is set.
+#     (HYDRA_CODEX_AUTH_ENV defaults to CODEX_SESSION_TOKEN — the env-var name
+#     upstream Codex-CLI will likely settle on, but configurable so operators
+#     can track upstream without a Hydra release.)
+CODEX_AUTH_ENV_NAME="${HYDRA_CODEX_AUTH_ENV:-CODEX_SESSION_TOKEN}"
+# Bash ${!VAR} indirection: dereference the env var whose name is in
+# CODEX_AUTH_ENV_NAME. Quote-safe because we only read the value, never log it.
+CODEX_SESSION_VAL="${!CODEX_AUTH_ENV_NAME:-}"
+
+have_claude=0
+have_codex=0
+[[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" || -n "${ANTHROPIC_API_KEY:-}" ]] && have_claude=1
+[[ -n "${OPENAI_API_KEY:-}" || -n "${CODEX_SESSION_VAL}" ]] && have_codex=1
+
+if [[ "${have_claude}" -eq 0 && "${have_codex}" -eq 0 ]]; then
+  fail "No provider auth set. Set at least one of: CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY (Claude) or OPENAI_API_KEY / ${CODEX_AUTH_ENV_NAME} (Codex). Use 'fly secrets set' on Fly, or export in your shell for local runs."
 fi
-if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-  log "Auth: using CLAUDE_CODE_OAUTH_TOKEN (Claude Code Max subscription — flat rate)"
+
+# Report what's present — never log the actual values.
+if [[ "${have_claude}" -eq 1 && "${have_codex}" -eq 1 ]]; then
+  log "Auth: Claude + Codex providers both present — per-repo routing honored (spec: docs/specs/2026-04-17-codex-worker-backend.md)"
+elif [[ "${have_claude}" -eq 1 ]]; then
+  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    log "Auth: CLAUDE_CODE_OAUTH_TOKEN (Claude Code Max subscription — flat rate)"
+  else
+    log "Auth: ANTHROPIC_API_KEY (metered API — no Max subscription savings)"
+  fi
 else
-  log "Auth: using ANTHROPIC_API_KEY (metered API — no Max subscription savings)"
+  # Codex-only deploy: every ticket will route to worker-codex-implementation.
+  # Workers on repos without preferred_backend=codex will fail at spawn time
+  # with a Claude-auth-missing error; commander itself still boots cleanly.
+  log "Auth: Codex provider only (no Claude auth) — tickets on repos without preferred_backend=codex will fail at spawn time"
 fi
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then

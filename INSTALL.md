@@ -27,13 +27,76 @@ Pick the one that matches how you want to drive Hydra:
 
 | Option | Mode | Who drives Hydra | When to pick it |
 |---|---|---|---|
-| **A — one-liner local** | Local | You, in a terminal chat with Commander | You want the fastest way to try Hydra on your laptop. **Most operators start here.** |
-| **B — manual local** | Local | You, in a terminal chat with Commander | Same end-state as A, but you prefer reading each step before it runs. |
-| **C — cloud + MCP** | Cloud | Another agent (your Main Agent / a supervisor bot), over MCP | You want Commander headless on a VPS so it keeps ticking while your laptop's closed. Phase 2 direction. |
+| **A — cloud + MCP** | Cloud | Another agent (your Main Agent / a supervisor bot), over MCP | You want Commander headless on Fly.io so it keeps ticking while your laptop's closed. **Recommended for any operator who wants 24/7 commander.** |
+| **B — one-liner local (dev mode)** | Local | You, in a terminal chat with Commander | You want the fastest way to try Hydra on your laptop before committing to cloud. |
+| **C — manual local (dev mode)** | Local | You, in a terminal chat with Commander | Same end-state as B, but you prefer reading each step before it runs. |
 
-A and B produce the identical tree — the only difference is whether `install.sh` runs the steps for you or you run them by hand. C is a different deployment shape: Commander runs on Fly.io (or a Debian VPS), exposes an MCP tool surface, and another agent calls `hydra.*` tools to dispatch work.
+Cloud commander (Option A) is the supported primary mode as of 2026-04-17. Options B / C still work and are fully supported — use them for offline work, CI fixtures, or if you haven't set up a Fly.io account yet. You can **migrate from local to cloud later** with a single command (`scripts/hydra-migrate-to-cloud.sh`) without losing memory or state.
 
-## Option A — one-liner install (recommended)
+## Option A — cloud + MCP (recommended)
+
+Commander runs on a cheap Fly.io Machine. Flat-rate OAuth billing covers Claude Code Max **and** Codex (no metered API bills). Another agent (your Main Agent / a custom supervisor) calls `hydra.*` tools over MCP to dispatch work.
+
+### Prerequisites
+
+- **Fly.io account.** Free tier + credit card on file. See [fly.io/docs/hands-on/install-flyctl](https://fly.io/docs/hands-on/install-flyctl/) + `fly auth login`.
+- **Claude Code Max subscription** (preferred auth) OR `ANTHROPIC_API_KEY`. Either unlocks commander's reasoning.
+- **Optional: Codex CLI auth** (`OPENAI_API_KEY` or `codex login` session). Lets commander route some repos to the Codex backend per `state/repos.json:preferred_backend` — see `docs/phase2-vps-runbook.md` "Configuring the Codex backend".
+- **GitHub personal access token** with `repo` + `workflow` scope. `gh auth token` prints yours.
+
+### First-time deploy (fresh install, no local copy yet)
+
+```bash
+git clone https://github.com/tonychang04/hydra.git
+cd hydra
+./setup.sh                              # bootstrap state files + ./hydra launcher
+./scripts/deploy-vps.sh                 # one-command Fly.io deploy
+```
+
+`deploy-vps.sh` prompts for Fly app name, region, `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`), and `GITHUB_TOKEN`, then runs `fly launch --copy-config`, stages the secrets, creates a persistent volume, and deploys.
+
+**Full walkthrough, cost estimates, rollback, monitoring, security notes:** [`docs/phase2-vps-runbook.md`](docs/phase2-vps-runbook.md).
+
+### Already have local commander? Migrate to cloud
+
+If you've been running Hydra locally (Option B or C below) and want to move to cloud without losing memory / state / learnings:
+
+```bash
+./scripts/hydra-migrate-to-cloud.sh --dry-run     # rehearse
+./scripts/hydra-migrate-to-cloud.sh               # the real thing
+```
+
+The script walks you through: generate both OAuth tokens → push to `fly secrets` → generate MCP bearer for your main agent → deploy + health-check. Dry-run mode executes no side effects.
+
+See [`docs/phase2-vps-runbook.md` → "Migrating from local to cloud"](docs/phase2-vps-runbook.md#migrating-from-local-to-cloud) for the full walkthrough + rollback.
+
+### Connect your main agent via MCP
+
+Once commander is live on Fly, your **main agent** (your own Claude Code session, a custom supervisor bot, OpenClaw, Hermes, etc.) connects as an MCP client and calls `hydra.*` tools to dispatch work.
+
+1. **Generate a bearer token for the main agent** (run on the commander):
+   ```bash
+   fly ssh console --app <your-app> -C './hydra mcp register-agent main-agent'
+   ```
+   Prints a 44-char base64 token to stdout **exactly once** — copy it immediately.
+2. **Paste the token into your main agent's config.** Typically an env var like `HYDRA_MCP_TOKEN`, presented as `Authorization: Bearer <token>` on JSON-RPC POSTs to `https://<your-app>.fly.dev/mcp`.
+3. **Your main agent now has `hydra.*` tools available** — no direct chat with Commander. Example tool calls:
+   ```
+   hydra.pick_up({count: 3})
+   hydra.get_status({})
+   hydra.merge_pr({pr_num: 501, caller_agent_id: "main-agent"})
+   ```
+4. **Commander runs headless.** Escalations (worker `QUESTION:` blocks that don't match memory) flow **outbound** via `supervisor.resolve_question` — Hydra calls the supervisor agent, which decides whether to answer autonomously or loop a human through its own channel.
+
+Full MCP tool surface + auth model + rotation docs: [`docs/mcp-tool-contract.md`](docs/mcp-tool-contract.md), [`docs/phase2-vps-runbook.md`](docs/phase2-vps-runbook.md).
+
+### Legacy and agent-driven coexist
+
+Migration is reversible. Cloud commander on Fly and laptop commander (`./hydra` locally) can run side by side — turn one off with `autopickup off` on whichever you want idle. Migration doesn't disable local mode.
+
+## Option B — one-liner local install (dev mode)
+
+Run Commander on your laptop in a terminal chat. Fastest way to try Hydra before committing to cloud. Works offline, no Fly account required.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tonychang04/hydra/main/install.sh | bash
@@ -45,9 +108,9 @@ What this does:
 3. Runs `./setup.sh` interactively
 4. Prints next steps
 
-If you're uncomfortable piping curl to bash, use Option B.
+If you're uncomfortable piping curl to bash, use Option C.
 
-## Option B — manual install
+## Option C — manual local install (dev mode)
 
 ```bash
 git clone https://github.com/tonychang04/hydra.git
@@ -57,21 +120,19 @@ cd hydra
 
 `setup.sh` is idempotent. Safe to re-run anytime.
 
-Option A and Option B are both **legacy / direct-drive mode**: an operator sits in a terminal and types `pick up 2` to Commander. Fully supported — this is how most installs run today. If you want an agent (yours or someone else's) to drive Hydra instead of a terminal chat, read Option C below.
+Options B and C are both **legacy / direct-drive mode**: an operator sits in a terminal and types `pick up 2` to Commander. Fully supported — this is how most installs ran in 2026-04-16, and how most operators still develop + test framework changes. When you're ready for 24/7 cloud commander, migrate with `./scripts/hydra-migrate-to-cloud.sh` (see Option A).
 
-## Option C — agent-driven install (Phase 2 direction, agent-only interface)
-
-Status: **contract + config only in this release.** The tool schemas (`mcp/hydra-tools.json`), tool-contract doc (`docs/mcp-tool-contract.md`), and connector config template (`state/connectors/mcp.json.example`) are all shipped. The actual MCP server binary (`./hydra mcp serve`) is a follow-up ticket. This section documents the intended end-state so you can read the contract and plan your supervisor-agent integration now.
+## MCP surface reference (for Option A)
 
 The **agent-only interface** replaces the terminal-chat surface with an MCP (Model Context Protocol) server. Another agent — the operator's main Claude Code session, a custom supervisor agent, a dashboard bot — connects as a client and calls `hydra.*` tools. Commander runs headless. No human types at a Commander prompt.
 
-### End-state flow (once the server binary lands)
+### End-state flow (MCP server is live as of 2026-04-17)
 
 1. Operator runs Hydra (on laptop or VPS) in MCP-server mode:
    ```bash
    ./hydra mcp serve
    ```
-   Commander boots, reads `state/connectors/mcp.json`, binds the configured transport (stdio or http), and waits.
+   On cloud, `infra/entrypoint.sh` launches it automatically when `state/connectors/mcp.json` exists with authorized agents. Commander boots, reads `state/connectors/mcp.json`, binds the configured transport (stdio or http), and waits.
 2. Operator's main agent (Claude Code, custom supervisor, whatever speaks MCP) connects:
    ```bash
    claude mcp add hydra <stdio-command-or-http-url>
@@ -85,11 +146,11 @@ The **agent-only interface** replaces the terminal-chat surface with an MCP (Mod
    ```
 4. Commander stays headless. Escalations (worker `QUESTION:` blocks that don't match memory) flow **outbound** via `supervisor.resolve_question` — Hydra calls the supervisor agent, the supervisor agent decides whether to answer autonomously or loop a human through its own channel.
 
-### What to read now (before the server binary lands)
+### What to read next
 
 - `mcp/hydra-tools.json` — every tool you'll be able to call, with JSON Schema.
 - `docs/mcp-tool-contract.md` — the prose version: use cases, tradeoffs, scope boundaries per tool.
-- `state/connectors/mcp.json.example` — copy to `state/connectors/mcp.json` and pre-configure your authorized agents + upstream supervisor. Nothing reads this file yet, but the config you land here is what the server will consume.
+- `state/connectors/mcp.json.example` — copy to `state/connectors/mcp.json` and pre-configure your authorized agents + upstream supervisor. The MCP server reads this file on each request (see `./hydra mcp serve` and `./hydra mcp register-agent`).
 - `docs/specs/2026-04-16-mcp-agent-interface.md` — the why and the scope decisions.
 
 ### Auth model (four scope levels)

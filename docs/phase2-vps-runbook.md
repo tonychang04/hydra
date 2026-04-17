@@ -81,6 +81,125 @@ fly ssh console --app <app> -C 'tmux attach -t commander'
 # Detach with Ctrl-b d (don't Ctrl-c — that kills commander).
 ```
 
+## Migrating from local to cloud
+
+If you've been running Hydra locally (`./hydra` in a terminal) and want to move to cloud without losing memory, learnings, or ticket state, use `scripts/hydra-migrate-to-cloud.sh`. The script walks you through: generate both OAuth tokens (Claude + Codex, if desired) → push to `fly secrets` → generate MCP bearer for your main agent → deploy and health-check.
+
+Spec: [`docs/specs/2026-04-17-cloud-default-oauth.md`](specs/2026-04-17-cloud-default-oauth.md) · Ticket: [#106](https://github.com/tonychang04/hydra/issues/106).
+
+### What migration does (and doesn't) do
+
+**Preserves:**
+- Memory directory (`~/.hydra/memory/` or whatever `HYDRA_EXTERNAL_MEMORY_DIR` points at). Cloud commander starts with the same learnings. Enable `HYDRA_MEMORY_BACKEND=s3` after migration for bi-directional sync.
+- `state/repos.json` — committed to your laptop's git clone, gets copied into the Fly image on deploy.
+- Flat-rate OAuth billing. The whole point of the migration is to keep Claude Code Max + Codex OAuth working after the move — neither requires an API key.
+
+**Does NOT preserve / touch:**
+- In-flight workers in `state/active.json`. Migration should run when the queue is idle. Verify with `./hydra status` or `./hydra ps` first.
+- Laptop auth state (`~/.claude/`, `~/.codex/`). Those sit on your laptop; migration just reads env vars that you've exported or generates fresh tokens via `claude setup-token` / `codex login`.
+- Your GitHub identity. `GITHUB_TOKEN` is still the operator's own PAT (or a bot-account PAT if you configured `assignee_override`).
+
+### Pre-flight checklist
+
+Before running migration:
+
+```bash
+# 1. No in-flight workers. Either wait for them to finish or `pause` first.
+./hydra status
+# Expected: "0 heads active" or similar.
+
+# 2. All local changes committed or stashed.
+git status
+# Expected: clean working tree.
+
+# 3. Fly CLI logged in.
+fly auth whoami
+# Expected: your Fly account email.
+
+# 4. Optional — rehearse the migration with --dry-run first.
+./scripts/hydra-migrate-to-cloud.sh --dry-run
+# Executes no side effects; prints what WOULD happen.
+```
+
+### The migration
+
+```bash
+./scripts/hydra-migrate-to-cloud.sh
+```
+
+Interactive: auto-detects what auth you already have, prompts only for what's missing, asks at most one question per step. Respects `HYDRA_NON_INTERACTIVE=1` and CI env for scripted runs.
+
+Steps (same as printed by `--help`):
+
+1. **Preflight** — verify `flyctl` + auth, `infra/fly.toml`, `claude` + `gh` + `jq`.
+2. **Auth inventory** — report what's in your shell env (presence only, never values).
+3. **Claude OAuth** — offer to run `claude setup-token` if nothing's set. Pastes back into shell.
+4. **Codex OAuth** — offer to run `codex login`; alternatively accept `OPENAI_API_KEY` (preferred for headless).
+5. **Fly secrets push** — stage whichever tokens are present via `fly secrets set --stage`.
+6. **MCP bearer** — run `./hydra mcp register-agent <main-agent-id>` on the commander, print token to stdout once.
+7. **Deploy + health check** — `fly deploy` followed by `curl /health`.
+8. **Next steps** — optional follow-ups (laptop `autopickup off`, dual-mode memory, Slack bot).
+
+Each step is idempotent — re-running the script is safe. Side effects are logged with `DRY RUN:` prefix in dry-run mode; real-run executes them only after operator confirmation at each step.
+
+### OAuth env vars Hydra accepts
+
+As of ticket #106, `infra/entrypoint.sh` accepts either (or both) provider families:
+
+| Provider | Env var | Mode | Validity |
+|---|---|---|---|
+| Claude | `CLAUDE_CODE_OAUTH_TOKEN` | OAuth (preferred, flat-rate) | 1 year from generation |
+| Claude | `ANTHROPIC_API_KEY` | Metered API | no expiry (rotate per your policy) |
+| Codex | `OPENAI_API_KEY` | API-key auth (preferred for headless) | per OpenAI dashboard |
+| Codex | `$HYDRA_CODEX_AUTH_ENV` (default `CODEX_SESSION_TOKEN`) | ChatGPT-session OAuth | upstream-dependent, not documented |
+
+Commander boots with at least ONE provider present. Workers route per `state/repos.json:preferred_backend` — a Codex-only deploy is valid; a Claude-only deploy is today's default.
+
+**Why `HYDRA_CODEX_AUTH_ENV` is configurable.** Codex-CLI hasn't settled on a canonical env-var name for its session-auth OAuth. Hydra picks `CODEX_SESSION_TOKEN` as the default Hydra-side convention and makes it overridable so operators can track upstream without a Hydra release. If Codex-CLI settles on a different name, set `HYDRA_CODEX_AUTH_ENV=<new-name>` as a Fly secret AND set the token itself under that name.
+
+### OAuth rotation
+
+Commander does not auto-rotate. Set a calendar reminder + surface in `retro` (the retro template's `## Proposed edits` section is the intended hook starting ~11 months after migration).
+
+| Token | Rotate how |
+|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` | Re-run `claude setup-token` on your laptop, then `fly secrets set CLAUDE_CODE_OAUTH_TOKEN=<new>`. 1-year validity. |
+| `ANTHROPIC_API_KEY` | Generate in Anthropic console, `fly secrets set ANTHROPIC_API_KEY=<new>`. |
+| `OPENAI_API_KEY` | Generate in OpenAI dashboard, `fly secrets set OPENAI_API_KEY=<new>`. |
+| `CODEX_SESSION_TOKEN` (or whatever `HYDRA_CODEX_AUTH_ENV` names) | Re-run `codex login` to refresh persisted tokens, then `fly secrets set <var>=<new>`. Validity is upstream-dependent; check after deploy with a smoke ticket. |
+| `GITHUB_TOKEN` | Generate new PAT with `repo` + `workflow` scope, `fly secrets set GITHUB_TOKEN=<new>`. |
+
+Running the migration script with fresh tokens in your shell env re-stages them all in one shot — idempotent.
+
+### Rollback
+
+Migration is fully reversible. Cloud commander on Fly and laptop commander can coexist — migration doesn't disable local mode.
+
+- **Partial rollback — stop cloud ticking, keep laptop as primary:**
+  ```bash
+  # Either:
+  fly ssh console --app <your-app> -C '/hydra/hydra pause --reason "rolling back to local"'
+
+  # Or scale to zero (machine idle, no cost except volume + secrets):
+  fly scale count 0 --app <your-app>
+  ```
+  Your laptop's `./hydra` keeps working with `autopickup` on as usual.
+
+- **Full rollback — destroy cloud:**
+  ```bash
+  fly apps destroy <your-app>
+  # (this also destroys the volume — export memory first if you want to keep
+  #  anything only-cloud has written)
+  ```
+  Local state is untouched.
+
+### Security posture
+
+- All secrets live in `fly secrets` — never committed, never on laptop disk after the migration script exits.
+- The migration script reads tokens from env vars only. `--dry-run` prints secret NAMES only, never values.
+- The MCP bearer generated in step 6 is printed to stdout exactly once (contract inherited from `scripts/hydra-mcp-register-agent.sh`). Copy it immediately into your main agent's config.
+- Fly's secret store is encrypted at rest by Fly. Tokens are injected as env vars into the Machine at boot time; they never hit the persistent volume.
+
 ## Updating
 
 Framework updates flow the same way as any git repo:
