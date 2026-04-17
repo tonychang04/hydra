@@ -16,6 +16,13 @@ You file a GitHub issue and assign it to yourself. Hydra picks it up, reads the 
 
 Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) + [superpowers skills](https://github.com/anthropics/superpowers). MIT licensed. Self-hosted (your laptop today, cloud tomorrow).
 
+<!-- demo -->
+## Demo
+
+A recorded terminal session of the auto-loop end-to-end lives at [`docs/demo/`](docs/demo/). It runs against the [`hello-hydra-demo`](examples/hello-hydra-demo/) fixture (one T1 auto-merge, one T2 human-merge, one T3 refusal) in about 90 seconds.
+
+> **Note:** The cast file in this commit is a placeholder. Regenerate a real recording with [`./scripts/record-demo.sh`](scripts/record-demo.sh) (takes ~2 minutes plus `pip install asciinema`). See [docs/demo/README.md](docs/demo/README.md) for the full procedure. To try the same flow yourself instead of watching, follow [examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md).
+
 ## Who's who (read this first)
 
 Four roles, three of them agents. Keep them straight and the rest of the docs click.
