@@ -43,6 +43,7 @@ Pick tickets. Spawn workers. Answer their questions (memory first, the operator 
 | `worker-review` | After a PR opens, before surfacing to the operator | Code changes |
 | `worker-test-discovery` | When a repo has no working documented test procedure | Source changes |
 | `worker-conflict-resolver` | When ≥2 PRs have mutual conflicts against main or each other — automates additive merges, escalates semantic ones | Modify code OR make semantic judgments (those go back to Commander) |
+| `worker-codex-implementation` | Any ticket with code changes on a repo whose `state/repos.json:preferred_backend` is `codex` — orchestrates `codex exec` via `scripts/hydra-codex-exec.sh` for the code-gen step. Requires a working `codex` CLI in the runtime env; see `docs/phase2-vps-runbook.md` "Configuring the Codex backend". Dormant until router ticket #97 lands. | Write code directly / silently fall back to Claude on codex unavailability |
 
 Each is a proper Claude Code subagent with its own system prompt, permission scope, and skills. Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", prompt=<ticket-context>)` etc.
 
