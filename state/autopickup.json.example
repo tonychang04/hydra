@@ -1,0 +1,8 @@
+{
+  "_description": "Runtime state for scheduled autopickup. Copy to state/autopickup.json (gitignored) — setup.sh can seed it, or commander writes it on first 'autopickup every N min'. See CLAUDE.md 'Scheduled autopickup' and docs/specs/2026-04-16-scheduled-autopickup.md.",
+  "enabled": false,
+  "interval_min": 30,
+  "last_run": null,
+  "last_picked_count": 0,
+  "consecutive_rate_limit_hits": 0
+}
