@@ -1,5 +1,8 @@
 # Risk Tier Policy
 
+> Policy evolves. When it changes, update `policy.md` AND `CLAUDE.md`'s safety rules section in the same PR.
+> Self-test #30 (state schema) will eventually enforce this.
+
 Classify every ticket BEFORE spawning a worker. If classification is ambiguous, ask the operator.
 
 ## Tier 1 — auto-merge eligible
@@ -17,9 +20,11 @@ Commander may merge automatically after CI is green.
 - Lines changed: < 100
 - No files in excluded paths (see Tier 3)
 
-## Tier 2 — PR only, the operator merges
+## Tier 2 — commander auto-merges after review-worker clears the PR
 
-Commander opens a draft PR. the operator reviews and merges.
+Commander opens a draft PR, spawns `worker-review` against it, and — on a clean review — auto-merges once CI is green. The human is not in the default merge path.
+
+**Per-repo override:** set `merge_policy` to `human` for a given tier in `state/repos.json` (see #20) to force human-merge for this repo. Hydra's own self-hosted entry defaults to `{T1: human, T2: human}` because framework changes are high-impact.
 
 **Qualifies:**
 - Feature work (new endpoints, UI changes, business logic)
