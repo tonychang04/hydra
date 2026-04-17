@@ -52,6 +52,11 @@
             "type": "string",
             "enum": ["auto-t1", "human-all", "refuse-all"],
             "description": "Optional override. Absent = defer to global policy.md."
+          },
+          "preferred_backend": {
+            "type": "string",
+            "enum": ["claude", "codex", "auto"],
+            "description": "Which worker backend commander spawns for this repo. 'claude' (default when absent) = worker-implementation. 'codex' = worker-codex-implementation (requires a working codex CLI in the runtime env; see docs/phase2-vps-runbook.md 'Configuring the Codex backend'). 'auto' = future rate-limit-aware routing, currently treated as 'claude' until ticket #97 lands. Additive / optional — absent means 'claude'. See docs/specs/2026-04-17-codex-worker-backend.md."
           }
         }
       }
