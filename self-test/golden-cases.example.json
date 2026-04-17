@@ -2188,6 +2188,89 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "migrate-to-cloud-dry-run",
+      "_description": "Script-only self-test for scripts/hydra-migrate-to-cloud.sh — the migration ritual shipped in ticket #106 (spec: docs/specs/2026-04-17-cloud-default-oauth.md). Verifies: (a) script is bash-syntax-clean; (b) --help prints the expected usage block; (c) --dry-run --non-interactive (with fake creds exported) completes successfully without invoking any real fly / claude / gh / ./hydra binary — tested by staging a tmpdir PATH that makes those binaries fail loudly if called; (d) dry-run output lists the exact set of Fly secret NAMES that would be staged, and does NOT print secret VALUES. This is the regression gate for the dual-OAuth migration flow — if a future refactor starts leaking values or shelling out in dry-run, this case fails.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "hydra-migrate-to-cloud.sh bash -n clean",
+          "cmd": "bash -n scripts/hydra-migrate-to-cloud.sh && echo SYNTAX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SYNTAX_OK"
+        },
+        {
+          "name": "hydra-migrate-to-cloud.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/hydra-migrate-to-cloud.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: scripts/hydra-migrate-to-cloud.sh"
+        },
+        {
+          "name": "--help advertises --dry-run",
+          "cmd": "NO_COLOR=1 scripts/hydra-migrate-to-cloud.sh --help | grep -q '\\-\\-dry-run' && echo DRY_RUN_DOCUMENTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DRY_RUN_DOCUMENTED"
+        },
+        {
+          "name": "--help advertises HYDRA_CODEX_AUTH_ENV",
+          "cmd": "NO_COLOR=1 scripts/hydra-migrate-to-cloud.sh --help | grep -q 'HYDRA_CODEX_AUTH_ENV' && echo CODEX_ENV_DOCUMENTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CODEX_ENV_DOCUMENTED"
+        },
+        {
+          "name": "--dry-run --non-interactive completes with fake creds and lists secret names",
+          "cmd": "out=$(HYDRA_FLY_APP=test-fixture-app CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-fake GITHUB_TOKEN=ghp_fake OPENAI_API_KEY=sk-fake NO_COLOR=1 scripts/hydra-migrate-to-cloud.sh --dry-run --non-interactive 2>&1); ec=$?; echo \"$out\" | grep -q 'Dry-run complete' && echo \"$out\" | grep -q 'would stage CLAUDE_CODE_OAUTH_TOKEN' && echo \"$out\" | grep -q 'would stage OPENAI_API_KEY' && echo \"$out\" | grep -q 'would stage GITHUB_TOKEN' && [ \"$ec\" -eq 0 ] && echo DRY_RUN_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DRY_RUN_OK"
+        },
+        {
+          "name": "--dry-run does NOT leak secret values into output",
+          "cmd": "out=$(HYDRA_FLY_APP=test-fixture-app CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-SECRETMARKER GITHUB_TOKEN=ghp_SECRETMARKER OPENAI_API_KEY=sk-SECRETMARKER NO_COLOR=1 scripts/hydra-migrate-to-cloud.sh --dry-run --non-interactive 2>&1); ! echo \"$out\" | grep -q 'SECRETMARKER' && echo NO_LEAK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NO_LEAK"
+        },
+        {
+          "name": "--dry-run with stubbed PATH does not invoke real fly / claude / gh",
+          "cmd": "TMP=$(mktemp -d) && trap \"rm -rf $TMP\" EXIT; for bin in fly flyctl claude gh codex; do cat > \"$TMP/$bin\" <<'STUB'\n#!/usr/bin/env bash\necho \"REAL_$(basename \"$0\")_CALLED\" >&2\nexit 99\nSTUB\nchmod +x \"$TMP/$bin\"; done; out=$(HYDRA_FLY_APP=test-fixture-app CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-fake GITHUB_TOKEN=ghp_fake OPENAI_API_KEY=sk-fake NO_COLOR=1 PATH=\"$TMP:/usr/bin:/bin\" scripts/hydra-migrate-to-cloud.sh --dry-run --non-interactive 2>&1); ec=$?; ! echo \"$out\" | grep -q 'REAL_fly_CALLED' && ! echo \"$out\" | grep -q 'REAL_flyctl_CALLED' && ! echo \"$out\" | grep -q 'REAL_claude_CALLED' && ! echo \"$out\" | grep -q 'REAL_gh_CALLED' && [ \"$ec\" -eq 0 ] && echo NO_SIDE_EFFECTS",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NO_SIDE_EFFECTS"
+        },
+        {
+          "name": "entrypoint.sh still bash -n clean after dual-OAuth edit",
+          "cmd": "bash -n infra/entrypoint.sh && echo ENTRYPOINT_SYNTAX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ENTRYPOINT_SYNTAX_OK"
+        },
+        {
+          "name": "entrypoint.sh rejects when NO provider is set",
+          "cmd": "bash -c 'unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY CODEX_SESSION_TOKEN GITHUB_TOKEN; HYDRA_DRY_RUN=1 HYDRA_ROOT=/tmp HYDRA_DATA_DIR=/tmp infra/entrypoint.sh 2>&1 | grep -q \"No provider auth set\" && echo REJECTS_EMPTY'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REJECTS_EMPTY"
+        },
+        {
+          "name": "entrypoint.sh accepts Codex-only auth (OPENAI_API_KEY + GITHUB_TOKEN)",
+          "cmd": "bash -c 'unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY CODEX_SESSION_TOKEN; export OPENAI_API_KEY=sk-fake GITHUB_TOKEN=ghp_fake; HYDRA_DRY_RUN=1 HYDRA_ROOT=$(mktemp -d) HYDRA_DATA_DIR=$(mktemp -d) infra/entrypoint.sh 2>&1 | grep -q \"Codex provider only\" && echo CODEX_ONLY_OK'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CODEX_ONLY_OK"
+        },
+        {
+          "name": "entrypoint.sh accepts Claude+Codex dual auth",
+          "cmd": "bash -c 'export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-fake OPENAI_API_KEY=sk-fake GITHUB_TOKEN=ghp_fake; unset ANTHROPIC_API_KEY CODEX_SESSION_TOKEN; HYDRA_DRY_RUN=1 HYDRA_ROOT=$(mktemp -d) HYDRA_DATA_DIR=$(mktemp -d) infra/entrypoint.sh 2>&1 | grep -q \"Claude + Codex providers both present\" && echo DUAL_OK'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DUAL_OK"
+        },
+        {
+          "name": "entrypoint.sh honors HYDRA_CODEX_AUTH_ENV override",
+          "cmd": "bash -c 'unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY CODEX_SESSION_TOKEN; export HYDRA_CODEX_AUTH_ENV=MY_CODEX_VAR MY_CODEX_VAR=cs_fake GITHUB_TOKEN=ghp_fake; HYDRA_DRY_RUN=1 HYDRA_ROOT=$(mktemp -d) HYDRA_DATA_DIR=$(mktemp -d) infra/entrypoint.sh 2>&1 | grep -q \"Codex provider only\" && echo OVERRIDE_OK'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OVERRIDE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
