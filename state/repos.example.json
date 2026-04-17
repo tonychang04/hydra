@@ -32,6 +32,15 @@
       "ticket_trigger": "label"
     },
     {
+      "_comment": "Bot-account mode: poll the bot user instead of @me on the assignee trigger. Create a GitHub service user (e.g. hydra-bot-<your-handle>), grant it collab access to this repo, and set assignee_override to its login. Hydra picks up only issues assigned to the bot — your own self-assigned tickets stay clear of Commander. Optional; absent = @me (default). Only honored when ticket_trigger is 'assignee'. See docs/phase2-vps-runbook.md 'Using a dedicated bot account' and docs/specs/2026-04-17-assignee-override.md (ticket #26).",
+      "owner": "your-org",
+      "name": "bot-served-repo",
+      "local_path": "/absolute/path/to/bot-served/clone",
+      "enabled": false,
+      "ticket_trigger": "assignee",
+      "assignee_override": "hydra-bot-your-handle"
+    },
+    {
       "_comment": "An infra-critical repo — disabled because it's effectively Tier 3 everywhere. Re-enable only if you want workers to attempt non-infra tickets in it.",
       "owner": "your-org",
       "name": "infra-repo",

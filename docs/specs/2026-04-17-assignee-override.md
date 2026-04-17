@@ -1,3 +1,9 @@
+---
+status: draft
+date: 2026-04-17
+author: hydra worker (#26)
+---
+
 # Bot-account mode (phase 1): per-repo `assignee_override`
 
 **Ticket:** [#26](https://github.com/tonychang04/hydra/issues/26) · **Tier:** T2 · **Status:** draft

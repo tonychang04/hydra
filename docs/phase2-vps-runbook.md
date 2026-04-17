@@ -679,6 +679,116 @@ The wrapper detects this error and returns exit code 4 (`codex-unavailable`), wh
 
 Runs the wrapper against four stubbed `codex` binaries (success / no-change / model-not-supported / rate-limit), verifying every exit code and the prompt-leak security invariant. Runs on CI (script-kind). Set `HYDRA_TEST_CODEX_E2E=1` to additionally smoke-check against a real `codex` install on your host.
 
+## Using a dedicated bot account
+
+Hydra's `assignee` trigger polls `@me` by default — Commander picks up issues assigned to whoever owns the `GITHUB_TOKEN` it's authenticated with. In practice, that's the operator's own GitHub user, and the same user they use for their own in-progress work. Two meanings collide: "I'm working on this myself" and "Commander should take this".
+
+The fix is to route tickets Commander should take to a **dedicated bot account** — e.g. a free GitHub user `hydra-bot-<your-handle>` — and configure the repo to poll that bot instead of `@me`. Your own self-assigned tickets stay clear of Commander.
+
+This is **phase 1** of the bot-account story: the bot is the polling identity only. Commander still opens PRs and posts comments under whatever `GITHUB_TOKEN` is configured (typically the operator's). Bot-authored PRs, bot-posted review comments, and a dedicated bot-token file are follow-up tickets — see the "What this does not cover" subsection below.
+
+Spec: [`docs/specs/2026-04-17-assignee-override.md`](specs/2026-04-17-assignee-override.md) · Ticket: [#26](https://github.com/tonychang04/hydra/issues/26).
+
+### When to enable
+
+You probably want this if:
+
+- Multiple people share the repo and everyone's self-assigned tickets leak into Commander's view.
+- You self-assign tickets as your own "working on this" marker and want a bright line between those and "Commander, take this" tickets.
+- You run multiple Hydra operators against the same repo (each operator's bot can poll disjoint slices).
+
+You probably don't want this if:
+
+- You're the only person in the repo and you don't self-assign personal work — `@me` is simpler and already works.
+- The repo uses the `label` trigger (`commander-ready`) — bot mode only affects the `assignee` trigger; `label` is already unambiguous.
+
+### Step 1 — Create the bot GitHub user
+
+1. Sign out of GitHub (or use an incognito window).
+2. Create a new free GitHub account. Suggested login: `hydra-bot-<your-handle>` (e.g. `hydra-bot-alice`). Any valid login works; the schema accepts `^[A-Za-z0-9-]+(\[bot\])?$`.
+3. Accept the email verification.
+4. Add the bot as a collaborator on each repo you want Hydra to poll (Settings → Collaborators). Scope the bot to only the repos in `state/repos.json` — it doesn't need org-wide access.
+
+This is a **human step** and intentionally so. Hydra doesn't create GitHub accounts; you do.
+
+### Step 2 — Set `assignee_override` per repo
+
+Easiest path: use the CLI.
+
+```bash
+./hydra add-repo your-org/your-repo \
+  --local-path ~/projects/your-repo \
+  --trigger assignee \
+  --assignee hydra-bot-alice \
+  --non-interactive
+```
+
+Or, for a repo that's already in `state/repos.json`, re-run with `--force`:
+
+```bash
+./hydra add-repo your-org/your-repo \
+  --local-path ~/projects/your-repo \
+  --trigger assignee \
+  --assignee hydra-bot-alice \
+  --force \
+  --non-interactive
+```
+
+Or edit `state/repos.json` by hand — add the field to the relevant entry:
+
+```json
+{
+  "owner": "your-org",
+  "name": "your-repo",
+  "local_path": "/absolute/path",
+  "enabled": true,
+  "ticket_trigger": "assignee",
+  "assignee_override": "hydra-bot-alice"
+}
+```
+
+Validation: `scripts/validate-state.sh state/repos.json` — rejects invalid login shapes and empty strings with a clear error. Commander's preflight also runs this on every tick.
+
+### Step 3 — Assign tickets to the bot
+
+From GitHub's UI (or via `gh`):
+
+```bash
+gh issue edit 42 --add-assignee hydra-bot-alice --repo your-org/your-repo
+```
+
+On the next Commander tick, `gh issue list --assignee hydra-bot-alice --state open` is what gets polled instead of `@me`.
+
+### Step 4 — Verify
+
+```bash
+# Local sanity check: what would Commander poll?
+jq -r '.repos[] | "\(.owner)/\(.name): assignee=\(.assignee_override // "@me") trigger=\(.ticket_trigger)"' state/repos.json
+```
+
+Expected output for the configured repo:
+
+```
+your-org/your-repo: assignee=hydra-bot-alice trigger=assignee
+```
+
+Any repo you didn't touch still says `assignee=@me` — absent override = legacy behavior.
+
+### What this does NOT cover (separate tickets)
+
+Phase 1 is deliberately small. The following are explicit non-goals of this PR; each warrants its own ticket:
+
+- **Bot-token storage.** The bot account currently doesn't log into Hydra — Commander still polls via the operator's own `GITHUB_TOKEN`. That works fine as long as the operator's token has read access to the bot's assigned issues (which it does for any repo they collaborate on). A future ticket wires up a separate `~/.hydra/bot-token` so Commander can authenticate AS the bot for polling. Needed if/when you want the bot account to also own the PR / comment traffic.
+- **Bot-authored PRs, comments, labels, and review postings.** Requires the bot-token layer.
+- **Auto-pause on bot-token expiry / revocation.** Requires the bot-token layer.
+- **GitHub App registration.** Future (phase 2 / enterprise). Apps get a stable identity with richer auth, at the cost of a registration step.
+- **Team mode (multiple operators sharing one bot).** Considered but deferred — for now, one bot per operator keeps the mental model simple.
+- **Linear analogue.** Linear has its own assignee model; a future ticket can add `assignee_override` semantics for `ticket_trigger: linear` if / when there's demand.
+
+### Rollback
+
+Remove the `assignee_override` field from the relevant `state/repos.json` entry — either by hand-editing or by `./hydra add-repo <slug> --force` without `--assignee`. Commander is back to `@me` on the next tick. No data loss, no schema migration.
+
 ## Non-Fly operators (Hetzner, DO, bare VPS)
 
 Use `infra/systemd/hydra.service` instead of Fly. The install steps are documented in-file at the top of that unit. Same `infra/entrypoint.sh` runs in both paths, so the operational muscle memory (attach, logs, deploy) carries over via `journalctl -u hydra.service -f` and `sudo -iu hydra tmux attach -t commander`.

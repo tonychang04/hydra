@@ -1,0 +1,4 @@
+{
+  "_description": "Empty repos.json shell used by the repo-assignee-override self-test case. The CLI run copies this to a tmp file, then invokes scripts/hydra-add-repo.sh --state-file <tmp> to exercise the write path without mutating the worktree's real state/repos.json.",
+  "repos": []
+}

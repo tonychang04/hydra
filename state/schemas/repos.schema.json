@@ -48,6 +48,12 @@
             "type": "string",
             "enum": ["assignee", "label", "linear"]
           },
+          "assignee_override": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9-]+(\\[bot\\])?$",
+            "description": "Optional. GitHub username (or `foo[bot]` app handle) to use with `gh issue list --assignee` instead of `@me`. Bot-account mode — lets the operator route tickets Hydra should take to a dedicated service account so they're unambiguous vs. tickets the operator is actively working on themselves. Only honored when ticket_trigger is 'assignee'. Additive: absent means fall back to @me (today's behavior). See docs/specs/2026-04-17-assignee-override.md (ticket #26)."
+          },
           "merge_policy": {
             "type": "string",
             "enum": ["auto-t1", "human-all", "refuse-all"],
