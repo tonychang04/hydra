@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/setup-complete.schema.json",
+  "title": "Hydra setup-complete fingerprint",
+  "description": "Marker written by scripts/hydra-setup.sh after the first-time setup wizard completes. Future session-greeting logic can check for this file to decide whether to nag a fresh operator. See docs/specs/2026-04-17-setup-wizard.md (ticket #168).",
+  "type": "object",
+  "required": ["version", "completed_at", "mode"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Schema version. Bumped if the fingerprint shape changes."
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when the wizard last completed."
+    },
+    "mode": {
+      "enum": ["interactive", "non-interactive"],
+      "description": "How the wizard was invoked. 'non-interactive' means CI / scripted install via flags."
+    }
+  },
+  "additionalProperties": false
+}
