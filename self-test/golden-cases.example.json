@@ -27,6 +27,46 @@
       },
       "last_run": null,
       "last_result": null
+    },
+    {
+      "_comment": "STUB for the retro command (spec: docs/specs/2026-04-16-retro-workflow.md). Populate `fixture_logs_path`, `fixture_citations_path`, and `expected_sections` with real values once you have a week of real logs. Until then, this stub documents the shape so the next operator knows what a retro golden case looks like. Runs against the commander itself (no worker subagent) — retro is an inline commander procedure, not a spawned worker.",
+      "id": "retro-golden-stub",
+      "repo": "tonychang04/hydra",
+      "local_path": "/absolute/path/to/local/hydra/clone",
+      "pr_num": null,
+      "parent_commit": null,
+      "worker_type": "commander-inline",
+      "tier": "self-test",
+      "ticket_body_summary": "Run `retro` against a fixed snapshot of logs/ + state/memory-citations.json + memory/escalation-faq.md and verify the output matches the template structure in CLAUDE.md (Weekly retro section).",
+      "fixture_logs_path": "self-test/fixtures/retro-golden-stub/logs/",
+      "fixture_citations_path": "self-test/fixtures/retro-golden-stub/memory-citations.json",
+      "fixture_faq_diff_path": "self-test/fixtures/retro-golden-stub/escalation-faq.diff",
+      "assertions": {
+        "must_write_path": "memory/retros/YYYY-WW.md",
+        "expected_sections": [
+          "# Hydra Retro — Week of",
+          "## Shipped",
+          "## Stuck",
+          "## Escalations",
+          "## Citation leaderboard",
+          "## Proposed edits"
+        ],
+        "must_include_patterns": [
+          "PRs opened",
+          "workers hit commander-stuck",
+          "promotion-ready"
+        ],
+        "must_not_touch_paths": [
+          "policy.md",
+          "CLAUDE.md",
+          "budget.json",
+          ".claude/**"
+        ],
+        "sample_size_gate_respected": true
+      },
+      "human_baseline": null,
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

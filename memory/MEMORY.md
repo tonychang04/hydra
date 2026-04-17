@@ -22,3 +22,7 @@ Read at session start. Each line → one discoverable memory file under `memory/
 - [Escalation FAQ](escalation-faq.md) — answers to recurring worker questions (commander scans this first before pinging Gary)
 - [Tier classification edge cases](tier-edge-cases.md) — tickets that looked T1 but were really T3, etc. (populated over time)
 - [Worker failure modes](worker-failures.md) — recurring ways workers get stuck (populated over time)
+
+## Weekly retros (populated by the `retro` command)
+
+- [retros/](retros/) — weekly retro outputs, one per ISO week as `YYYY-WW.md`. Produced by the `retro` command (see CLAUDE.md). Trend signal for "what should I improve next?"

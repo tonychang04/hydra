@@ -140,6 +140,7 @@ This is deliberately separate from the implementer so the reviewer isn't biased 
 | `repos` | Show `state/repos.json`; edit on request |
 | `answer #42: <guidance>` | the operator resolving a paused worker — `SendMessage(worker_id, guidance)` + append to `escalation-faq.md` |
 | `compact memory` / `promote learnings` / `archive stale` | Run memory hygiene on demand |
+| `retro` | Produce a weekly retro from `logs/*.json`, `state/memory-citations.json`, and recent additions to `memory/escalation-faq.md`. Write output to `memory/retros/YYYY-WW.md`; surface a one-paragraph summary in chat. See the "Weekly retro" section below. |
 | `self-test` / `self-test <case-id>` / `self-test --parallel` | Run regression harness against golden closed PRs in `self-test/golden-cases.json`. Use before committing changes to your own CLAUDE.md, worker subagents, or policy. See `self-test/README.md`. |
 
 ## Safety rules (hard)
@@ -178,6 +179,66 @@ Memory is short-term. Consistent patterns graduate into repo-local skills so eve
 - Draft skill PRs for promotion-ready entries; label `commander-skill-promotion`
 
 Silent by default. Only notify the operator when promoting a skill (needs his review).
+
+## Weekly retro (runs on demand)
+
+The operator says `retro`. You produce a structured weekly summary of what Hydra shipped, where it got stuck, and what the human had to intervene on — then write it to `memory/retros/YYYY-WW.md` (ISO year-week) and surface a one-paragraph summary in chat.
+
+Retros compound. Last week's retro sits next to this week's so trends become legible without a dashboard.
+
+**Inputs (read these in order):**
+
+1. Every `logs/*.json` with `completed_at` in the past 7 days — source of shipped/stuck counts, notable PRs, stuck patterns
+2. `state/memory-citations.json` — compute per-entry citation delta over the 7-day window; sort to find the leaderboard and promotion-ready entries
+3. Recent additions to `memory/escalation-faq.md` (git log on that file if the repo is git-tracked; else diff against the previous retro's cut) — these are the human interventions during the window
+
+**Output template (verbatim — sections, tone, field names):**
+
+```
+# Hydra Retro — Week of YYYY-WW
+
+## Shipped
+- N PRs opened, M merged (auto-merge: X, human-merge: Y)
+- Notable: [links to PRs that were non-obvious]
+
+## Stuck
+- K workers hit commander-stuck; top 3 patterns:
+  - <pattern>: <count>, likely cause
+- Proposed mitigation: <memory entry to add, or worker prompt tweak>
+
+## Escalations
+- Human answered N novel questions; top themes:
+  - <theme>: <count>
+- Proposed FAQ additions already appended to escalation-faq.md
+
+## Citation leaderboard
+- Most-cited memory entries this week → Y are now promotion-ready
+- PRs queued for skill-promotion: <list>
+
+## Proposed edits
+- [if pattern warrants] Policy or CLAUDE.md change with justification
+```
+
+**Procedure:**
+
+1. Compute the ISO week (`YYYY-WW`). That's the filename: `memory/retros/YYYY-WW.md`. If the file already exists for this week, overwrite (a second retro run in the same week replaces the prior output — retros are cumulative for the whole week).
+2. Read inputs above. Build each section of the template.
+3. Write the full markdown to `memory/retros/YYYY-WW.md`.
+4. In chat, surface a one-paragraph summary plus `read full retro: memory/retros/YYYY-WW.md`.
+
+**Sample-size gate (don't over-fit on noise):**
+
+- Do NOT propose a pattern-based `## Proposed edits` entry unless the supporting signal has ≥5 data points in the window. Below that, leave `## Proposed edits` empty or write "no pattern above minimum sample size this week."
+- `## Stuck` and `## Escalations` always list counts even when small; the gate applies only to proposed edits.
+
+**What retro is NOT:**
+
+- Not an accountability report. Retros exist to improve Hydra, not to police it. Keep tone neutral and diagnostic.
+- Not a dashboard UI. Plain markdown only.
+- Not per-repo. One global retro is enough until multi-repo activity forces splitting.
+- Not a substitute for memory hygiene. Retro SURFACES promotion candidates; the actual `promote learnings` pass still runs on its own trigger.
+
+**Scheduled retro (when scheduled autopickup ships):** auto-run every Monday 09:00 local. Until then, `retro` is operator-invoked only.
 
 ## Session greeting
 

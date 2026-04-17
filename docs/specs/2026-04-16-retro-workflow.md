@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 date: 2026-04-16
 author: hydra design
 ---
@@ -87,4 +87,13 @@ A new `commander-retro.md` skill or inline procedure in CLAUDE.md that:
 
 ## Implementation notes
 
-(To fill after PR lands.)
+Implemented in PR on `commander/hydra-1` (closes #1). What shipped vs the spec, and things worth flagging for future workers:
+
+- **Command lives inline in CLAUDE.md, not as a skill.** Picked Alternative D from the spec. The new "Weekly retro (runs on demand)" section sits right after "Memory hygiene" because the two procedures share state (`state/memory-citations.json`, `memory/escalation-faq.md`) and reviewers should see them together. A separate `commander-retro.md` skill would have split the context.
+- **Output template is locked verbatim.** The six-section template (`Shipped / Stuck / Escalations / Citation leaderboard / Proposed edits`) is reproduced inside a fenced block in CLAUDE.md — the commander treats that block as authoritative. Future edits to the template should change it in CLAUDE.md and in this spec in the same PR so they don't drift.
+- **Sample-size gate codified as ≥5 data points.** The spec lists this as a risk mitigation; made it concrete in CLAUDE.md ("Do NOT propose a pattern-based `## Proposed edits` entry unless the supporting signal has ≥5 data points in the window"). Below that, retro writes "no pattern above minimum sample size this week." `Stuck`/`Escalations` still report counts even when small — the gate applies only to proposed edits.
+- **Idempotency on re-run:** if `retro` runs twice in the same ISO week, the second run overwrites the first. Retros are cumulative per week, not per invocation. Documented in the procedure.
+- **Scheduled auto-run is gated on scheduled autopickup.** Until that spec (`2026-04-16-scheduled-autopickup.md`) lands, retro is operator-invoked only. CLAUDE.md calls this out explicitly so nobody wonders why nothing fires on Mondays.
+- **Self-test case is a STUB, not a populated golden.** Added `retro-golden-stub` to `self-test/golden-cases.example.json` with `worker_type: "commander-inline"` (retro is not a spawned worker — it runs in the commander's own response loop). The stub documents the expected assertion shape (`must_write_path`, `expected_sections`, `sample_size_gate_respected`). Populating fixture logs + running the stub against a real commander session is the operator's follow-up once a week of real `logs/*.json` exists.
+- **`memory/retros/` is a new committed subdir** with a `.gitkeep` so it ships empty. `memory/MEMORY.md` picked up a new "Weekly retros" section pointing to it. No change to memory lifecycle rules — the spec calls out that old retros auto-archive via existing lifecycle, which is the right call (no new rule needed).
+- **Nothing changed in** `policy.md`, `budget.json`, worker subagents, `.claude/settings.local.json*`, or `state/*.json`. Retro is a READ-only command over state + a WRITE into `memory/retros/`, so it stays within commander's existing permission envelope.
