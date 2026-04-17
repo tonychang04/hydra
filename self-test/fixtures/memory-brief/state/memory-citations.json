@@ -1,0 +1,68 @@
+{
+  "_description": "Fixture for scripts/build-memory-brief.sh self-test. Citation counts engineered so top-5 samplerepo entries and top-3 cross-repo entries are deterministic.",
+  "citations": {
+    "learnings-samplerepo.md#\"docker compose up -d\"": {
+      "count": 10,
+      "last_cited": "2026-04-17",
+      "tickets": ["samplerepo#101", "samplerepo#102", "samplerepo#103"],
+      "promotion_threshold_reached": true,
+      "source": "operator"
+    },
+    "learnings-samplerepo.md#\"npm install strips peer markers\"": {
+      "count": 7,
+      "last_cited": "2026-04-17",
+      "tickets": ["samplerepo#101", "samplerepo#104", "samplerepo#105"],
+      "promotion_threshold_reached": true,
+      "source": "operator"
+    },
+    "learnings-samplerepo.md#\"Commit the spec before code\"": {
+      "count": 5,
+      "last_cited": "2026-04-16",
+      "tickets": ["samplerepo#102", "samplerepo#106"],
+      "promotion_threshold_reached": true,
+      "source": "operator"
+    },
+    "learnings-samplerepo.md#\"Always run tests inside docker compose\"": {
+      "count": 3,
+      "last_cited": "2026-04-16",
+      "tickets": ["samplerepo#101", "samplerepo#107"],
+      "promotion_threshold_reached": true,
+      "source": "operator"
+    },
+    "learnings-samplerepo.md#\"Host-level postcss.config.js pollutes Vite\"": {
+      "count": 2,
+      "last_cited": "2026-04-10",
+      "tickets": ["samplerepo#108"],
+      "promotion_threshold_reached": false,
+      "source": "operator"
+    },
+    "learnings-samplerepo.md#\"DATABASE_URL defaults to sqlite in tests\"": {
+      "count": 1,
+      "last_cited": "2026-04-09",
+      "tickets": ["samplerepo#109"],
+      "promotion_threshold_reached": false,
+      "source": "operator"
+    },
+    "learnings-otherrepo.md#\"Stream idle timeout around 18 minutes\"": {
+      "count": 15,
+      "last_cited": "2026-04-17",
+      "tickets": ["otherrepo#201", "otherrepo#202", "otherrepo#203", "otherrepo#204"],
+      "promotion_threshold_reached": true,
+      "source": "operator"
+    },
+    "learnings-otherrepo.md#\"Redis port 6379 collides on parallel workers\"": {
+      "count": 9,
+      "last_cited": "2026-04-15",
+      "tickets": ["otherrepo#201", "otherrepo#205"],
+      "promotion_threshold_reached": true,
+      "source": "operator"
+    },
+    "learnings-otherrepo.md#\"Use pnpm, not npm, in this repo\"": {
+      "count": 4,
+      "last_cited": "2026-02-10",
+      "tickets": ["otherrepo#199"],
+      "promotion_threshold_reached": true,
+      "source": "operator"
+    }
+  }
+}
