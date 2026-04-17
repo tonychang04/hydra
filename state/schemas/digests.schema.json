@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/digests.schema.json",
+  "title": "Hydra daily digest config",
+  "description": "Config for the daily status digest. Subscribed via './hydra connect digest <channel>'. Emitted via scripts/build-daily-digest.sh. Scheduled by the Scheduled autopickup tick (step 1.6). Spec: docs/specs/2026-04-17-daily-digest.md (ticket #144).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "enabled",
+    "channel",
+    "time",
+    "destination",
+    "last_digest_run"
+  ],
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Master switch. When false, the autopickup tick's digest check (step 1.6) no-ops. Re-running './hydra connect digest' re-prompts for this."
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["stdout", "slack", "webhook", "email"],
+      "description": "Where the paragraph goes. 'stdout' writes to memory/digests/YYYY-MM-DD.md AND stdout (no external transport needed). 'slack' / 'webhook' / 'email' append to logs/digest-out.jsonl in Phase 1; actual transport is a follow-up ticket consuming that JSONL."
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+      "description": "Local HH:MM at or after which the digest fires on a given day. Default 09:00. Uses host local timezone — same semantic as the Monday retro check (see docs/specs/2026-04-17-scheduled-retro.md)."
+    },
+    "destination": {
+      "type": "string",
+      "description": "Channel-specific target. stdout: path prefix (default 'memory/digests/'). slack: channel ID (falls back to state/connectors/slack.json:default_channel if empty). webhook: env-var NAME holding the URL (never paste the URL itself — tokens stay out of this file). email: address string."
+    },
+    "last_digest_run": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 local timestamp of the most recent digest emission. Used by the autopickup tick's idempotency check so the same day's 09:00 window doesn't double-fire. Null = never run."
+    },
+    "max_chars": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 2000,
+      "description": "Override for the 500-char cap. Rarely used; exists for operators who pipe to channels with different size constraints."
+    },
+    "full_status_pointer": {
+      "type": "string",
+      "description": "Trailing pointer that replaces the default './hydra status' suffix when truncation occurs. Operators on non-CLI channels may prefer a URL here. Defaults to './hydra status' in the composer."
+    }
+  }
+}

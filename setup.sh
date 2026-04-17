@@ -370,7 +370,7 @@ cat > "$LAUNCHER_TMP" <<'EOF'
 #                                            then runs a live sanity check.
 #                                            (spec: docs/specs/2026-04-17-pair-agent.md,
 #                                            ticket #124).
-#   ./hydra connect <linear|slack|supervisor> [--dry-run|--list|--status|--non-interactive]
+#   ./hydra connect <linear|slack|supervisor|digest> [--dry-run|--list|--status|--non-interactive]
 #                                            Interactive wizard for wiring
 #                                            connectors. Installs MCP server
 #                                            (where applicable), prompts for
@@ -378,9 +378,13 @@ cat > "$LAUNCHER_TMP" <<'EOF'
 #                                            against state/schemas/, and atomic-
 #                                            writes. --list discovers supported
 #                                            connectors; --status runs a live
-#                                            health check.
-#                                            (spec: docs/specs/2026-04-17-connector-wizard.md,
-#                                            ticket #139)
+#                                            health check. The `digest`
+#                                            subcommand subscribes a channel
+#                                            (stdout|slack|webhook|email) to
+#                                            the daily 1-paragraph status push.
+#                                            (specs: docs/specs/2026-04-17-connector-wizard.md
+#                                            [ticket #139], docs/specs/2026-04-17-daily-digest.md
+#                                            [ticket #144])
 #
 # MCP server subcommand (spec: docs/specs/2026-04-17-mcp-server-binary.md, ticket #72).
 # Launches Hydra's agent-only interface. Not a chat session.
@@ -443,10 +447,11 @@ Subcommands:
   pair-agent <agent-id> [opts] One-command setup for an MCP-speaking agent:
                                generates a bearer, prints paste-ready recipes,
                                runs a live sanity check.
-  connect <linear|slack|supervisor> [opts]
-                               Interactive wizard for wiring Linear, Slack, or
-                               the outbound MCP supervisor. Run
-                               `./hydra connect --help` for details.
+  connect <linear|slack|supervisor|digest> [opts]
+                               Interactive wizard for wiring Linear, Slack,
+                               the outbound MCP supervisor, or the daily
+                               status digest (push 1 paragraph once a day).
+                               Run `./hydra connect --help` for details.
   doctor [--fix|--fix-safe]    Install sanity check. --fix walks the operator
                                through each fixable issue interactively.
   mcp <serve|register-agent>   MCP server subcommands (agent-only interface).

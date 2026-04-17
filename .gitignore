@@ -16,6 +16,10 @@ state/pending-dispatches.json
 state/slack-notified-prs.json
 state/discord-notified-prs.json
 state/webhook-triggers/
+state/digests.json
+
+# Daily digest runtime artifacts (spec: docs/specs/2026-04-17-daily-digest.md)
+memory/digests/
 
 # Connector configs — real values live here; only the .example mirror is committed.
 state/connectors/*.json

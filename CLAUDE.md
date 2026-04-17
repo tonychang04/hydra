@@ -107,7 +107,7 @@ Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md` (implementation watchd
 | `retro` | Weekly retro → `memory/retros/YYYY-WW.md` + chat summary. See "Weekly retro" pointer below. |
 | `self-test` / `self-test <id>` / `self-test --parallel` | Run regression harness against golden closed PRs. See `self-test/README.md`. |
 | `audit` | Spawn `worker-auditor` — files up to 3 `commander-ready`+`commander-auto-filed` issues. See `docs/specs/2026-04-17-worker-auditor-subagent.md`. |
-| `./hydra connect <x>` | Run connector wizard (`scripts/hydra-connect.sh`) for linear / slack / mcp. Full wizard + spec: `docs/specs/2026-04-17-connector-wizard.md`. |
+| `./hydra connect <x>` | Run connector wizard (`scripts/hydra-connect.sh`) for linear / slack / supervisor / digest. Full wizard + spec: `docs/specs/2026-04-17-connector-wizard.md`, `docs/specs/2026-04-17-daily-digest.md` (digest). |
 
 ## Safety rules (hard)
 
@@ -147,7 +147,7 @@ Do **not** use `gh pr edit --add-label` — GraphQL path fails with a Projects-c
 
 `autopickup every N min` turns Commander into a cron-like machine via the `/loop` skill (no daemon, one scheduler per session). State: `state/autopickup.json` (gitignored; template at `.example`). Default-on via `auto_enable_on_session_start` — opt out with `./hydra --no-autopickup` or `HYDRA_NO_AUTOPICKUP=1`. Each tick preflights, runs Monday-morning retro check, picks tickets per the usual trigger, spawns up to remaining capacity. Quiet by default — surfaces only on state changes. Two consecutive rate-limit hits auto-disable with a single operator notification. `autopickup off` exits the loop; in-flight workers finish.
 
-Specs: `docs/specs/2026-04-16-scheduled-autopickup.md` (tick procedure, preflight, yield-to-foreground, auto-disable), `docs/specs/2026-04-16-autopickup-default-on.md` (session-start), `docs/specs/2026-04-17-scheduled-retro.md` (Monday retro integration).
+Specs: `docs/specs/2026-04-16-scheduled-autopickup.md` (tick procedure, preflight, yield-to-foreground, auto-disable), `docs/specs/2026-04-16-autopickup-default-on.md` (session-start), `docs/specs/2026-04-17-scheduled-retro.md` (Monday retro integration), `docs/specs/2026-04-17-daily-digest.md` (step-1.6 daily status digest — after retro check, fire `scripts/build-daily-digest.sh` per `state/digests.json` if due).
 
 ## Memory hygiene (runs silently)
 
