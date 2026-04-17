@@ -187,9 +187,10 @@ Workers sometimes hit a `Stream idle timeout — partial response received` arou
 **Safety guarantees of `scripts/rescue-worker.sh`:**
 - Refuses to run if HEAD isn't on the expected `<branch>` (catches worktree mix-ups).
 - Refuses if `<worktree>` isn't a git worktree.
+- `--rescue` refuses with exit 1 if `.git/index.lock` is present at call time — best-effort guard against racing a still-writing worker (ticket #81).
 - `--probe` never writes; commander can run it freely.
 - `--rescue` never force-pushes; a rebase conflict is escalated, not masked.
-- Exit codes are documented: `0` success, `1` I/O or branch mismatch, `2` usage error, `3` rescue conflict.
+- Exit codes are documented: `0` success, `1` I/O or branch mismatch / stale lock, `2` usage error, `3` rescue conflict.
 
 **Threshold tuning:** 12 min is the default. If it turns out to false-positive on slow-but-alive workers, bump it in this section (and in `docs/specs/2026-04-16-worker-timeout-watchdog.md`). The probe is non-mutating, so a false-positive probe call is harmless — nothing is committed until `--rescue` runs.
 
