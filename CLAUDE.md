@@ -65,6 +65,28 @@ When the operator sends a command:
 6. **Track** in `state/active.json` with `{id, ticket, repo, tier, started_at, subagent_type}`.
 7. **Report** one-line status per ticket in chat.
 
+## Auto-dispatch: worker-test-discovery on repeat "test procedure unclear"
+
+The `worker-test-discovery` subagent exists so workers never have to re-discover how to test a repo. The auto-dispatch rule below wires it into the failure path for `worker-implementation` — don't wait for the operator to type `test discover <repo>` if the signal is already in the logs.
+
+**Rule:** if `worker-implementation` returns a `QUESTION:` block containing the phrase "test procedure unclear" (case-insensitive) **twice in a row on the same repo** (consecutive, across any two tickets), commander automatically spawns `worker-test-discovery` on that repo **before** the third retry of the original ticket. The `worker-test-discovery` PR must land (or at least open and pass commander review) before the third retry spawns.
+
+**Detection:** scan the last two completed `logs/<ticket>.json` entries for the same repo where the worker was `worker-implementation`. If both end in `result: paused-on-question` with the question text matching `/test procedure unclear/i`, the auto-dispatch trigger has fired.
+
+**Sequencing:**
+
+1. Commander detects the 2x trigger.
+2. Spawn `worker-test-discovery` on that repo (same worktree conventions as `test discover <repo>`).
+3. Park the original ticket (label `commander-pause`, comment why).
+4. On `worker-test-discovery` PR open, run the usual commander review gate.
+5. Once the discovery PR is merged (or ready-for-merge with the operator surfaced), resume the original ticket via the normal `retry #<n>` path. The newly-landed `TESTING.md` (or `CLAUDE.md` testing section) is now visible to `worker-implementation`.
+
+**Budget:** the auto-dispatched `worker-test-discovery` counts against `max_concurrent_workers` like any other worker. If preflight fails, defer the auto-dispatch until the next tick — do NOT bypass preflight.
+
+**Non-goals:** this rule does not apply to `worker-review` or arbitrary other "test"-shaped questions. The trigger phrase is deliberately narrow ("test procedure unclear") so the auto-dispatch doesn't fire on, e.g., "which test framework should I add?" — that's still an escalation.
+
+**First execution:** currently only wired at the commander decision layer. The self-test case `test-discovery-dormant-to-active` (see `self-test/golden-cases.example.json`, kind `worker-subagent`) documents the expected artifact. It is SKIP'd today pending the `worker-implementation` SKIP-path executor (ticket #15 follow-up); once that lands, this auto-dispatch path is live.
+
 ## When to involve the human (memorize this)
 
 **Don't escalate:**

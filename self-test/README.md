@@ -37,6 +37,7 @@ Exit codes: `0` = all cases passed or skipped · `1` = one or more failed · `2`
 |---|---|---|---|
 | `script` | yes | `memory-validators`, `runner-meta` | Runs each `steps[].cmd` from worktree root; checks `expected_exit`, `expected_stdout_jq`, `expected_stderr_contains`. |
 | `worker-implementation` | **SKIP** | `example-case-id`, `cli-50` | Requires Claude auth + dry-run worker harness. Printed as `∅ SKIP: requires Claude auth, not implemented in shell runner`. Future ticket adds the executor. |
+| `worker-subagent` | **SKIP** | `test-discovery-dormant-to-active` | Requires spawning a non-implementation worker subagent (e.g. `worker-test-discovery`). Lands with the `worker-implementation` executor. See ticket #32 and `docs/specs/2026-04-16-exercise-test-discovery.md`. |
 | `commander-inline` | **SKIP** | `retro-golden-stub` | Requires commander orchestration. |
 | `commander-self` | **SKIP** | `autopickup-tick-behavior` | Requires commander orchestration. |
 

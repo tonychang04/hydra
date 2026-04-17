@@ -363,6 +363,35 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "test-discovery-dormant-to-active",
+      "_description": "Exercises worker-test-discovery end-to-end against a minimal fixture repo (self-test/fixtures/test-discovery/fixture-repo/) that has no TESTING.md, no CLAUDE.md, and no README testing section. Spec: docs/specs/2026-04-16-exercise-test-discovery.md (ticket #32). Today the runner SKIPs this case — it needs the same worker-implementation SKIP-path executor that ticket #15 is about to land. The follow-up ticket (#15-follow-up) is to switch this case from SKIP to live execution once that executor is merged.",
+      "kind": "worker-subagent",
+      "_skip_reason": "requires worker-test-discovery spawn; implement when worker-implementation SKIP path lands",
+      "worker_type": "worker-test-discovery",
+      "tier": "T1",
+      "fixture_repo_path": "self-test/fixtures/test-discovery/fixture-repo",
+      "ticket_body_summary": "Worker-implementation has asked 'test procedure unclear' twice on this repo. Commander auto-dispatched worker-test-discovery to document how to run + verify the service.",
+      "assertions": {
+        "must_touch_paths": ["TESTING.md"],
+        "must_not_touch_paths": [
+          "package.json",
+          "docker-compose.yml",
+          ".env.example",
+          "README.md"
+        ],
+        "must_include_patterns": [
+          "docker compose up",
+          "6379",
+          "redis-cli"
+        ],
+        "expected_artifact": "worker opens a PR adding TESTING.md to the fixture repo with the docker compose up + curl/redis-cli localhost:6379 verify steps",
+        "pr_label_required": "commander-review",
+        "max_files_changed": 1
+      },
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
