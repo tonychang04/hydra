@@ -6,7 +6,8 @@
 #   - Frontmatter --- block at the top with keys: name, description, type
 #   - At least one of the expected section headings:
 #       ## Conventions, ## Test commands, ## Known gotchas
-#   - No line longer than 500 chars
+#   - No line longer than 1500 chars (sanity bound; catches runaway paste bugs,
+#     not a style linter — real worker notes run 700-1200 chars per line)
 #   - Any inline dates of the form YYYY-MM-DD are valid (month 01-12, day 01-31)
 #
 # Exit 0 on pass. On fail, exit 1 and print all errors to stderr so an
@@ -15,7 +16,7 @@
 set -euo pipefail
 
 MEMORY_DIR_DEFAULT="./memory"
-MAX_LINE_LEN=500
+MAX_LINE_LEN=1500
 EXPECTED_SECTIONS_REGEX='^## (Conventions|Test commands|Known gotchas)[[:space:]]*$'
 REQUIRED_FRONTMATTER_KEYS=(name description type)
 
@@ -37,7 +38,7 @@ Checks:
   3. Frontmatter contains keys: name, description, type.
   4. At least one section heading from:
        ## Conventions, ## Test commands, ## Known gotchas.
-  5. No line exceeds 500 characters.
+  5. No line exceeds 1500 characters (sanity bound, not a style rule).
   6. Any YYYY-MM-DD date is valid (month 01-12, day 01-31).
 
 Exit codes:
