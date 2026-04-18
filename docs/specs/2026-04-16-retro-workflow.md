@@ -97,3 +97,9 @@ Implemented in PR on `commander/hydra-1` (closes #1). What shipped vs the spec, 
 - **Self-test case is a STUB, not a populated golden.** Added `retro-golden-stub` to `self-test/golden-cases.example.json` with `worker_type: "commander-inline"` (retro is not a spawned worker — it runs in the commander's own response loop). The stub documents the expected assertion shape (`must_write_path`, `expected_sections`, `sample_size_gate_respected`). Populating fixture logs + running the stub against a real commander session is the operator's follow-up once a week of real `logs/*.json` exists.
 - **`memory/retros/` is a new committed subdir** with a `.gitkeep` so it ships empty. `memory/MEMORY.md` picked up a new "Weekly retros" section pointing to it. No change to memory lifecycle rules — the spec calls out that old retros auto-archive via existing lifecycle, which is the right call (no new rule needed).
 - **Nothing changed in** `policy.md`, `budget.json`, worker subagents, `.claude/settings.local.json*`, or `state/*.json`. Retro is a READ-only command over state + a WRITE into `memory/retros/`, so it stays within commander's existing permission envelope.
+
+## Follow-up: auto-file `## Proposed edits`
+
+Ticket #142 added a final step to this procedure: **after** the retro file is written, Commander runs `scripts/retro-file-proposed-edits.sh <week>`. That script parses the `## Proposed edits` section and files each bullet as a `commander-ready` GitHub issue, classified T1/T2 by heuristic. T3-tripwire bullets (auth / migration / infra / etc.) are surfaced on stdout instead of filed, preserving the tier-3 safety rail. Idempotent by title match — re-running the retro in the same week does not duplicate issues.
+
+This closes the meta-learning loop: patterns Commander notices across a week become concrete tickets the next tick picks up, without the operator in the middle. Full spec: `docs/specs/2026-04-17-retro-auto-file.md`.
