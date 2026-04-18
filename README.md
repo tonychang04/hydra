@@ -16,6 +16,19 @@ You file a GitHub issue and assign it to yourself. Hydra picks it up, reads the 
 
 Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) + [superpowers skills](https://github.com/anthropics/superpowers). MIT licensed. Self-hosted (your laptop today, cloud tomorrow).
 
+## Why "Hydra"?
+
+Named after the Lernaean Hydra from Greek mythology — the serpent that regenerated when you cut off a head. Chop one, two grow back. More heads, more teeth, more trouble for whatever's in front of it.
+
+The name maps directly onto the architecture:
+
+- **Commander is the body.** Persistent. Holds memory, state, and policy across every ticket.
+- **Workers are the heads.** Ephemeral. One per ticket. Spawn, work, die.
+- Every new ticket grows a new head. Finished heads die. The body keeps going.
+- More tickets in the queue means more heads working in parallel — no human needed to cut the next one loose.
+
+The mythological Hydra got stronger each time a head was cut off. So does this one. Every completed ticket feeds memory; memory makes the next head smarter, faster, more autonomous. Dead heads are not losses — they are how the body learns.
+
 ## Try it in 60 seconds
 
 Fresh shell, five commands, end up at a Commander session that's picked up its first ticket:
