@@ -19,34 +19,37 @@ Commander assigns every ticket a risk tier before spawning a worker: **T1**
 clears the PR), or **T3** (refuse — needs a human). The rules live in
 `policy.md`, which is **authoritative**. This skill does not add or change rules;
 it pins the *procedure* and a fixed set of worked examples so the classification
-is testable (the README golden self-test "classify a few test tickets") and
-doesn't drift between spawns. When this skill and `policy.md` ever disagree,
-`policy.md` wins and this skill is the bug.
+is testable (it makes the README "Rung 1 — smoke test" step "classify a few test
+tickets" repeatable) and doesn't drift between spawns. When this skill and
+`policy.md` ever disagree, `policy.md` wins and this skill is the bug.
 
 The one rule that overrides everything else: **most-restrictive-wins**. Check T3
 first; only fall through to T1/T2 when no T3 tripwire matches. It is always safe
 to bump T1→T2 or T2→T3; never downgrade (`policy.md` §"Classification
-procedure": "default to the more restrictive tier ... Never downgrade").
+procedure" → "default to the more restrictive tier"; same line: "It is always
+safe to bump T1→T2 or T2→T3. Never downgrade.").
 
 The output is a triple: `tier` + a one-sentence rationale + the literal
-`policy.md` clause that triggered the decision. Naming the clause keeps the call
-auditable and lets a reviewer confirm it against `policy.md` directly.
+`policy.md` clause that triggered. Naming the clause keeps the call auditable.
 
 ## When to Use
 
 - **Pre-spawn, every ticket.** Commander runs this in the operating loop step 4
   ("Classify tier per `policy.md`") before spawning any worker.
-- **Worker-side re-check after reading code.** A worker that began on a ticket
-  labeled T1/T2 but finds the actual code touches auth/migration/infra must
-  re-classify. See `escalation-faq.md` → "Tier escalation": STOP, return
-  `QUESTION: should I reclassify as T3?`, label `commander-stuck`. This skill
-  feeds that decision; it does not replace the STOP-and-ask protocol.
+- **Worker-side re-check after reading code.** `policy.md` §"Worker-side
+  enforcement" is authoritative: if the description suggested T1 but the code
+  touches auth/migration/infra, the "worker stops immediately, labels
+  `commander-stuck`, and comments \"escalated to Tier 3 after reading code\"."
+  Take that action. `escalation-faq.md` → "Tier escalation" adds the agent-mode
+  detail (return `QUESTION: should I reclassify as T3?` so the supervisor can
+  confirm before abandoning); it does not override the policy.md step.
 - **Borderline calls.** When a ticket looks T1 but brushes a T3 path or keyword,
   use the procedure below — the answer is almost always the restrictive tier.
 
-Skip when the operator has already pinned a tier explicitly, or when a per-repo
-`merge_policy` override in `state/repos.json` only changes *who merges* (it does
-not change the *tier* — classify first, then apply merge policy).
+Note: a per-repo `merge_policy` override in `state/repos.json` changes *who
+merges*, not the *tier* — classify per `policy.md` first, then apply merge
+policy. There is no "skip classification" case (`policy.md`: "Classify every
+ticket BEFORE spawning a worker").
 
 ## Process / How-To
 
@@ -97,12 +100,12 @@ logic)").**
 
 ### Good — T3 (`03-t3-rotate-key.md`)
 
-Ticket: "Rotate JWT signing key in src/auth/keys.js". Path contains `auth`;
-title is "Rotate ... signing key".
+Ticket: "Rotate JWT signing key in src/auth/keys.js". The path `src/auth/keys.js`
+contains `auth`.
 → **`T3` — the file path `src/auth/keys.js` matches the `*auth*` filename
 pattern; a single path match is sufficient (policy.md §"Tier 3" → "Any file
-matching `*auth*`, `*security*`, `*crypto*`, ..."). Refuse: label
-`commander-stuck`, comment why, spawn nothing.**
+matching `*auth*`, `*security*`, `*crypto*`, `*session*`, `*token*`,
+`*password*`"). Refuse: label `commander-stuck`, comment why, spawn nothing.**
 
 Note (per the fixture): `src/auth/keys.js` need not exist — the path *shape* in
 the body trips the refusal before any filesystem work.
@@ -127,13 +130,14 @@ examples and against `policy.md`:
    same tier that the corresponding fixture's frontmatter declares:
    `grep -h '^tier:' examples/hello-hydra-demo/fixture-issues/*.md` →
    `tier: T1`, `tier: T2`, `tier: T3` — matching the three examples above.
-2. **Clause existence.** Every cited clause is a real string in `policy.md`,
-   e.g. `grep -F '.github/workflows/**' policy.md` and
-   `grep -F 'most restrictive wins' policy.md` (the procedure paraphrases the
-   header "Check Tier 3 triggers first (most restrictive wins)").
-3. **No-contradiction.** The worker-side re-check defers to
-   `escalation-faq.md` → "Tier escalation" (STOP + `QUESTION: should I reclassify
-   as T3?`); this skill links to it rather than restating a different protocol.
+2. **Clause existence (verbatim).** Every quoted clause is an exact contiguous
+   substring of `policy.md` — no ellipsis or paraphrase inside the quote marks.
+   Spot-check: `grep -F 'default to the more restrictive tier' policy.md` and
+   `grep -F 'Any file matching `*auth*`' policy.md` both return a line.
+3. **No-contradiction with policy.md.** The worker-side re-check states
+   `policy.md` §"Worker-side enforcement" as the authoritative action and frames
+   `escalation-faq.md` → "Tier escalation" as an agent-mode detail layered on
+   top, not a competing protocol. The skill adds no rule policy.md lacks.
 
 ## Related
 
@@ -143,4 +147,6 @@ examples and against `policy.md`:
 - `memory/escalation-faq.md` → "Tier escalation" — worker-side re-check protocol.
 - `memory/tier-edge-cases.md` — accumulated borderline cases; scan before a hard call.
 - `examples/hello-hydra-demo/fixture-issues/*.md` — the T1/T2/T3 worked examples.
-- `self-test/` (README "Self-test") — golden cases assert classification output.
+- README "Rung 1 — smoke test" ("classify a few test tickets") — the existing
+  manual check this skill makes repeatable. (No automated classifier golden case
+  exists in `self-test/` yet; this skill's worked examples are the test corpus.)
