@@ -78,7 +78,9 @@ EOF
 worktree="$PWD"
 repo_path=""
 worker_slot="${HYDRA_WORKER_SLOT:-}"
-worker_id="${HYDRA_WORKER_ID:-worker-$$}"
+# Empty = no explicit id; resolved after arg parsing to a STABLE default derived
+# from the slot (NOT $$ — a PID would change every run and break idempotency).
+worker_id="${HYDRA_WORKER_ID:-}"
 compose_file="docker-compose.yml"
 allocator="$SCRIPT_DIR/alloc-worker-port.sh"
 base_port=40000
@@ -129,6 +131,13 @@ fi
 if ! [[ "$worker_slot" =~ ^[0-9]+$ ]]; then
   echo "auto-apply-docker-isolation: --worker-slot must be a non-negative integer (got: $worker_slot)" >&2
   exit 2
+fi
+
+# Resolve the default worker-id now that the slot is known. Use the SLOT (stable
+# across re-runs) rather than $$ (the PID, which changes every invocation and
+# would break idempotency + orphan the first run's containers/network).
+if [[ -z "$worker_id" ]]; then
+  worker_id="slot${worker_slot}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -218,12 +227,10 @@ service_is_longform() {
 }
 
 allocate_for() {
-  # $1 service, $2 host-port-token, $3 container-port, $4 host-ip-prefix ("" if none).
-  # On success records a remapped entry "<ip:>?<allocated>:<container>" and the
-  # HYDRA_<SVC>_PORT export. On failure records the ORIGINAL entry verbatim
-  # (passthrough) so the !override block doesn't drop it, and warns.
-  local service="$1" host_tok="$2" container="$3" ip_prefix="${4:-}"
-  local original_value="${ip_prefix}${host_tok}:${container}"
+  # $1 service, $2 host-port-token, $3 container-port, $4 host-ip-prefix ("" if
+  # none), $5 ORIGINAL verbatim entry (used for passthrough so a token like
+  # "${WEB_PORT:-3001}:3000" is preserved exactly on allocation failure).
+  local service="$1" host_tok="$2" container="$3" ip_prefix="${4:-}" original_value="$5"
 
   # Extract a numeric desired host port from the token if possible.
   # Tokens may be "5432", "${PG_PORT:-5432}", etc. Pull the trailing digits.
@@ -275,7 +282,11 @@ parse_ports_entry() {
   entry="${entry%\'}"; entry="${entry#\'}"
   [[ -n "$entry" ]] || return 0
 
-  # Count colons OUTSIDE of ${...} so we don't miscount "${PG:-5432}:5432".
+  # The container port is always the segment after the LAST colon and never
+  # contains a ${...} default, so a plain right-split is safe for it. The host
+  # side (everything before the last colon) MAY contain "${VAR:-5432}" whose
+  # inner colon must NOT be treated as a separator — so we count separators on a
+  # brace-stripped copy and slice the ORIGINAL by the same colon positions.
   local stripped_braces
   stripped_braces="$(printf '%s' "$entry" | sed -E 's/\$\{[^}]*\}/X/g')"
   local colons="${stripped_braces//[^:]/}"
@@ -289,9 +300,10 @@ parse_ports_entry() {
       record_entry "$current_service" "$entry" 0
       ;;
     1)
-      # host:container
-      local host="${entry%%:*}" container="${entry##*:}"
-      allocate_for "$current_service" "$host" "$container" ""
+      # host:container — split on the LAST colon so a "${VAR:-5432}" host with an
+      # inner colon stays intact (its inner colon is inside ${...}, never last).
+      local host="${entry%:*}" container="${entry##*:}"
+      allocate_for "$current_service" "$host" "$container" "" "$entry"
       ;;
     2)
       # host-ip:host:container — preserve the IP prefix so a loopback-only

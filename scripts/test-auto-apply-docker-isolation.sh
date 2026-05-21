@@ -537,6 +537,105 @@ else
   ok "long-form service 'gw' correctly omitted from the override"
 fi
 
+# ---------- Test 15: stable default project name across re-runs ----------
+# With --worker-slot but no worker-id, the default COMPOSE_PROJECT_NAME must be
+# stable across invocations (deriving it from $$ would change every run and
+# break idempotency / orphan containers).
+say "Test 15: no worker-id → COMPOSE_PROJECT_NAME stable across runs"
+IFS='|' read -r wt repo <<< "$(make_case t15 "$COMPOSE_TWO")"
+set +e
+out1="$(env -u HYDRA_WORKER_ID NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 2 --allocator "$ok_alloc" 2>/dev/null)"
+out2="$(env -u HYDRA_WORKER_ID NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 2 --allocator "$ok_alloc" 2>/dev/null)"
+set -e
+pn1="$(grep '^export COMPOSE_PROJECT_NAME=' <<< "$out1")"
+pn2="$(grep '^export COMPOSE_PROJECT_NAME=' <<< "$out2")"
+if [[ -n "$pn1" && "$pn1" == "$pn2" ]]; then
+  ok "project name stable across runs ($pn1)"
+else
+  bad "project name changed between runs: '$pn1' vs '$pn2'"
+fi
+# And it must not contain a PID-like volatile suffix.
+if grep -qE 'COMPOSE_PROJECT_NAME=hydra-worker-[0-9]+$' <<< "$pn1"; then
+  bad "project name looks PID-derived (volatile): $pn1"
+else
+  ok "project name is not PID-derived"
+fi
+
+# ---------- Test 16: ${VAR:-default} host token survives passthrough ----------
+# An entry like "${WEB_PORT:-3001}:3000" whose allocation FAILS must be passed
+# through verbatim (not mangled by splitting on the colon inside the ${...}).
+say "Test 16: \${VAR:-default}:container passthrough is verbatim on alloc failure"
+COMPOSE_VARDEF='services:
+  web:
+    image: web
+    ports:
+      - "${WEB_PORT:-3001}:3000"
+      - "8080:8080"'
+IFS='|' read -r wt repo <<< "$(make_case t16 "$COMPOSE_VARDEF")"
+# Allocator that FAILS for "web" on the var-default port but succeeds for 8080,
+# so the service has one remap (→ gets a block) AND one failed passthrough.
+selective_alloc="$tmpdir/alloc-selective.sh"
+cat > "$selective_alloc" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+desired=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --desired-port) desired="$2"; shift 2 ;;
+    --worker-slot|--service|--base-port|--ports-per-slot|--probe-host) shift 2 ;;
+    *) shift ;;
+  esac
+done
+# Fail for the 3001-derived desired (40001), succeed otherwise (+1).
+if [[ "$desired" -ge 40001 && "$desired" -le 40010 ]]; then
+  echo "selective: forced fail for $desired" >&2
+  exit 1
+fi
+echo $(( desired + 1 ))
+STUB
+chmod +x "$selective_alloc"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id vardef --allocator "$selective_alloc" > "$tmpdir/t16.out" 2> "$tmpdir/t16.err"
+ec=$?
+set -e
+override="$wt/docker-compose.override.yml"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+# The failed entry must appear verbatim (full ${WEB_PORT:-3001}:3000), not mangled.
+if [[ -f "$override" ]] && grep -qF '${WEB_PORT:-3001}:3000' "$override"; then
+  ok "var-default entry passed through verbatim"
+else
+  bad "var-default entry was mangled or dropped; got: $( [[ -f "$override" ]] && cat "$override" )"
+fi
+# Must NOT contain a mangled fragment like '${WEB_PORT:3000'.
+if [[ -f "$override" ]] && grep -qF '${WEB_PORT:3000' "$override"; then
+  bad "override contains a mangled token '\${WEB_PORT:3000'"
+else
+  ok "no mangled token in override"
+fi
+
+# ---------- Test 17: ${VAR:-default} host token remaps to the right desired ----------
+# When allocation SUCCEEDS, the digits inside ${WEB_PORT:-3001} drive the desired
+# port (3001 mod 100 = 1 → 40001 → ok stub 40002) and the remapped line keeps
+# the correct container port 3000.
+say "Test 17: \${VAR:-default}:container remaps using the default's digits"
+IFS='|' read -r wt repo <<< "$(make_case t17 "$COMPOSE_VARDEF")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id vardef2 --allocator "$ok_alloc" > "$tmpdir/t17.out" 2> "$tmpdir/t17.err"
+ec=$?
+set -e
+override="$wt/docker-compose.override.yml"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+# 3001 mod 100 = 1 → desired 40001 → ok stub returns 40002. Container is 3000.
+if [[ -f "$override" ]] && grep -q '"40002:3000"' "$override"; then
+  ok "var-default entry remapped to 40002:3000 (correct container port)"
+else
+  bad "expected '40002:3000'; got: $( [[ -f "$override" ]] && cat "$override" )"
+fi
+
 # ---------- summary ----------
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
