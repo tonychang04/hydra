@@ -117,5 +117,3 @@ This fixture would FAIL on the pre-change tree (no `systematic-debugging` in fro
 ## Implementation notes
 
 (Fill in after the PR lands.)
-</content>
-</invoke>

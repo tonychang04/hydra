@@ -88,10 +88,19 @@ if printf '%s\n' "$body" | grep -qiE 'Phase 1' && printf '%s\n' "$body" | grep -
 else
   fail "body lacks a worked example referencing the four phases"
 fi
-if printf '%s\n' "$body" | grep -qi 'root cause'; then
-  pass "worked example emphasizes root cause over symptom"
+# The worked example must walk ALL FOUR phases (not just name the endpoints) and
+# contrast the root-cause fix against the symptom patch. Assert on example-specific
+# text introduced by THIS PR: the intermediate "Phase 2" / "Phase 3" steps and the
+# "throw site" symptom-vs-origin contrast. NB: a bare 'root cause' check would
+# false-green on the pre-#177 tree, because the original Iron Law prose already
+# contained "root cause". Each pattern below matches on a single line and is absent
+# from origin/main, so this sub-assertion fails red on the pre-change tree.
+if printf '%s\n' "$body" | grep -qiE 'Phase 2' \
+   && printf '%s\n' "$body" | grep -qiE 'Phase 3' \
+   && printf '%s\n' "$body" | grep -qiE 'throw site'; then
+  pass "worked example walks Phase 2 + Phase 3 and fixes the origin, not the throw site"
 else
-  fail "worked example does not emphasize root cause"
+  fail "worked example does not walk all four phases / contrast origin vs throw site (needs 'Phase 2', 'Phase 3', 'throw site')"
 fi
 
 # --- Test 5: spec file exists ---------------------------------------------
