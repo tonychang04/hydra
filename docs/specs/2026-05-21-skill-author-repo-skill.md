@@ -68,9 +68,10 @@ Distill their common skeleton:
 
 1. YAML frontmatter: `name:` (matches dir), `description:` (one paragraph,
    trigger phrases, ends `(Hydra)`).
-2. Seven sections in fixed order: **Overview → When to Use → Process / How-To →
-   Examples → Verification → Related** (Examples carries the worked cases;
-   Process carries the checklist + rubric).
+2. Six H2 sections in fixed order: **Overview → When to Use → Process / How-To →
+   Examples → Verification → Related** — the README template's five core sections
+   plus the `## Related` section the existing seed corpus all carry by convention
+   (Examples holds the worked cases; Process holds the checklist + rubric).
 3. ~150-line ceiling; sibling files (`examples.md`) for overflow.
 4. OMIT the gstack telemetry preamble (README §"Skill shape" says so).
 
