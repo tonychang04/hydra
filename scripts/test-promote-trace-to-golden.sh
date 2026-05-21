@@ -248,6 +248,24 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# 7b. shell-injection guard on --ticket (the generated cmd runs via bash -c in
+#     run.sh, so an unsafe ticket must be rejected, not embedded).
+# -----------------------------------------------------------------------------
+say "7b. --ticket with shell metacharacters is rejected (no injection)"
+if "$PROMOTE" --ticket '99; echo INJECTED' --trace "$SAMPLE" --dry-run --emit-case-only >/dev/null 2>&1; then
+  bad "malicious --ticket should exit 2"
+else
+  [[ $? -eq 2 ]] && ok "malicious --ticket exits 2" || bad "malicious --ticket wrong exit code"
+fi
+# A normal alnum/slug ticket still works (LIN-123 style).
+if slug_case="$("$PROMOTE" --ticket LIN-123 --trace "$SAMPLE" --dry-run --emit-case-only 2>/dev/null)" \
+   && [[ "$(jq -r '.id' <<<"$slug_case")" == "trace-golden-LIN-123" ]]; then
+  ok "slug ticket (LIN-123) is accepted"
+else
+  bad "slug ticket should be accepted"
+fi
+
+# -----------------------------------------------------------------------------
 # 8. --dry-run writes no fixture
 # -----------------------------------------------------------------------------
 say "8. --dry-run writes no fixture"

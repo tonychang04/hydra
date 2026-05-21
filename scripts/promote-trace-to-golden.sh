@@ -106,6 +106,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$ticket" ]] || die_usage "--ticket is required"
+# Harden against shell injection: $ticket flows into the generated case `cmd`
+# strings, which self-test/run.sh later executes via `bash -c "$cmd"`. A ticket
+# like `99; rm -rf /` would inject. Ticket refs are always a number or a simple
+# slug (e.g. 205, LIN-123) — restrict to a safe charset so a crafted value can
+# never break out of the path argument in the generated command.
+if [[ ! "$ticket" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  die_usage "--ticket must match ^[A-Za-z0-9._-]+$ (got '$ticket')"
+fi
 
 command -v jq >/dev/null 2>&1 || die_input "jq required but not found"
 [[ -x "$TRACE_ANALYZE" ]] || die_input "trace-analyze.sh required but not found at $TRACE_ANALYZE"
@@ -134,6 +142,16 @@ fi
 errors_json="$("$TRACE_ANALYZE" errors --json "$trace_file")"
 # First error_type (the signature we pin); empty for an idle-ghost trace.
 err_type="$(jq -r 'map(.error_type) | map(select(. != null)) | (.[0] // "")' <<<"$errors_json")"
+# Harden: $err_type is interpolated into the generated jq filter string
+# (index("$err_type")). A value containing a quote/backslash would break that
+# filter (and is a content-injection vector via a crafted trace). error.type is
+# a small known vocabulary (test_failed, tool_error, ...); if a value carries
+# anything outside a safe charset, drop the signature and fall back to the
+# idle-ghost (count-only) assertion rather than emit a broken filter.
+if [[ -n "$err_type" ]] && [[ ! "$err_type" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "promote-trace-to-golden: error.type '$err_type' has unsafe chars; falling back to count-only assertion" >&2
+  err_type=""
+fi
 
 # --- relative fixture path for the case cmd ----------------------------------
 # The generated case cmds must reference a worktree-root-relative path, because
