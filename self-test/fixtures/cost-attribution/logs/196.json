@@ -1,0 +1,14 @@
+{
+  "ticket": "tonychang04/hydra#196",
+  "tier": "T2",
+  "pr_url": "https://github.com/tonychang04/hydra/pull/999",
+  "cost_usd": 3.0,
+  "cost": {
+    "input_tokens": 100000,
+    "output_tokens": 20000,
+    "cost_usd": 3.0,
+    "by_model": {
+      "claude-opus-4-7": { "input_tokens": 100000, "output_tokens": 20000, "cost_usd": 3.0 }
+    }
+  }
+}
