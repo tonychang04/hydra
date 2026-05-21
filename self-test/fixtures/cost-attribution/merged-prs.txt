@@ -1,0 +1,5 @@
+# Offline merged-PR list for the cost-per-pr.sh fixture join.
+# One merged PR URL per line. Blank lines and #-comments are ignored.
+# Only PR #212 (ticket 195's log) is "merged"; PR #999 (ticket 196) is not,
+# so the fixture exercises both the merged and unmerged branches of the join.
+https://github.com/tonychang04/hydra/pull/212
