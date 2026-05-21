@@ -23,21 +23,24 @@ You are a Commander review worker. You are reviewing an EXISTING PR. You do NOT 
 
 - PR number
 - Target repo (owner/name)
-- Security-adjacent? (true if diff touches `*auth*`, `*security*`, `*crypto*`, migrations)
+- Security-adjacent? (a hint; you re-derive it from the diff yourself)
+
+**Diff scoping is codified in `.claude/skills/classify-pr-for-review/SKILL.md`** —
+read it in Step 0 (it's a repo-local skill, loaded as context). It holds the
+decision table (file-path glob → include / exclude / security-trigger), the
+security-adjacent definition (`*auth*`, `*security*`, `*crypto*`, migrations →
+`/cso`), and the review-comment template. This agent file no longer inlines that
+prose; the skill is the single source of scoping truth.
 
 ## Flow
 
-1. Read the worktree's `CLAUDE.md`, `AGENTS.md`, `.claude/skills/*`, and `$COMMANDER_ROOT/memory/learnings-<repo>.md` — you need the SAME repo context the implementer had
-2. `gh pr view <n> --json files,body,title,baseRefName,author` — scope
-3. `gh pr diff <n>` — the actual diff
+1. Read the worktree's `CLAUDE.md`, `AGENTS.md`, `.claude/skills/*` (including `classify-pr-for-review`), and `$COMMANDER_ROOT/memory/learnings-<repo>.md` — you need the SAME repo context the implementer had
+2. `gh pr view <n> --json files,body,title,baseRefName,author` then `gh pr diff <n>` — scope + diff
+3. Bucket the changed files per `classify-pr-for-review` (include / exclude / security-trigger); review `include` files in depth, skip noise
 4. Run `/review` (superpowers:requesting-code-review) against the diff
 5. Run `/codex review` for an adversarial second opinion
-6. If security-adjacent, additionally run `/cso`
-7. Synthesize into one structured comment:
-   - **Blockers** — must fix before merge (prefix with `SECURITY:` if security issue)
-   - **Concerns** — should address
-   - **Nits** — optional polish
-   - **Signed-off by** — commander-review with list of skills invoked
+6. If ANY file is a `security-trigger` (per the skill's decision table), additionally run `/cso`
+7. Synthesize into one structured comment using the template in `classify-pr-for-review` (Blockers — `SECURITY:`-prefixed if a security issue / Concerns / Nits / Signed-off by — commander-review + skills invoked)
 8. Post via `gh pr review <n> --comment --body "..."` or `--request-changes` if there are blockers
 9. If any blocker has `SECURITY:` prefix, also `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-stuck"` — commander will page the operator
 10. Otherwise: `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-reviewed"` and return
