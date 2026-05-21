@@ -1915,8 +1915,8 @@
           "expected_stdout_contains": "PASS"
         },
         {
-          "name": "mcp/hydra-tools.json is valid JSON + has 13 tools",
-          "cmd": "jq -e '(.tools | length) == 13' mcp/hydra-tools.json >/dev/null && echo OK",
+          "name": "mcp/hydra-tools.json is valid JSON + has 14 tools",
+          "cmd": "jq -e '(.tools | length) == 14' mcp/hydra-tools.json >/dev/null && echo OK",
           "expected_exit": 0,
           "expected_stdout_contains": "OK"
         },
