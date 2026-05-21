@@ -183,14 +183,22 @@ for schema_path in "${schemas[@]}"; do
 done
 
 # -----------------------------------------------------------------------------
-# CLAUDE.md size guard — ticket #138, spec
-# docs/specs/2026-04-17-claudemd-size-guard.md.
+# CLAUDE.md size guard — ticket #138 (binary guard), ticket #176 (graduated
+# bands). Specs: docs/specs/2026-04-17-claudemd-size-guard.md,
+# docs/specs/2026-05-20-claudemd-size-graduated-bands.md.
 #
 # The size check is part of preflight because CLAUDE.md is loaded into every
 # Commander session and bloat silently degrades performance. We run it here
 # rather than in a separate preflight step so one preflight call covers both
 # state schemas and the CLAUDE.md budget. Same exit-code semantics as the
 # per-file validator: 0 = under budget, 1 = over budget, 2+ = setup error.
+#
+# ADVISORY-ONLY INVARIANT (do not "fix" into a gate): the size check now emits
+# NOTICE and WARN advisory bands as CLAUDE.md approaches the ceiling, but those
+# bands return exit 0 — preflight stays GREEN. Their advisory text prints to the
+# size check's stdout, which flows through here unsuppressed so the operator sees
+# it inline. Only exit 1 (size > max) counts as a failure. NOTICE/WARN must NOT
+# block spawns; that is the entire point of ticket #176.
 #
 # If CLAUDE.md isn't present (downstream repos borrowing the bulk runner
 # against their own state-dir), the check skips gracefully.
