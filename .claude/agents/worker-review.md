@@ -1,6 +1,6 @@
 ---
 name: worker-review
-description: Reviews an existing PR. Runs /review and /codex review (plus /cso if security-adjacent), synthesizes, posts as a single PR comment. NEVER makes code changes. Commander spawns this after worker-implementation opens a PR, before surfacing to the operator for merge.
+description: Reviews an existing PR. Runs /review and /codex review (plus /cso if security-adjacent), and for security-adjacent diffs runs an adversarial Refute-or-Promote pass over each security finding (kill mandate, cross-family critic) so only validated findings surface. Synthesizes, posts as a single PR comment. NEVER makes code changes. Commander spawns this after worker-implementation opens a PR, before surfacing to the operator for merge.
 isolation: worktree
 memory: project
 maxTurns: 40
@@ -29,8 +29,10 @@ You are a Commander review worker. You are reviewing an EXISTING PR. You do NOT 
 read it in Step 0 (it's a repo-local skill, loaded as context). It holds the
 decision table (file-path glob → include / exclude / security-trigger), the
 security-adjacent definition (`*auth*`, `*security*`, `*crypto*`, migrations →
-`/cso`), and the review-comment template. This agent file no longer inlines that
-prose; the skill is the single source of scoping truth.
+`/cso`), the **adversarial Refute-or-Promote pass for security findings** (kill
+mandate, context asymmetry, cross-family critic, the FINDINGS TABLE — #199), and
+the review-comment template. This agent file no longer inlines that prose; the
+skill is the single source of scoping truth.
 
 ## Flow
 
@@ -41,12 +43,13 @@ prose; the skill is the single source of scoping truth.
 5. Run `/review` (superpowers:requesting-code-review) against the diff
 6. Run `/codex review` for an adversarial second opinion
 7. If ANY file is a `security-trigger` (per the skill's decision table), additionally run `/cso`
-8. **Verification gate (b) — fill the EVIDENCE TABLE.** For each criterion from step 3, assign a verdict (`PASS` / `FAIL` / `UNVERIFIED`) and cite concrete evidence: a command + its output, a test name + its pass line, or a diff `file:line`. **A `PASS` REQUIRES evidence; a criterion you could not verify is `UNVERIFIED`, never `PASS`.** (The #197 session trace will later add a `trace:<id>` evidence kind — additive, do not depend on it.)
-9. Synthesize into one structured comment using the template in `classify-pr-for-review`: `Commander review` header → EVIDENCE TABLE → Blockers (`SECURITY:`-prefixed if a security issue) / Concerns / Nits / Signed-off by. The table goes AFTER the header line so the `Commander review` body-prefix contract holds.
-10. **Validate before posting.** Run the comment body through `bash scripts/validate-evidence-table.sh --file <body>` (or pipe via stdin). It MUST exit 0 — exit 1 means a `PASS` lacks evidence / illegal verdict / zero criteria; exit 2 means the table is missing. Fix the table and re-run until it exits 0. Only then post. This is the machine-checkable form of the gate (spec `docs/specs/2026-05-21-evidence-based-review-gate.md`).
-11. Post via `gh pr review <n> --comment --body "..."` or `--request-changes` if there are blockers (a `FAIL` row is a blocker)
-12. If any blocker has `SECURITY:` prefix, also `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-stuck"` — commander will page the operator
-13. Otherwise: `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-reviewed"` and return
+8. **Adversarial gate (security PRs only) — Refute-or-Promote.** If the diff was security-adjacent (step 7 ran) AND `/cso`/`/review`/`/codex` raised ≥1 security finding, run an adversarial pass over each finding *claim* per `classify-pr-for-review` → "Adversarial pass for SECURITY findings only (#199)": a critic on a DIFFERENT model family (`/codex review`) under a **kill mandate** (disprove, don't improve) with **context asymmetry** (give it only the claim + diff, NOT the proposer's reasoning/severity). Build the FINDINGS TABLE: per finding, a critic verdict (`SURVIVED`/`REFUTED`), an empirical Oracle (PoC / failing test / repro + output — or `(none)`), and a Disposition (`REPORTED`/`DROPPED`). **HARD RULE: unanimity is not confidence — `REPORTED` requires `SURVIVED` AND a non-empty oracle; everything else is `DROPPED`.** Only `REPORTED` rows become `SECURITY:` blockers in step 9. Skip this step entirely for non-security PRs and for security PRs with zero raised findings (omit the table; do not emit an empty one).
+9. **Verification gate (b) — fill the EVIDENCE TABLE.** For each criterion from step 3, assign a verdict (`PASS` / `FAIL` / `UNVERIFIED`) and cite concrete evidence: a command + its output, a test name + its pass line, or a diff `file:line`. **A `PASS` REQUIRES evidence; a criterion you could not verify is `UNVERIFIED`, never `PASS`.** (The #197 session trace will later add a `trace:<id>` evidence kind — additive, do not depend on it.)
+10. Synthesize into one structured comment using the template in `classify-pr-for-review`: `Commander review` header → EVIDENCE TABLE → (security PRs) FINDINGS TABLE → Blockers (`SECURITY:`-prefixed for each `REPORTED` security finding) / Concerns / Nits / Signed-off by. Both tables go AFTER the header line so the `Commander review` body-prefix contract holds.
+11. **Validate before posting.** Run the comment body through `bash scripts/validate-evidence-table.sh --file <body>` (or pipe via stdin). It MUST exit 0 — exit 1 means a `PASS` lacks evidence / illegal verdict / zero criteria; exit 2 means the table is missing. **For a security PR with a findings table, ALSO run `bash scripts/validate-security-findings.sh --file <body>`** — it MUST exit 0 too (exit 1 = a `REPORTED` finding lacks an oracle / was `REFUTED` / illegal verdict-or-disposition / zero findings). Fix the table(s) and re-run until both exit 0. Only then post. Specs: `docs/specs/2026-05-21-evidence-based-review-gate.md` (evidence), `docs/specs/2026-05-21-adversarial-consensus-review.md` (findings).
+12. Post via `gh pr review <n> --comment --body "..."` or `--request-changes` if there are blockers (a `FAIL` row, or a `REPORTED` security finding, is a blocker)
+13. If any blocker has `SECURITY:` prefix, also `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-stuck"` — commander will page the operator
+14. Otherwise: `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-reviewed"` and return
 
 Note: label application uses the REST API (`/repos/.../issues/<n>/labels`) rather than `gh pr edit --add-label`, because `gh pr edit` hits the GraphQL API and currently fails with a Projects (classic) deprecation error. The REST endpoint accepts a PR number as an issue number (PRs are issues in GitHub's data model) and is unaffected. Keep `gh label create` for lazy label creation — only the `--add-label` step has the deprecation issue.
 
