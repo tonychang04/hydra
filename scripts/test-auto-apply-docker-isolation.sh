@@ -418,6 +418,125 @@ else
   bad "override should NOT exist when all allocations fail; got: $(cat "$wt/docker-compose.override.yml")"
 fi
 
+# ---------- Test 11: do not clobber a pre-existing non-Hydra override ----------
+# If the worktree already has a docker-compose.override.yml that Hydra did NOT
+# generate (no generator marker), the helper must refuse to overwrite it.
+say "Test 11: pre-existing non-Hydra override → not clobbered, warn, exit 0"
+IFS='|' read -r wt repo <<< "$(make_case t11 "$COMPOSE_TWO")"
+preexisting='services:
+  postgres:
+    environment:
+      FOO: bar'
+printf '%s\n' "$preexisting" > "$wt/docker-compose.override.yml"
+before_hash="$(cksum "$wt/docker-compose.override.yml")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id pre --allocator "$ok_alloc" > "$tmpdir/t11.out" 2> "$tmpdir/t11.err"
+ec=$?
+set -e
+after_hash="$(cksum "$wt/docker-compose.override.yml")"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0 (graceful)"; else bad "expected exit 0, got $ec"; fi
+if [[ "$before_hash" == "$after_hash" ]]; then
+  ok "pre-existing override left untouched"
+else
+  bad "pre-existing override was clobbered; now: $(cat "$wt/docker-compose.override.yml")"
+fi
+if grep -qi "exist\|not.*overwrit\|refus\|skip" "$tmpdir/t11.err"; then
+  ok "warns about the pre-existing override"
+else
+  bad "expected a pre-existing-override warning; got: $(cat "$tmpdir/t11.err")"
+fi
+
+# ---------- Test 12: a Hydra-generated override IS safe to regenerate ----------
+# The idempotency path must still work when the existing file is one WE wrote.
+say "Test 12: pre-existing Hydra-generated override → regenerated fine"
+IFS='|' read -r wt repo <<< "$(make_case t12 "$COMPOSE_TWO")"
+# First run creates a genuine Hydra override.
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id regen --allocator "$ok_alloc" > /dev/null 2> "$tmpdir/t12a.err"
+first="$(cat "$wt/docker-compose.override.yml")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id regen --allocator "$ok_alloc" > /dev/null 2> "$tmpdir/t12b.err"
+ec=$?
+set -e
+second="$(cat "$wt/docker-compose.override.yml")"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+if [[ "$first" == "$second" ]]; then
+  ok "Hydra-generated override regenerated identically (not blocked as foreign)"
+else
+  bad "regeneration changed the override (or was blocked)"
+fi
+
+# ---------- Test 13: service mixing long-form + short-form is left intact ----------
+# If a service has BOTH a long-form dict port and a remappable short-form port,
+# the helper must NOT override that service (we can't safely reproduce the
+# long-form entry), so neither port is remapped and no block is written for it.
+say "Test 13: mixed long-form + short-form service → service skipped entirely"
+COMPOSE_MIXED_LONG='services:
+  gw:
+    image: gw
+    ports:
+      - "8080:8080"
+      - target: 9000
+        published: 9000
+        protocol: tcp'
+IFS='|' read -r wt repo <<< "$(make_case t13 "$COMPOSE_MIXED_LONG")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id mixlong --allocator "$ok_alloc" > "$tmpdir/t13.out" 2> "$tmpdir/t13.err"
+ec=$?
+set -e
+override="$wt/docker-compose.override.yml"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0 (graceful)"; else bad "expected exit 0, got $ec"; fi
+# 'gw' is the only service and it has a long-form entry → it must be skipped, so
+# no override block for it. With no other remappable service, no file is written.
+if [[ ! -f "$override" ]]; then
+  ok "no override written (the only service was skipped for long-form safety)"
+else
+  bad "override should not exist; the short-form port of a long-form service was remapped: $(cat "$override")"
+fi
+if grep -qi "long.form\|mixed\|unsupported\|skip" "$tmpdir/t13.err"; then
+  ok "warns the service was skipped"
+else
+  bad "expected a skip warning; got: $(cat "$tmpdir/t13.err")"
+fi
+
+# ---------- Test 14: a clean sibling is still remapped when another is skipped ----------
+# Mixed long-form service is skipped, but a separate short-form-only service is
+# still remapped (the skip is per-service, not global).
+say "Test 14: long-form service skipped, clean sibling still remapped"
+COMPOSE_MIX_SIBLING='services:
+  gw:
+    image: gw
+    ports:
+      - "8080:8080"
+      - target: 9000
+        published: 9000
+  db:
+    image: postgres
+    ports:
+      - "5432:5432"'
+IFS='|' read -r wt repo <<< "$(make_case t14 "$COMPOSE_MIX_SIBLING")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id sibling --allocator "$ok_alloc" > "$tmpdir/t14.out" 2> "$tmpdir/t14.err"
+ec=$?
+set -e
+override="$wt/docker-compose.override.yml"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+if [[ -f "$override" ]] && grep -q '"40033:5432"' "$override"; then
+  ok "clean sibling 'db' still remapped (40033:5432)"
+else
+  bad "expected db remapped to 40033:5432; got: $( [[ -f "$override" ]] && cat "$override" )"
+fi
+# 'gw' must NOT appear (it was skipped for long-form safety).
+if [[ -f "$override" ]] && grep -qE '^\s*gw:' "$override"; then
+  bad "'gw' (long-form service) should not be in the override; got: $(cat "$override")"
+else
+  ok "long-form service 'gw' correctly omitted from the override"
+fi
+
 # ---------- summary ----------
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
