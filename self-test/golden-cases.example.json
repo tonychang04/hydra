@@ -2665,6 +2665,12 @@
           "expected_stdout_contains": "DRY_RUN_OK"
         },
         {
+          "name": "--dry-run is environment-independent (flyctl/claude/gh genuinely absent -> notice, not fail)",
+          "cmd": "BIN=$(mktemp -d); trap 'rm -rf \"$BIN\"' EXIT; for t in bash sh env jq date grep sed awk cat printf mktemp dirname basename tr head tail cut sort rm chmod ln cp; do p=$(command -v \"$t\" 2>/dev/null) && ln -sf \"$p\" \"$BIN/$t\"; done; for forbidden in flyctl fly claude gh; do rm -f \"$BIN/$forbidden\"; done; SCRIPT=\"$(pwd)/scripts/hydra-migrate-to-cloud.sh\"; out=$(HYDRA_FLY_APP=test-fixture-app CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-fake GITHUB_TOKEN=ghp_fake OPENAI_API_KEY=sk-fake NO_COLOR=1 PATH=\"$BIN\" \"$SCRIPT\" --dry-run --non-interactive 2>&1); ec=$?; ! PATH=\"$BIN\" command -v flyctl >/dev/null 2>&1 && ! PATH=\"$BIN\" command -v claude >/dev/null 2>&1 && echo \"$out\" | grep -q 'Dry-run complete' && echo \"$out\" | grep -q 'flyctl not installed' && echo \"$out\" | grep -q 'claude not installed' && [ \"$ec\" -eq 0 ] && echo ENV_INDEPENDENT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ENV_INDEPENDENT_OK"
+        },
+        {
           "name": "--dry-run does NOT leak secret values into output",
           "cmd": "out=$(HYDRA_FLY_APP=test-fixture-app CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-SECRETMARKER GITHUB_TOKEN=ghp_SECRETMARKER OPENAI_API_KEY=sk-SECRETMARKER NO_COLOR=1 scripts/hydra-migrate-to-cloud.sh --dry-run --non-interactive 2>&1); ! echo \"$out\" | grep -q 'SECRETMARKER' && echo NO_LEAK",
           "expected_exit": 0,

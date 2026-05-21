@@ -74,11 +74,22 @@ touch -t "$(ts_seconds_ago 259200)" "$LOGS_DIR/099-old.json"  # 3 days ago
 STAGED_STATE="$(mktemp -d)"
 trap 'rm -rf "$STAGED_STATE"' EXIT
 cp "$STATE_DIR/active.json" "$STAGED_STATE/active.json"
-jq --arg d0 "$(ymd_days_ago 0)" --arg d1 "$(ymd_days_ago 1)" --arg d2 "$(ymd_days_ago 2)" '
-  .citations["learnings-repoA.md#npm install strips peer markers"].last_cited = $d0
-  | .citations["learnings-repoA.md#baseline typecheck trick"].last_cited = $d1
-  | .citations["learnings-repoB.md#docker-compose timeout 120s not enough"].last_cited = $d2
-' "$STATE_DIR/memory-citations.json" > "$STAGED_STATE/memory-citations.json"
+# Re-stamp ONLY existing entries. A bare `.citations[key].last_cited = $d` would
+# silently *create* a synthetic key if the fixture is later renamed/trimmed —
+# hydra-activity.sh renders an entry with a missing count as count 0, so the
+# assertions could pass against a broken fixture. Guard with `has` + `error` so a
+# missing target key fails the harness loudly instead of masking the breakage.
+if ! jq --arg d0 "$(ymd_days_ago 0)" --arg d1 "$(ymd_days_ago 1)" --arg d2 "$(ymd_days_ago 2)" '
+  def restamp($k; $d):
+    if (.citations | has($k)) then .citations[$k].last_cited = $d
+    else error("citation fixture key missing: \($k)") end;
+  restamp("learnings-repoA.md#npm install strips peer markers"; $d0)
+  | restamp("learnings-repoA.md#baseline typecheck trick"; $d1)
+  | restamp("learnings-repoB.md#docker-compose timeout 120s not enough"; $d2)
+' "$STATE_DIR/memory-citations.json" > "$STAGED_STATE/memory-citations.json"; then
+  echo "FAIL: could not re-stamp citation fixture (key missing or invalid JSON)"
+  exit 1
+fi
 
 common_args=(
   --logs-dir "$LOGS_DIR"
