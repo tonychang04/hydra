@@ -474,36 +474,38 @@ trace_forensic_verdict() {
 
   # ---- loop signal (checked first) -----------------------------------------
   # Two independent triggers, either fires:
-  #  (a) tool-repeat: among the last K execute_tool phase:start events (by ts),
-  #      all share one gen_ai.tool.name across >= 2 DISTINCT span_ids (genuine
-  #      repeats, not one long-open span — that is mid-tool-call, not looping).
-  #  (b) recursive-failure: >= K events carry the SAME attrs."error.type".
+  #  (a) tool-repeat: some gen_ai.tool.name was called on >= K DISTINCT span_ids
+  #      in the tail (genuinely repeated calls, not one long-open span and not
+  #      duplicate events of the same span). We count distinct span_ids per tool
+  #      so duplicate start lines can't inflate the count, and interleaved calls
+  #      (Bash, Edit, Bash, Edit, Bash) still count toward the tool's tally.
+  #  (b) recursive-failure: some attrs."error.type" appears on >= K DISTINCT
+  #      span_ids (same span emitting start+end with an error.type counts once).
   # Emits {tool, error_type, repeat} where each of tool/error_type may be null
-  # when only the other trigger fired; repeat is the observed count.
+  # when only the other trigger fired; repeat is the larger distinct-span count.
   local loop_json
   loop_json="$(jq -c --argjson k "$loop_k" '
     def tool_repeat:
+      # distinct span_ids per tool over execute_tool start events.
       ( map(select(.kind == "execute_tool"
                    and .attrs.phase == "start"
                    and (.attrs."gen_ai.tool.name" // "") != ""))
-        | sort_by(.ts) ) as $starts
-      | ($starts | length) as $n
-      | if $n < $k then null
-        else
-          ($starts[($n - $k):]) as $window
-          | ($window | map(.attrs."gen_ai.tool.name") | unique) as $tools
-          | ($window | map(.span_id) | unique | length) as $distinct
-          | if ($tools | length) == 1 and $distinct >= 2
-            then {tool: $tools[0], repeat: $distinct}
-            else null end
-        end;
+        | group_by(.attrs."gen_ai.tool.name")
+        | map({ tool: .[0].attrs."gen_ai.tool.name",
+                repeat: ([.[].span_id] | unique | length) })
+        | map(select(.repeat >= $k))
+        | sort_by(-.repeat) ) as $groups
+      | if ($groups | length) > 0 then $groups[0] else null end;
     def recursive_failure:
-      ( map(.attrs."error.type" | select(. != null and . != ""))
-        | group_by(.) | map({err: .[0], n: length})
-        | map(select(.n >= $k)) | sort_by(-.n) ) as $groups
-      | if ($groups | length) > 0
-        then {error_type: $groups[0].err, repeat: $groups[0].n}
-        else null end;
+      # distinct span_ids per error.type (dedup repeated events of one span).
+      ( map(select((.attrs."error.type" // "") != "")
+            | {err: .attrs."error.type", span_id: .span_id})
+        | group_by(.err)
+        | map({ error_type: .[0].err,
+                repeat: ([.[].span_id] | unique | length) })
+        | map(select(.repeat >= $k))
+        | sort_by(-.repeat) ) as $groups
+      | if ($groups | length) > 0 then $groups[0] else null end;
     (tool_repeat) as $tr
     | (recursive_failure) as $rf
     | if $tr == null and $rf == null then empty
@@ -524,7 +526,10 @@ trace_forensic_verdict() {
   fi
 
   # ---- mid-tool-call signal -------------------------------------------------
-  # The most-recent execute_tool span (latest start ts) has a start but NO end.
+  # The MOST-RECENT execute_tool span (the one whose start ts is latest) has a
+  # start but NO end. We first pick the latest-started tool span, THEN test
+  # whether it is open — so an older incomplete span followed by a later COMPLETED
+  # span does NOT report mid-tool-call (the worker moved on).
   local open_tool
   open_tool="$(jq -r '
     ( map(select(.kind == "execute_tool"))
@@ -536,9 +541,13 @@ trace_forensic_verdict() {
           has_start: ( any(.attrs.phase == "start") ),
           has_end:   ( any(.attrs.phase == "end") )
         })
-      | map(select(.has_start and (.has_end | not)))
-      | sort_by(.start_ts) ) as $open
-    | if ($open | length) > 0 then $open[-1].tool else "" end
+      # only spans that actually started can be "the most recent start"
+      | map(select(.has_start))
+      | sort_by(.start_ts) ) as $started
+    | if ($started | length) == 0 then ""
+      else ($started[-1]) as $latest
+        | if ($latest.has_end | not) then $latest.tool else "" end
+      end
   ' <<<"$events" 2>/dev/null)" || open_tool=""
 
   if [[ -n "$open_tool" ]]; then
