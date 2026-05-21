@@ -149,6 +149,44 @@ export HYDRA_PG_PORT="$pg_port"
 export HYDRA_WEB_PORT="$web_port"
 ```
 
+### Spawn-time auto-apply (do NOT double-apply Layer 2)
+
+Commander applies Layers 1 + 2 for you at spawn time via
+`scripts/auto-apply-docker-isolation.sh` (spec:
+`docs/specs/2026-05-21-auto-apply-docker-isolation.md`). When the target repo
+has a `docker-compose.yml` and your `HYDRA_WORKER_SLOT` is set, the helper has
+already scaffolded `docker-compose.override.yml` in your worktree root
+(namespaced project + `ports: !override` remaps) — so isolation holds even if
+you never run the Layer-2 skeleton above.
+
+Before hand-writing your own override, check for the generated one:
+
+```bash
+# If Hydra already isolated this worktree, source its env exports instead of
+# regenerating. The helper prints only `export …` lines on stdout (eval-safe).
+WT="$(git rev-parse --show-toplevel)"
+if [[ -f "$WT/docker-compose.override.yml" ]] \
+   && grep -q 'auto-apply-docker-isolation.sh' "$WT/docker-compose.override.yml"; then
+  # Already isolated. Re-derive the env (COMPOSE_PROJECT_NAME + HYDRA_<SVC>_PORT)
+  # by re-running the helper — it's idempotent (byte-identical override) and only
+  # emits the exports you need.
+  eval "$("$COMMANDER_ROOT/scripts/auto-apply-docker-isolation.sh" \
+            --worktree "$WT" --repo-path "$WT" --worker-slot "${HYDRA_WORKER_SLOT:-0}")"
+else
+  # No generated override (e.g. spawned outside Commander, or no slot): fall
+  # back to the manual Layer-1 + Layer-2 skeleton above.
+  : # ...apply Layer 1 + Layer 2 yourself...
+fi
+```
+
+Do NOT write a second `docker-compose.override.yml` on top of the generated one
+— Compose merges multiple override files and you'd reintroduce the very
+collision Layer 2 fixes. The helper is the single source of truth for the
+override; you only read its exports. If allocation failed for a service (the
+helper logs a `WARN` and continues — it never aborts your spawn), that one
+service may still collide; treat that like the "port error even with Layer 2
+applied" case below.
+
 ### Cleanup (required)
 
 Always tear down with `-v` so named volumes go with the stack:
