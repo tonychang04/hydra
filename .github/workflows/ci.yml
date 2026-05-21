@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install jq
         run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
       - name: Run syntax checks
@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 2
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Check spec presence
@@ -45,7 +45,7 @@ jobs:
       # the <2 min budget. Run them in a separate nightly workflow later.
       HYDRA_CI_SKIP_DOCKER: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install jq
         run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
       - name: Run self-test (script kind)
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Scan for leftover conflict markers
         run: |
           # Guard against half-resolved conflicts. Uses line-anchored regex so
