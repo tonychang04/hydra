@@ -1007,6 +1007,59 @@
       "last_result": null
     },
     {
+      "id": "worker-session-trace-script",
+      "_description": "Script-only self-test for the worker session-trace substrate (spec docs/specs/2026-05-21-worker-session-trace.md, ticket #197). Exercises scripts/trace-append.sh (emit one OTel-GenAI span event to logs/traces/<ticket>.jsonl; start/end pairing by span_id; integer attrs stored as JSON numbers; gen_ai.prompt/completion content gating default-off with --with-content / HYDRA_TRACE_CONTENT=1 opt-in; usage errors exit 2 and write nothing) and scripts/trace-analyze.sh (jq durations with incomplete/instant span detection, error filter, tool sequence, summary counts; stdin input; missing-file exit 2) against the committed self-test/fixtures/worker-session-trace/sample-trace.jsonl. Pure bash + jq, offline. The live worker-subagent emit path (wiring trace-append into .claude/agents/*) is a follow-up; consumers cost #195 and watchdog #206 read this format separately.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "trace-append.sh bash -n clean",
+          "cmd": "bash -n scripts/trace-append.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "trace-analyze.sh bash -n clean",
+          "cmd": "bash -n scripts/trace-analyze.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "trace-append.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/trace-append.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage:"
+        },
+        {
+          "name": "trace-analyze.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/trace-analyze.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage:"
+        },
+        {
+          "name": "trace-append.sh missing --kind returns usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/trace-append.sh --ticket x --trace-dir /tmp 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo USAGE_ERR",
+          "expected_exit": 0,
+          "expected_stdout_contains": "USAGE_ERR"
+        },
+        {
+          "name": "trace-analyze.sh missing file exits 2",
+          "cmd": "NO_COLOR=1 scripts/trace-analyze.sh durations /nonexistent/trace-$$.jsonl 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo MISSING_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MISSING_OK"
+        },
+        {
+          "name": "worker-session-trace fixture roundtrip (append + analyze, 38 assertions)",
+          "cmd": "self-test/fixtures/worker-session-trace/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "worker-git-worktree-discipline",
       "_description": "Script-only self-test for the worker git -C <worktree> discipline (spec: docs/specs/2026-05-20-worker-git-C-worktree.md, ticket #185). Reproduces the 2026-05-20 cwd-reset cross-branch contamination incident with throwaway git repos: RED — a bare `git commit` from the MAIN repo dir (simulating a worker whose Bash cwd reset to main) lands on a SIBLING worker's branch; RED — scripts/assert-worktree-branch.sh pointed at the parked main repo exits 1 with a branch-mismatch message (the guard would have stopped the bad commit); GREEN — the assertion passes for the real worktree and `git -C <worktree> commit` lands on the worker's own branch while the main repo + sibling HEAD stay untouched. Plus helper unit asserts (usage exit 2, nonexistent path exit 1, --help exit 0, bash -n clean). No network, no gh, no Claude auth. Commander runs this before committing changes to scripts/assert-worktree-branch.sh, the .claude/agents/worker-*.md git-discipline sections, or the fixture itself.",
       "kind": "script",
