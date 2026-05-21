@@ -108,3 +108,22 @@ environment (ubuntu, only `jq` installed → no `claude`, no `flyctl`; fake cred
   runs even on early exit.
 - Rollback: revert the PR. All changes are isolated to self-test fixtures, the
   golden-cases example, and one dry-run-scoped branch in the migrate script.
+
+## Codex-review hardening (added during review)
+
+Two robustness findings from `/codex review` were applied:
+
+1. **Re-stamp only existing keys.** A bare `.citations[key].last_cited = $d`
+   *creates* the key if absent; `hydra-activity.sh` renders an entry with a
+   missing count as count 0, so a renamed/trimmed fixture could still satisfy the
+   assertions. The jq now uses `has()` + `error()` so a missing target key fails
+   the harness loudly. Verified: renaming a fixture key makes the case FAIL with
+   "citation fixture key missing".
+
+2. **Deterministic env-independence coverage.** The dry-run case never exercised
+   the new missing-binary branch with *genuinely* absent binaries (step 7 uses
+   stubs that `command -v` finds; the ambient-PATH step usually has the tools), so
+   a regression reintroducing the hard-fail could pass on dev machines. Added a
+   step that runs `--dry-run` under a restricted PATH that strips flyctl/fly/
+   claude/gh and asserts exit 0 + the "not installed" notice. Verified:
+   reintroducing the dry-run hard-fail makes this step FAIL.
