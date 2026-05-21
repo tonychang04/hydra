@@ -2884,6 +2884,39 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "trace-to-golden-meta",
+      "kind": "script",
+      "_description": "Self-tests the production-trace → golden-case promotion (ticket #205, spec docs/specs/2026-05-21-trace-to-golden-promotion.md). The production-to-test flywheel applied to self-test: a failed-run trace becomes a kind:script golden case run.sh can execute. Runs scripts/promote-trace-to-golden.sh --dry-run against the committed sample failed-run trace and asserts the emitted case is valid + captures the failure signature; then proves the flywheel end-to-end by promoting into a tmp cases file and running run.sh on the produced case. Mirrors how runner-meta self-tests the runner. Also runs the standalone regression test scripts/test-promote-trace-to-golden.sh.",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "promotion dry-run emits a valid kind:script case",
+          "cmd": "scripts/promote-trace-to-golden.sh --ticket 2050 --trace self-test/fixtures/trace-golden/sample-failed-trace.jsonl --verdict nothing-to-rescue --dry-run --emit-case-only",
+          "expected_exit": 0,
+          "expected_stdout_jq": ".id == \"trace-golden-2050\" and .kind == \"script\" and (.steps | length) >= 1"
+        },
+        {
+          "name": "emitted case captures the trace failure signature (test_failed)",
+          "cmd": "scripts/promote-trace-to-golden.sh --ticket 2050 --trace self-test/fixtures/trace-golden/sample-failed-trace.jsonl --verdict nothing-to-rescue --dry-run --emit-case-only",
+          "expected_exit": 0,
+          "expected_stdout_jq": "[.steps[].expected_stdout_jq // \"\"] | any(contains(\"test_failed\"))"
+        },
+        {
+          "name": "flywheel: promoted case executes green via run.sh, then cleans up",
+          "cmd": "set -e; tmpfix=self-test/fixtures/trace-golden-meta-tmp; tmpcases=\"$(mktemp)\"; trap 'rm -rf \"$tmpfix\" \"$tmpcases\"' EXIT; mkdir -p \"$tmpfix\"; echo '{\"cases\":[]}' > \"$tmpcases\"; scripts/promote-trace-to-golden.sh --ticket 2050 --trace self-test/fixtures/trace-golden/sample-failed-trace.jsonl --verdict nothing-to-rescue --fixture-dir \"$tmpfix\" --into \"$tmpcases\" >/dev/null; NO_COLOR=1 ./self-test/run.sh --cases-file \"$tmpcases\" --case trace-golden-2050",
+          "expected_exit": 0
+        },
+        {
+          "name": "standalone regression test passes (22 assertions)",
+          "cmd": "NO_COLOR=1 scripts/test-promote-trace-to-golden.sh",
+          "expected_exit": 0
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
