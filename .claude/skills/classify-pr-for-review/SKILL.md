@@ -140,9 +140,15 @@ finding *claims*. For each claim, run a **critic** to try to KILL it:
    + the diff — NOT the proposer's reasoning, severity, or confidence. If the
    critic sees "HIGH severity, definitely exploitable" it anchors and
    rubber-stamps. Asymmetry forces an independent look.
-3. **Cross-family critic.** Run the critic on a DIFFERENT model family than the
-   proposer. `/codex review` is already wired and IS the cross-family critic — use
-   it as the adversarial engine; do not add a backend.
+3. **Cross-family critic — proposer ≠ critic family.** Run the critic on a
+   DIFFERENT model family than whichever engine *raised* the finding. That
+   directionality is the anti-anchoring point:
+   - finding raised by `/review` or `/cso` (Claude family) → critic is
+     `/codex review` (already wired; no new backend);
+   - finding raised by `/codex review` itself → critic is Claude's own reasoning
+     (re-examine the claim against the diff directly). Do NOT send a codex-raised
+     finding back to `/codex review` — that would have the same family critique
+     itself, defeating the gate.
 4. **The load-bearing HARD RULE — unanimity is NOT confidence.** Two reviewers
    agreeing does not promote a finding. Belief changes ONLY on:
    - a **code-grounded empirical refutation** → the critic verdict is `REFUTED`;
