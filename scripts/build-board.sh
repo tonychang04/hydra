@@ -142,10 +142,12 @@ humanize_age() {
 
 # Render a ticket reference as a Markdown GitHub link when it parses as
 # "owner/repo#N"; otherwise echo it verbatim (bare "repo#N", "LIN-123", etc.).
+# The '|' is excluded from owner/repo so a malformed ticket can never inject a
+# Markdown table-cell delimiter and corrupt the board layout.
 render_ticket() {
   local ticket="$1"
   # owner/repo#N  → link to /issues/N
-  if [[ "$ticket" =~ ^([^/[:space:]]+)/([^#/[:space:]]+)#([0-9]+)$ ]]; then
+  if [[ "$ticket" =~ ^([^/|[:space:]]+)/([^#/|[:space:]]+)#([0-9]+)$ ]]; then
     local owner="${BASH_REMATCH[1]}"
     local repo="${BASH_REMATCH[2]}"
     local num="${BASH_REMATCH[3]}"
