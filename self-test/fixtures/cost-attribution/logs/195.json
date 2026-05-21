@@ -1,0 +1,16 @@
+{
+  "ticket": 195,
+  "repo": "tonychang04/hydra",
+  "tier": "T2",
+  "pr_url": "https://github.com/tonychang04/hydra/pull/212",
+  "cost_usd": 6.1,
+  "cost": {
+    "input_tokens": 250000,
+    "output_tokens": 50000,
+    "cost_usd": 6.1,
+    "by_model": {
+      "claude-opus-4-7": { "input_tokens": 200000, "output_tokens": 40000, "cost_usd": 6.0 },
+      "claude-haiku-4-5": { "input_tokens": 50000, "output_tokens": 10000, "cost_usd": 0.1 }
+    }
+  }
+}

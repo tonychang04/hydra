@@ -1,0 +1,6 @@
+{"ts":"2026-05-21T18:00:00.000Z","span_id":"root0001","parent_span_id":null,"kind":"invoke_agent","attrs":{"gen_ai.operation.name":"invoke_agent","phase":"start","hydra.ticket":"195","hydra.worker_type":"worker-implementation"}}
+{"ts":"2026-05-21T18:00:01.000Z","span_id":"chat0001","parent_span_id":"root0001","kind":"chat","attrs":{"gen_ai.operation.name":"chat","gen_ai.request.model":"claude-opus-4-7","gen_ai.usage.input_tokens":200000,"gen_ai.usage.output_tokens":40000}}
+{"ts":"2026-05-21T18:00:02.000Z","span_id":"tool0001","parent_span_id":"root0001","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}
+{"ts":"2026-05-21T18:00:02.250Z","span_id":"tool0001","parent_span_id":"root0001","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":0}}
+{"ts":"2026-05-21T18:00:03.000Z","span_id":"chat0002","parent_span_id":"root0001","kind":"chat","attrs":{"gen_ai.operation.name":"chat","gen_ai.request.model":"claude-haiku-4-5","gen_ai.usage.input_tokens":50000,"gen_ai.usage.output_tokens":10000}}
+{"ts":"2026-05-21T18:00:04.000Z","span_id":"root0001","parent_span_id":null,"kind":"invoke_agent","attrs":{"gen_ai.operation.name":"invoke_agent","phase":"end","hydra.ticket":"195","hydra.worker_type":"worker-implementation"}}

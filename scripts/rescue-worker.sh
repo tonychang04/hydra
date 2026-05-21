@@ -16,6 +16,8 @@
 #                     { "verdict": "push-only",          "commits_ahead": N, "pushed": false }
 #                     { "verdict": "nothing-to-rescue",  "commits_ahead": 0, "dirty": false }
 #                     { "verdict": "flaky-tool-retry",   "tool": "...", "fallback": "...", ... }
+#                     { "verdict": "worker-looping",       "tool": "...", "error_type": "...", "repeat": N, ... }
+#                     { "verdict": "worker-mid-tool-call", "tool": "...", ... }
 #
 #                   The flaky-tool-retry verdict (exit 5) fires when the worker
 #                   left a recent .hydra/flaky-tool.json marker recording
@@ -26,6 +28,23 @@
 #                   rescue-and-restart. Checked BEFORE the git-state verdicts so
 #                   a live worker's uncommitted marker is not mistaken for
 #                   rescuable "dirty" work. Spec: ticket #190.
+#
+#                   The trace-forensics verdicts (exit 6/7) read the TAIL of the
+#                   worker's session trace (logs/traces/<ticket>.jsonl, the #197
+#                   substrate) to tell two states git-state alone conflates:
+#                     worker-mid-tool-call (exit 6) — the most-recent
+#                       execute_tool span is OPEN (a phase:start with no matching
+#                       phase:end). The worker is ALIVE inside a slow tool; do
+#                       NOT rescue — wait one more tick.
+#                     worker-looping (exit 7) — the trace tail shows repeated
+#                       identical tool spans (same gen_ai.tool.name across >= K
+#                       distinct span_ids) or recursive failures (>= K spans
+#                       sharing one error.type). The worker is thrashing and is
+#                       unrecoverable in place — rescue + restart with a hint.
+#                   Both are checked AFTER the flaky-tool marker and BEFORE the
+#                   git-state verdicts. No trace ⇒ identical behavior to before.
+#                   Spec: docs/specs/2026-05-21-trace-fed-watchdog-forensics.md
+#                   (ticket #206).
 #
 #   --rescue        Mutating. Commits any uncommitted changes, fetches origin/main,
 #                   rebases (fast-forward only; bails on conflict with exit 3), and
@@ -51,6 +70,10 @@
 #                   of shelling out to `gh`. Used by self-test fixtures so CI
 #                   can exercise --probe-review offline. Also honored via env
 #                   var HYDRA_RESCUE_GH_MOCK.
+#   --trace-file <p> Override the trace path read by the #206 trace-forensics
+#                   probe. Default resolves $HYDRA_TRACE_DIR/<ticket>.jsonl, then
+#                   <worktree>/logs/traces/<ticket>.jsonl. Used by self-test
+#                   fixtures (and operators) to point at a specific trace.
 #
 # Exit codes:
 #   0   success (probe done, or rescue completed, or review already landed)
@@ -63,6 +86,12 @@
 #   5   blocked on flaky external tool; retry with fallback — worker is ALIVE,
 #       commander should relay the marker's `fallback` hint instead of rescuing
 #       (emitted only by --probe)
+#   6   worker-mid-tool-call — the trace tail shows an OPEN execute_tool span;
+#       the worker is ALIVE inside a slow tool. Do NOT rescue; wait one tick.
+#       (emitted only by --probe)
+#   7   worker-looping — the trace tail shows repeated identical tool spans or
+#       recursive failures; the worker is thrashing. Rescue + restart.
+#       (emitted only by --probe)
 #
 # Flaky-tool tuning (env vars, --probe only):
 #   HYDRA_FLAKY_TOOL_MIN_FAILURES  Minimum `failures` in the marker before the
@@ -71,10 +100,20 @@
 #                                  `last_failure_epoch` before it's treated as
 #                                  stale and ignored. Default 1800 (30 min).
 #
+# Trace-forensics tuning (env vars, --probe only):
+#   HYDRA_TRACE_TAIL_LINES         How many trailing trace lines to read.
+#                                  Default 20.
+#   HYDRA_TRACE_LOOP_MIN           K: minimum repeat count (distinct same-tool
+#                                  spans, or same-error.type spans) for the
+#                                  worker-looping verdict. Default 3 (min 2).
+#   HYDRA_TRACE_DIR                Trace directory (when --trace-file is not
+#                                  given). Trace file is <dir>/<ticket>.jsonl.
+#
 # Spec: docs/specs/2026-04-16-worker-timeout-watchdog.md (ticket #45)
 # Spec: docs/specs/2026-04-17-rescue-worker-index-lock.md (ticket #81)
 # Spec: docs/specs/2026-04-17-review-worker-rescue.md   (ticket #75)
 # Spec: docs/specs/2026-05-21-flaky-tool-probe-verdict.md (ticket #190)
+# Spec: docs/specs/2026-05-21-trace-fed-watchdog-forensics.md (ticket #206)
 
 set -euo pipefail
 
@@ -111,6 +150,9 @@ Options:
   --gh-mock <dir>      Test-only: read mocked `gh pr view` responses from
                        <dir>/reviews-<pr>.json and <dir>/labels-<pr>.json.
                        Also honored via HYDRA_RESCUE_GH_MOCK env var.
+  --trace-file <path>  Override the trace path read by the trace-forensics probe.
+                       Default: $HYDRA_TRACE_DIR/<ticket>.jsonl, then
+                       <worktree>/logs/traces/<ticket>.jsonl.
   -h, --help           Show this help.
 
 Probe verdicts (--probe, stdout JSON):
@@ -121,6 +163,12 @@ Probe verdicts (--probe, stdout JSON):
   flaky-tool-retry     worker is ALIVE but blocked on a flaky external tool
                        (recent .hydra/flaky-tool.json marker); commander relays
                        the marker's `fallback` hint instead of rescuing (exit 5)
+  worker-mid-tool-call worker is ALIVE inside a slow tool — the trace tail's
+                       most-recent execute_tool span is open (start, no end).
+                       Do NOT rescue; wait one more tick (exit 6)
+  worker-looping       worker is thrashing — the trace tail repeats one tool
+                       across >= K distinct spans, or >= K spans share one
+                       error.type. Rescue + restart with a hint (exit 7)
 
 Exit codes:
   0   success
@@ -129,14 +177,23 @@ Exit codes:
   3   rescue conflict — commander must escalate
   4   review-type rescue required; dispatch to commander (--probe-review only)
   5   blocked on flaky external tool; retry with fallback (--probe only)
+  6   worker-mid-tool-call — alive in a slow tool; do not rescue (--probe only)
+  7   worker-looping — thrashing; rescue + restart (--probe only)
 
 Flaky-tool tuning (env vars, --probe only):
   HYDRA_FLAKY_TOOL_MIN_FAILURES  min marker `failures` to fire (default 2)
   HYDRA_FLAKY_TOOL_MAX_AGE_S     max marker age in seconds (default 1800)
 
+Trace-forensics tuning (env vars, --probe only):
+  HYDRA_TRACE_TAIL_LINES         trailing trace lines to read (default 20)
+  HYDRA_TRACE_LOOP_MIN           K: min repeat count for looping (default 3)
+  HYDRA_TRACE_DIR                trace dir when --trace-file omitted
+                                 (file is <dir>/<ticket>.jsonl)
+
 Spec: docs/specs/2026-04-16-worker-timeout-watchdog.md (ticket #45)
 Spec: docs/specs/2026-04-17-review-worker-rescue.md   (ticket #75)
 Spec: docs/specs/2026-05-21-flaky-tool-probe-verdict.md (ticket #190)
+Spec: docs/specs/2026-05-21-trace-fed-watchdog-forensics.md (ticket #206)
 EOF
 }
 
@@ -150,11 +207,18 @@ pr_number=""
 remote="origin"
 base_override=""
 gh_mock="${HYDRA_RESCUE_GH_MOCK:-}"
+trace_file_override=""
 
 # Flaky-tool detection tuning (--probe only). Worker-authored marker lives at
 # <worktree>/.hydra/flaky-tool.json. See ticket #190 spec.
 flaky_min_failures="${HYDRA_FLAKY_TOOL_MIN_FAILURES:-2}"
 flaky_max_age_s="${HYDRA_FLAKY_TOOL_MAX_AGE_S:-1800}"
+
+# Trace-forensics tuning (--probe only). The watchdog reads the tail of the
+# worker's session trace (logs/traces/<ticket>.jsonl, the #197 substrate) to
+# distinguish mid-tool-call (alive, slow) from looping (thrashing). See #206 spec.
+trace_tail_lines="${HYDRA_TRACE_TAIL_LINES:-20}"
+trace_loop_min="${HYDRA_TRACE_LOOP_MIN:-3}"
 
 # Collect unnamed positional args; assignment depends on mode (resolved after parse).
 positionals=()
@@ -171,6 +235,8 @@ while [[ $# -gt 0 ]]; do
     --base=*)   base_override="${1#--base=}"; shift ;;
     --gh-mock)  [[ $# -ge 2 ]] || { echo "✗ --gh-mock needs a value" >&2; exit 2; }; gh_mock="$2"; shift 2 ;;
     --gh-mock=*) gh_mock="${1#--gh-mock=}"; shift ;;
+    --trace-file)  [[ $# -ge 2 ]] || { echo "✗ --trace-file needs a value" >&2; exit 2; }; trace_file_override="$2"; shift 2 ;;
+    --trace-file=*) trace_file_override="${1#--trace-file=}"; shift ;;
     --*) echo "✗ unknown flag: $1" >&2; usage >&2; exit 2 ;;
     *)  positionals+=("$1"); shift ;;
   esac
@@ -346,6 +412,157 @@ flaky_tool_verdict() {
   return 0
 }
 
+# Ticket #206: trace-fed watchdog forensics. Read the TAIL of the worker's
+# session trace (logs/traces/<ticket>.jsonl, the #197 substrate) to distinguish
+# states git-state alone conflates:
+#   - worker-looping       — repeated identical tool spans across distinct
+#                            span_ids, OR >= K spans sharing one error.type
+#                            (the worker is thrashing → rescue + restart).
+#   - worker-mid-tool-call — the most-recent execute_tool span is OPEN (a
+#                            phase:start with no matching phase:end) → the worker
+#                            is ALIVE inside a slow tool → do NOT rescue yet.
+#
+# Trace location resolves: --trace-file override → $HYDRA_TRACE_DIR/<ticket>.jsonl
+# → <worktree>/logs/traces/<ticket>.jsonl. Reads only the last
+# $trace_tail_lines (default 20) lines. Loop threshold K = $trace_loop_min
+# (default 3).
+#
+# Precedence: looping is checked BEFORE mid-tool-call (a thrashing worker often
+# ends with one in-flight retry; the loop is the more actionable, dangerous
+# signal). This helper prints the verdict JSON on stdout and returns 0 when a
+# trace verdict fires; otherwise it prints nothing and returns 1 so --probe
+# falls through to the git-state verdicts unchanged. The caller derives the exit
+# code from the verdict string (worker-looping → 7, worker-mid-tool-call → 6).
+#
+# Fully defensive (same hard requirement as #190's marker): a missing/garbled/
+# empty/tool-less trace never errors — it just returns 1. Malformed lines are
+# dropped via `fromjson?`; if jq is somehow absent we silently fall through.
+trace_forensic_verdict() {
+  command -v jq >/dev/null 2>&1 || return 1
+
+  # Resolve the trace file path.
+  local trace
+  if [[ -n "$trace_file_override" ]]; then
+    trace="$trace_file_override"
+  elif [[ -n "${HYDRA_TRACE_DIR:-}" ]]; then
+    trace="${HYDRA_TRACE_DIR%/}/$ticket.jsonl"
+  else
+    trace="$worktree/logs/traces/$ticket.jsonl"
+  fi
+  [[ -r "$trace" ]] || return 1
+
+  # tail_lines must be a positive integer; otherwise fall back to the default.
+  local tail_lines="$trace_tail_lines"
+  [[ "$tail_lines" =~ ^[0-9]+$ ]] && [[ "$tail_lines" -gt 0 ]] || tail_lines=20
+
+  # loop K must be a positive integer >= 2 (a single span is never a "loop").
+  local loop_k="$trace_loop_min"
+  [[ "$loop_k" =~ ^[0-9]+$ ]] && [[ "$loop_k" -ge 2 ]] || loop_k=3
+
+  # Slurp the last $tail_lines valid JSON objects into one array. `fromjson?`
+  # drops malformed lines without aborting (-n null input, -R raw lines).
+  local events
+  events="$(tail -n "$tail_lines" "$trace" 2>/dev/null \
+    | jq -cn -R '[inputs | fromjson? // empty]' 2>/dev/null)" || return 1
+  [[ -n "$events" ]] || return 1
+
+  # Report worktree git-state alongside for observability (does NOT change the
+  # verdict — a trace verdict is about liveness, not WIP).
+  local commits_ahead dirty
+  commits_ahead="$(count_commits_ahead)"
+  dirty="false"; is_dirty && dirty="true"
+
+  # ---- loop signal (checked first) -----------------------------------------
+  # Two independent triggers, either fires:
+  #  (a) tool-repeat: some gen_ai.tool.name was called on >= K DISTINCT span_ids
+  #      in the tail (genuinely repeated calls, not one long-open span and not
+  #      duplicate events of the same span). We count distinct span_ids per tool
+  #      so duplicate start lines can't inflate the count, and interleaved calls
+  #      (Bash, Edit, Bash, Edit, Bash) still count toward the tool's tally.
+  #  (b) recursive-failure: some attrs."error.type" appears on >= K DISTINCT
+  #      span_ids (same span emitting start+end with an error.type counts once).
+  # Emits {tool, error_type, repeat} where each of tool/error_type may be null
+  # when only the other trigger fired; repeat is the larger distinct-span count.
+  local loop_json
+  loop_json="$(jq -c --argjson k "$loop_k" '
+    def tool_repeat:
+      # distinct span_ids per tool over execute_tool start events.
+      ( map(select(.kind == "execute_tool"
+                   and .attrs.phase == "start"
+                   and (.attrs."gen_ai.tool.name" // "") != ""))
+        | group_by(.attrs."gen_ai.tool.name")
+        | map({ tool: .[0].attrs."gen_ai.tool.name",
+                repeat: ([.[].span_id] | unique | length) })
+        | map(select(.repeat >= $k))
+        | sort_by(-.repeat) ) as $groups
+      | if ($groups | length) > 0 then $groups[0] else null end;
+    def recursive_failure:
+      # distinct span_ids per error.type (dedup repeated events of one span).
+      ( map(select((.attrs."error.type" // "") != "")
+            | {err: .attrs."error.type", span_id: .span_id})
+        | group_by(.err)
+        | map({ error_type: .[0].err,
+                repeat: ([.[].span_id] | unique | length) })
+        | map(select(.repeat >= $k))
+        | sort_by(-.repeat) ) as $groups
+      | if ($groups | length) > 0 then $groups[0] else null end;
+    (tool_repeat) as $tr
+    | (recursive_failure) as $rf
+    | if $tr == null and $rf == null then empty
+      else
+        { tool: ($tr.tool // null),
+          error_type: ($rf.error_type // null),
+          repeat: ([($tr.repeat // 0), ($rf.repeat // 0)] | max) }
+      end
+  ' <<<"$events" 2>/dev/null)" || loop_json=""
+
+  if [[ -n "$loop_json" ]]; then
+    jq -nc \
+      --argjson loop "$loop_json" \
+      --argjson commits_ahead "$commits_ahead" \
+      --argjson dirty "$dirty" \
+      '{verdict:"worker-looping", tool:$loop.tool, error_type:$loop.error_type, repeat:$loop.repeat, commits_ahead:$commits_ahead, dirty:$dirty}'
+    return 0
+  fi
+
+  # ---- mid-tool-call signal -------------------------------------------------
+  # The MOST-RECENT execute_tool span (the one whose start ts is latest) has a
+  # start but NO end. We first pick the latest-started tool span, THEN test
+  # whether it is open — so an older incomplete span followed by a later COMPLETED
+  # span does NOT report mid-tool-call (the worker moved on).
+  local open_tool
+  open_tool="$(jq -r '
+    ( map(select(.kind == "execute_tool"))
+      | group_by(.span_id)
+      | map({
+          span_id: .[0].span_id,
+          tool: ( (map(select(.attrs.phase == "start"))[0].attrs."gen_ai.tool.name") // "" ),
+          start_ts: ( (map(select(.attrs.phase == "start"))[0].ts) // "" ),
+          has_start: ( any(.attrs.phase == "start") ),
+          has_end:   ( any(.attrs.phase == "end") )
+        })
+      # only spans that actually started can be "the most recent start"
+      | map(select(.has_start))
+      | sort_by(.start_ts) ) as $started
+    | if ($started | length) == 0 then ""
+      else ($started[-1]) as $latest
+        | if ($latest.has_end | not) then $latest.tool else "" end
+      end
+  ' <<<"$events" 2>/dev/null)" || open_tool=""
+
+  if [[ -n "$open_tool" ]]; then
+    jq -nc \
+      --arg tool "$open_tool" \
+      --argjson commits_ahead "$commits_ahead" \
+      --argjson dirty "$dirty" \
+      '{verdict:"worker-mid-tool-call", tool:$tool, commits_ahead:$commits_ahead, dirty:$dirty}'
+    return 0
+  fi
+
+  # No trace verdict — fall through to git-state verdicts.
+  return 1
+}
+
 # Ticket #81: refuse --rescue if the worker is still writing
 # (`.git/index.lock` present). Best-effort TOCTOU guard — narrows but does
 # not eliminate the race. Probe mode does not call this (probe is read-only).
@@ -373,6 +590,23 @@ if [[ "$mode" == "probe" ]]; then
   # it prints nothing and we fall through to the existing verdicts unchanged.
   if flaky_tool_verdict; then
     exit 5
+  fi
+
+  # Ticket #206: read the trace tail to distinguish a worker that is ALIVE
+  # inside a slow tool (worker-mid-tool-call, exit 6) from one that is thrashing
+  # in a loop (worker-looping, exit 7). Checked AFTER the flaky-tool marker (the
+  # most-specific, actionable signal) and BEFORE the git-state verdicts (which
+  # can't tell live-slow from idle-ghost). The helper prints the verdict JSON
+  # and returns 0 only when a trace verdict fires; otherwise it prints nothing
+  # and returns 1 so we fall through to the existing git-state verdicts. The
+  # exit code is derived from the verdict string.
+  trace_verdict="$(trace_forensic_verdict)" || trace_verdict=""
+  if [[ -n "$trace_verdict" ]]; then
+    printf '%s\n' "$trace_verdict"
+    case "$trace_verdict" in
+      *'"verdict":"worker-looping"'*)       exit 7 ;;
+      *'"verdict":"worker-mid-tool-call"'*) exit 6 ;;
+    esac
   fi
 
   commits_ahead="$(count_commits_ahead)"

@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/pricing.schema.json",
+  "title": "Hydra model pricing table",
+  "description": "Model -> per-million-token USD rates used by scripts/trace-cost.sh to convert trace token usage into cost_usd, and by cost-rollup.sh / cost-per-pr.sh for the cost-per-merged-PR metric. Phase 1 (flat subscription) treats this as a modeled estimate; Phase 2 (Anthropic API) as real spend. Spec: docs/specs/2026-05-21-per-ticket-cost-and-cost-per-pr.md (ticket #195).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "currency",
+    "unit",
+    "models"
+  ],
+  "properties": {
+    "currency": {
+      "type": "string",
+      "description": "ISO currency code for the rates (e.g. USD)."
+    },
+    "unit": {
+      "type": "string",
+      "enum": ["per_million_tokens"],
+      "description": "Rate unit. Only per_million_tokens is supported in v1."
+    },
+    "models": {
+      "type": "object",
+      "description": "Map of model id -> {input, output} rate. Must include a 'default' entry so an unlisted model never silently zeroes a cost.",
+      "required": ["default"],
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["input", "output"],
+        "properties": {
+          "input": {
+            "type": "number",
+            "minimum": 0,
+            "description": "USD per million input (prompt) tokens."
+          },
+          "output": {
+            "type": "number",
+            "minimum": 0,
+            "description": "USD per million output (completion) tokens."
+          }
+        }
+      }
+    }
+  }
+}
