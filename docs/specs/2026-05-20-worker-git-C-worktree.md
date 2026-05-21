@@ -153,10 +153,10 @@ Also fix the example git commands in `worker-conflict-resolver.md`'s Flow to use
 ### 3. Slim spawn template: explicit worktree path
 
 Add a `Worktree:` line to the canonical template in
-`docs/specs/2026-04-17-slim-worker-prompts.md` and the matching CLAUDE.md template
-block. The `Repo:` line already carries `<owner>/<repo> @ <local_path>` but that path is
-the **target repo clone**, not necessarily the worker's isolated **worktree**. We add an
-explicit, unambiguous worktree line and a one-line directive:
+`docs/specs/2026-04-17-slim-worker-prompts.md` (the canonical home for the slim template,
+per #146). The `Repo:` line already carries `<owner>/<repo> @ <local_path>` but that path
+is the **target repo clone**, not necessarily the worker's isolated **worktree**. We add
+an explicit, unambiguous worktree line and a one-line directive:
 
 ```
 Ticket: https://github.com/<owner>/<repo>/issues/<n>
@@ -166,10 +166,16 @@ Tier: T<n>
 …
 ```
 
-The slim-prompt fixture already asserts header lines in order; we extend it (in this
-ticket's fixture, not by editing the slim-prompt fixture) only to the extent the
-acceptance criteria require. The slim-prompt spec gets a short subsection documenting the
-new line and pointing at this spec.
+The slim-prompt spec gets a short subsection documenting the new line and pointing at
+this spec, and both template blocks in that spec (the canonical one and the CLAUDE.md
+example) gain the `Worktree:` line so the docs stay self-consistent.
+
+**CLAUDE.md is intentionally out of scope for this change.** The operator scoped this
+ticket to `.claude/agents/*.md`, `docs/specs/`, and `self-test/`. CLAUDE.md's slim-template
+block carries a one-line example and a pointer to the slim-prompt spec; the canonical
+template (now including `Worktree:`) lives in the spec, which CLAUDE.md already points at.
+A follow-up can sync the one-line CLAUDE.md example when CLAUDE.md is next edited — it is
+not load-bearing for the fix (the agent-doc mandate + the canonical spec are).
 
 ### 4. Self-test fixture: prove red→green
 
@@ -218,8 +224,8 @@ fixture-roundtrip step shape.
    .claude/agents/worker-review.md .claude/agents/worker-conflict-resolver.md` → all five
    match; `grep -c 'cd "\$WT" && git\|^\s*git fetch\|^\s*git checkout'` in
    conflict-resolver shows the bare-git examples are gone.
-6. `bash scripts/check-claude-md-size.sh` → exit 0 (CLAUDE.md template addition stays
-   within the 18,000-char ceiling; the `Worktree:` line adds ~1 line).
+6. `bash scripts/check-claude-md-size.sh` → exit 0 (non-regression — CLAUDE.md is
+   unchanged by this ticket, so it must still be within the ceiling).
 7. `jq empty self-test/golden-cases.example.json` → valid JSON after the new case.
 
 ## Risks / rollback

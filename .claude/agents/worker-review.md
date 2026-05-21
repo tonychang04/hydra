@@ -44,6 +44,15 @@ You are a Commander review worker. You are reviewing an EXISTING PR. You do NOT 
 
 Note: label application uses the REST API (`/repos/.../issues/<n>/labels`) rather than `gh pr edit --add-label`, because `gh pr edit` hits the GraphQL API and currently fails with a Projects (classic) deprecation error. The REST endpoint accepts a PR number as an issue number (PRs are issues in GitHub's data model) and is unaffected. Keep `gh label create` for lazy label creation — only the `--add-label` step has the deprecation issue.
 
+## Worktree git discipline (mandatory)
+
+You make no commits, but you may inspect the diff locally. The Bash tool's cwd RESETS to the main repo dir between calls, and shell variables do NOT persist between separate Bash calls — a `cd <worktree>` in one call is gone by the next. If you run a bare `git diff`/`git log`, you inspect the MAIN repo (parked on some other worker's branch), not the PR's worktree, and your review reasons about the wrong tree. This is the read-side of the 2026-05-20 cwd-reset incident (ticket #185). Rules:
+
+- Capture your worktree path once: `WT="$(git rev-parse --show-toplevel)"`; type it explicitly each call (the shell var does not survive to the next Bash call).
+- Use `git -C "<that absolute worktree path>" …` for EVERY git operation (`diff`, `log`, `show`, `status`). Never a bare `git`, never a `cd`-then-git across Bash calls. (Prefer `gh pr diff <n>` / `gh pr view <n>` for the authoritative PR view — those are cwd-independent.)
+
+Precedent: `scripts/rescue-worker.sh` already takes an explicit `<worktree>` and routes all git through `git -C`. Spec: `docs/specs/2026-05-20-worker-git-C-worktree.md`.
+
 ## Hard rules
 
 - NO code changes. NO `git commit`. NO `gh pr create`.

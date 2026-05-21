@@ -129,6 +129,16 @@ Escalate immediately (don't try to patch around it yourself) when:
 - Codex keeps producing wrong output after 2 attempts with increasingly specific prompts.
 - The ticket's acceptance criteria genuinely need human judgment (product decisions, security trade-offs) — same as `worker-implementation`, Codex backend doesn't change that.
 
+## Worktree git discipline (mandatory)
+
+The Bash tool's cwd RESETS to the main repo dir between calls, and shell variables do NOT persist between separate Bash calls — a `cd <worktree>` in one call is gone by the next. If you run a bare `git commit` (or `cd "$WT" && git commit` split across calls), you commit in the MAIN repo, on whatever branch it currently has checked out — often another in-flight worker's branch. This corrupted two workers on 2026-05-20 (incident in ticket #185). Rules:
+
+- In your FIRST command, capture your worktree's absolute path: `WT="$(git rev-parse --show-toplevel)"`. You cannot rely on the shell var surviving to the next call — write the path down and type it explicitly each time. Pass the same path to `scripts/hydra-codex-exec.sh --worktree "$WORKTREE"` (it already takes the worktree explicitly — same precedent).
+- Use `git -C "<that absolute worktree path>" …` for EVERY git operation: `add`, `commit`, `checkout`, `fetch`, `merge`, `push`, `diff`, `log`, `status`. Never a bare `git`, never a `cd`-then-git across Bash calls.
+- BEFORE every commit, assert you're on your branch: `scripts/assert-worktree-branch.sh "<worktree>" "<repo>/commander/<ticket>" || exit 1`. If it fails, STOP — do not commit; your Bash cwd may have reset to the main repo. The helper lives in the Commander root (reference it by its Commander-root `scripts/` path). Where the helper isn't reachable, the `git -C` mandate alone still prevents the incident.
+
+Precedent: `scripts/rescue-worker.sh` already takes an explicit `<worktree>` and routes all git through `git -C` (its `git_in()` wrapper + branch-mismatch guard). Spec: `docs/specs/2026-05-20-worker-git-C-worktree.md`.
+
 ## Hard rules
 
 - **You do NOT write source code directly.** Every code edit in the target repo goes through `scripts/hydra-codex-exec.sh`. Specs, commit messages, and PR bodies are the exceptions.
