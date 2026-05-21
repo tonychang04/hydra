@@ -16,8 +16,8 @@ description: |
 
 ## Overview
 
-InsForge is ~8+ repos (see `memory/reference_insforge_repo_coordination.md`), and new
-ones arrive bare. When a worker is asked to write a repo's *first* README, gstack's
+InsForge is many repos (the enabled set is in `state/repos.json`), and new ones arrive
+bare. When a worker is asked to write a repo's *first* README, gstack's
 `document-release` does not help — it reads and polishes docs that already exist. A bare
 repo has nothing to polish; you must decide what sections matter, in what order, for that
 repo's specific audience. Without a procedure, workers re-derive this each time and the
@@ -32,6 +32,10 @@ stable downstream READMEs (`CLI`, `InsForge-sdk-js`, `insforge` OSS, `insforge-c
 - The repo has no `README.md` (or a one-line stub) and the ticket asks to write one.
 - A new InsForge-family repo — CLI, SDK, MCP server, edge-function library, a service.
 - You are inside a downstream repo, NOT Hydra itself (Hydra's own README is human-maintained).
+
+Note on location: this skill lives in Hydra's `.claude/skills/` (a Hydra worker procedure). A
+worker in a bare downstream worktree reads *that* repo's `.claude/skills/` at Step 0 and won't
+find it there — Commander surfaces it via the spawn prompt / Memory Brief, so treat it as the reference for the task, not something the downstream repo must contain.
 
 Skip when:
 
@@ -62,22 +66,20 @@ Skip when:
    | 6 | **Links back to the InsForge family** | "Related Repositories" + docs URL + community. The InsForge-specific section `document-release` won't think to add. |
    | 7 | **License** | Short, last. |
 
-3. **Make Quick Start copy-pasteable and real.** Use fenced bash/ts blocks. Prefer commands
-   you can actually run in the repo (read `package.json` scripts, `bin/`, `.env.example`).
-   Never invent a flag — grep the source for the real command surface.
+3. **Make Quick Start copy-pasteable and real.** Use fenced bash/ts blocks with commands you
+   can actually run (read `package.json` scripts, `bin/`, `.env.example`). Never invent a
+   flag — grep the source for the real command surface.
 
-4. **Right-size Usage to the surface area.** A CLI lists its commands as `### subsections`
-   (see `CLI`'s `### Database`, `### Storage`, `### Functions`). A small SDK groups by
-   capability (`### Database Operations`, `### File Storage`). Don't document commands that
-   don't exist; don't omit the ones that do.
+4. **Right-size Usage to the surface area.** A CLI lists commands as `### subsections` (see
+   `CLI`'s `### Database`, `### Storage`); a small SDK groups by capability (`### Database
+   Operations`, `### File Storage`). Don't document commands that don't exist or omit ones that do.
 
-5. **Always add the "links back" section.** Downstream repos are a family — point to the
-   docs site, sibling repos, and community. This is the section that makes a bare repo feel
-   part of InsForge rather than orphaned.
+5. **Always add the "links back" section** — docs site, sibling repos, community. It's what
+   makes a bare repo feel part of InsForge rather than orphaned.
 
-6. **Pre-commit checklist:** every command in Quick Start was verified against the repo's
-   real scripts/bin; every linked sibling repo exists; the H1 names the actual package;
-   no `TODO`/placeholder left. Then commit (`git add README.md`) and open the draft PR.
+6. **Pre-commit checklist:** every Quick Start command verified against the repo's real
+   scripts/bin; every linked sibling repo exists; the H1 names the actual package; no
+   `TODO`/placeholder left. Then commit (`git add README.md`) and open the draft PR.
 
 ## Examples
 
@@ -89,7 +91,7 @@ Command-line tool to manage your InsForge projects from the terminal.
 
 ## Quick Start
     npx @insforge/cli login      # browser OAuth
-    npx @insforge/cli projects   # list your projects
+    npx @insforge/cli list       # list orgs and projects
     npx @insforge/cli link       # link this dir to a project
 
 ## Commands
@@ -108,10 +110,9 @@ Development → links. Quick Start leads with `login` because nothing else works
 
 ### Good — end-user SDK (pattern from `InsForge-sdk-js/README.md`)
 
-That README leads with `# insforge-sdk-js` → `## Features` → `## Installation`
-(`npm install @insforge/sdk`) → `## Quick Start` (Initialize → Authentication → Database →
-Storage) → `## Development` → `## Related Projects`. For a new SDK, copy that order —
-capability-grouped Usage, not command-grouped, because an SDK's surface is methods not subcommands.
+That README leads with `# insforge-sdk-js` → `## Features` → `## Installation` (`npm install
+@insforge/sdk`) → `## Quick Start` (Initialize → Authentication → Database → Storage) →
+`## Development` → `## Related Projects`. For a new SDK, copy that order, grouping Usage by capability (methods), not by command.
 
 ### Bad — what this skill prevents
 
@@ -140,10 +141,9 @@ the first few sections.
 
 ## Related
 
-- gstack `document-release` — the counterpart skill: polishes an **existing** README +
-  ARCHITECTURE/CHANGELOG against the diff. Use it when a README already exists; use THIS
-  skill to write the first one.
+- gstack `document-release` — the counterpart: polishes an **existing** README +
+  ARCHITECTURE/CHANGELOG against the diff. Use it when a README already exists; use THIS skill
+  to write the first one.
 - gstack `doc-author` — for Mintlify `.mdx` site docs (`InsForge/insforge` `docs/`), not READMEs.
-- `memory/reference_insforge_repo_coordination.md` — the repo map + audience per repo
-  (drives the audience-fit decision in step 1).
+- `state/repos.json` (enabled-repo list) + `memory/learnings-<repo>.md` (per-repo context) — inform the audience-fit decision in step 1.
 - `.claude/skills/README.md` — the seed-skill shape this file follows.
