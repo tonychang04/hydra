@@ -1,0 +1,3 @@
+{"ts":"2026-05-21T20:00:00.000Z","span_id":"root3060","parent_span_id":null,"kind":"invoke_agent","attrs":{"gen_ai.operation.name":"invoke_agent","phase":"start","hydra.ticket":"3060","hydra.worker_type":"worker-implementation"}}
+{"ts":"2026-05-21T20:00:01.000Z","span_id":"tool3061","parent_span_id":"root3060","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Read"}}
+{"ts":"2026-05-21T20:00:01.100Z","span_id":"tool3061","parent_span_id":"root3060","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Read","hydra.tool.exit_code":0}}
