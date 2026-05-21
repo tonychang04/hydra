@@ -95,8 +95,9 @@ Structure mirrors the existing seed:
 
 ## Test plan
 
-This repo has no test runner (no `package.json`/`Makefile`); skills are markdown
-docs validated against a documented shape. Verification is:
+There is no automated tier-classifier golden case yet (`self-test/run.sh` exists
+but covers other rungs); skills are markdown docs validated against a documented
+shape. Verification is:
 
 1. **Shape check** — `SKILL.md` has the frontmatter + the five canonical sections
    in the README/seed order; no telemetry preamble.
