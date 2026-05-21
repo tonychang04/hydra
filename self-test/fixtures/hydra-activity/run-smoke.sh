@@ -38,6 +38,21 @@ ts_seconds_ago() {
   fi
 }
 
+# Portable YYYY-MM-DD for N days ago — used to keep the citation fixture's
+# `last_cited` dates inside hydra-activity.sh's 7-day window regardless of when
+# the suite runs. The committed fixture stores absolute April-2026 dates so it
+# stays deterministic; without re-stamping they fall out of the window and the
+# "top memory citation" assertion rots over wall-clock time (ticket #201).
+# Arg: days-ago (e.g. 0 for today, 2 for 2 days ago). Echoes YYYY-MM-DD.
+ymd_days_ago() {
+  local days="$1"
+  if date -v-1d '+%Y-%m-%d' >/dev/null 2>&1; then
+    date -v-"${days}"d '+%Y-%m-%d'   # BSD date (macOS)
+  else
+    date -d "${days} days ago" '+%Y-%m-%d'  # GNU date
+  fi
+}
+
 # Put the in-window fixture logs inside the last 24h (but spaced apart so the
 # sort-by-completion-time column is deterministic), and push the out-of-window
 # log back 3 days so the window filter drops it.
@@ -50,9 +65,35 @@ touch -t "$(ts_seconds_ago 259200)" "$LOGS_DIR/099-old.json"  # 3 days ago
 : > "$MEM_DIR/retros/2026-15.md"
 : > "$MEM_DIR/retros/2026-16.md"
 
+# Stage a temp state dir with the same active.json but freshly-dated citations.
+# hydra-activity.sh filters citations to the last 7 days; the committed fixture's
+# `last_cited` are absolute April-2026 dates that would now fall outside the
+# window. Re-stamp them to today / yesterday / 2-days-ago (still within 7d, and
+# spaced so the sort-by-count ordering is unaffected). We do this in a temp dir
+# so the committed fixture stays byte-for-byte deterministic and git stays clean.
+STAGED_STATE="$(mktemp -d)"
+trap 'rm -rf "$STAGED_STATE"' EXIT
+cp "$STATE_DIR/active.json" "$STAGED_STATE/active.json"
+# Re-stamp ONLY existing entries. A bare `.citations[key].last_cited = $d` would
+# silently *create* a synthetic key if the fixture is later renamed/trimmed —
+# hydra-activity.sh renders an entry with a missing count as count 0, so the
+# assertions could pass against a broken fixture. Guard with `has` + `error` so a
+# missing target key fails the harness loudly instead of masking the breakage.
+if ! jq --arg d0 "$(ymd_days_ago 0)" --arg d1 "$(ymd_days_ago 1)" --arg d2 "$(ymd_days_ago 2)" '
+  def restamp($k; $d):
+    if (.citations | has($k)) then .citations[$k].last_cited = $d
+    else error("citation fixture key missing: \($k)") end;
+  restamp("learnings-repoA.md#npm install strips peer markers"; $d0)
+  | restamp("learnings-repoA.md#baseline typecheck trick"; $d1)
+  | restamp("learnings-repoB.md#docker-compose timeout 120s not enough"; $d2)
+' "$STATE_DIR/memory-citations.json" > "$STAGED_STATE/memory-citations.json"; then
+  echo "FAIL: could not re-stamp citation fixture (key missing or invalid JSON)"
+  exit 1
+fi
+
 common_args=(
   --logs-dir "$LOGS_DIR"
-  --state-dir "$STATE_DIR"
+  --state-dir "$STAGED_STATE"
   --memory-dir "$MEM_DIR"
 )
 
@@ -104,7 +145,9 @@ echo "$json_out" | jq -e '.retros.count == 2' >/dev/null \
 # it should still render the other sections with a safe fallback.
 # -----------------------------------------------------------------------------
 BAD_STATE="$(mktemp -d)"
-trap 'rm -rf "$BAD_STATE"' EXIT
+# Extend (don't replace) the cleanup so the earlier STAGED_STATE dir is also
+# removed — a bare `trap ... EXIT` would clobber the prior handler.
+trap 'rm -rf "$STAGED_STATE" "$BAD_STATE"' EXIT
 cp "$STATE_DIR/memory-citations.json" "$BAD_STATE/memory-citations.json"
 printf '{"workers": [' > "$BAD_STATE/active.json"
 

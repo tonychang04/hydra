@@ -171,7 +171,11 @@ else
   fail "infra/fly.toml missing — run from repo root."
 fi
 
-# Hard: flyctl installed and authenticated.
+# flyctl installed and authenticated.
+# In --dry-run nothing is ever shelled out to flyctl (every fly call becomes a
+# "DRY RUN:" log line), so a missing flyctl is downgraded to a notice instead of
+# a hard fail — the rehearsal must run on a box that hasn't installed flyctl yet
+# (e.g. CI). Real runs still hard-fail. (ticket #201)
 FLY_BIN=""
 if command -v flyctl >/dev/null 2>&1; then
   FLY_BIN="flyctl"
@@ -179,9 +183,15 @@ elif command -v fly >/dev/null 2>&1; then
   FLY_BIN="fly"
 fi
 if [[ -z "$FLY_BIN" ]]; then
-  fail "flyctl not installed — brew install flyctl OR https://fly.io/docs/hands-on/install-flyctl/"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    FLY_BIN="flyctl"  # name only, for display; never invoked in dry-run
+    dry "flyctl not installed — would require it for a real run (install before going live)"
+  else
+    fail "flyctl not installed — brew install flyctl OR https://fly.io/docs/hands-on/install-flyctl/"
+  fi
+else
+  ok "flyctl found ($FLY_BIN)"
 fi
-ok "flyctl found ($FLY_BIN)"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   dry "$FLY_BIN auth whoami (would verify login)"
@@ -192,10 +202,14 @@ else
   ok "flyctl logged in"
 fi
 
-# Hard: claude, gh, jq.
+# claude, gh, jq. None of these are invoked in --dry-run (claude setup-token is
+# only logged, gh is never shelled out, jq is the harness's own dep), so a
+# missing binary is a notice in dry-run and a hard fail otherwise. (ticket #201)
 for bin in claude gh jq; do
   if command -v "$bin" >/dev/null 2>&1; then
     ok "$bin found"
+  elif [[ "$DRY_RUN" -eq 1 ]]; then
+    dry "$bin not installed — would require it for a real run (install before going live)"
   else
     fail "$bin not found — install before continuing"
   fi
