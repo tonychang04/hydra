@@ -1,3 +1,9 @@
+---
+status: draft
+date: 2026-05-21
+author: hydra worker (ticket #193)
+---
+
 # Live Command Center board (`scripts/build-board.sh`)
 
 Ticket: [#193](https://github.com/tonychang04/hydra/issues/193) — `[P1/observability]`

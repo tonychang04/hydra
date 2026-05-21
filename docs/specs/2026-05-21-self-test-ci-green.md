@@ -1,3 +1,9 @@
+---
+status: draft
+date: 2026-05-21
+author: hydra worker (ticket #201)
+---
+
 # Make self-test CI green: fix 3 pre-existing baseline failures
 
 **Ticket:** #201 · **Tier:** T2 · **Pillar:** P1 (observability / trust — green CI)
