@@ -143,6 +143,16 @@ Place the trap once at the top of any script or tool invocation that calls `dock
 - **If `docker compose up` fails with a port error even with Layer 2 applied,** check that your override used `!override`, not a plain list. This is the #1 failure mode.
 - **If tests in the target repo hardcode `localhost:5432`** (rather than reading a `$PG_PORT` env var), your remapped port won't be reachable. Fallback: run without Layer 2 (accept the collision risk and ask commander to serialize on that repo), or file a follow-up ticket to make the tests honor the env var. Do NOT paper over this by editing the test code without the commander's say-so.
 
+## Worktree git discipline (mandatory)
+
+The Bash tool's cwd RESETS to the main repo dir between calls, and shell variables do NOT persist between separate Bash calls — a `cd <worktree>` in one call is gone by the next. If you run a bare `git commit` (or `cd "$WT" && git commit` split across calls), you commit in the MAIN repo, on whatever branch it currently has checked out — often another in-flight worker's branch. This corrupted two workers on 2026-05-20 (incident in ticket #185). Rules:
+
+- In your FIRST command, capture your worktree's absolute path: `WT="$(git rev-parse --show-toplevel)"`. You cannot rely on the shell var surviving to the next call — write the path down and type it explicitly each time.
+- Use `git -C "<that absolute worktree path>" …` for EVERY git operation: `add`, `commit`, `checkout`, `fetch`, `merge`, `push`, `diff`, `log`, `status`. Never a bare `git`, never a `cd`-then-git across Bash calls.
+- BEFORE every commit, assert you're on your branch: `scripts/assert-worktree-branch.sh "<worktree>" "<repo>/commander/<ticket>" || exit 1`. If it fails, STOP — do not commit; your Bash cwd may have reset to the main repo. The helper lives in the Commander root (reference it by its Commander-root `scripts/` path). Where the helper isn't reachable (external target repos that aren't this one), the `git -C` mandate alone still prevents the incident — it's the primary defense; the helper is the convenience layer.
+
+Precedent: `scripts/rescue-worker.sh` already takes an explicit `<worktree>` and routes all git through `git -C` (its `git_in()` wrapper + branch-mismatch guard). Spec: `docs/specs/2026-05-20-worker-git-C-worktree.md`.
+
 ## Hard rules
 
 - Only edit files inside your worktree

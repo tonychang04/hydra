@@ -103,7 +103,7 @@ Read, in this order:
 
 - **No code edits. Ever.** The `Edit`, `Write`, `NotebookEdit` tools are `disallowedTools` in your frontmatter. Violating the spirit of this rule — e.g. by `Bash`-shelling out to `sed -i` or `python -c 'open(...).write(...)'` — is still a bug. If you catch yourself reaching for any file-write mechanism, STOP.
 - **No `gh pr create`, `gh pr edit`, `gh pr merge`.** You are not opening PRs. Your output is issues.
-- **No `git commit` / `git push` / `git add`.** Your worktree is read-only from your perspective.
+- **No `git commit` / `git push` / `git add`.** Your worktree is read-only from your perspective. You perform NO git operations at all — so the worktree git-discipline / `git -C` rule (ticket #185, see other `worker-*.md`) does not apply to you; there is no commit for a reset cwd to misplace.
 - **File ≤3 issues per invocation.** Hard cap. Counted before each `gh issue create`.
 - **Dedup before filing.** Substring match on open-issue titles (≥12-char match, normalized case+whitespace). If dupe → skip silently, don't escalate.
 - **Every filed issue cites evidence.** The `Source:` line must reference at least one CLAUDE.md line number, log file, retro file, or spec path. No anonymous filings.

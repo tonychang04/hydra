@@ -49,6 +49,7 @@ Steps 2 + 3 are pure duplication. Step 4 is the single authoritative read. Inlin
 ```
 Ticket: https://github.com/<owner>/<repo>/issues/<n>
 Repo: <owner>/<repo> @ <local_path>
+Worktree: <absolute worktree path>  (all git ops must target this with `git -C` — ticket #185)
 Tier: T<n>
 
 <Memory Brief from scripts/build-memory-brief.sh — 0–2000 chars — per #141>
@@ -61,10 +62,22 @@ Done = draft PR with "Closes #<n>" + tests passing. Report: branch, PR #, test o
 
 Rules:
 
-1. The four header lines (`Ticket:`, `Repo:`, `Tier:`, blank) and the four footer lines (`Fetch full body…`, `Worker type:`, `Coordinate-with hints:`, `Done =…`) are fixed. Commander substitutes the angle-bracketed fields.
+1. The header lines (`Ticket:`, `Repo:`, `Worktree:`, `Tier:`, blank) and the four footer lines (`Fetch full body…`, `Worker type:`, `Coordinate-with hints:`, `Done =…`) are fixed. Commander substitutes the angle-bracketed fields.
 2. The Memory Brief is spliced in between header and footer. When the brief is empty (fresh repo, per #141 failure mode), the region is a single blank line.
 3. Linear-sourced spawns get an extra line immediately after `Tier:`, e.g. `Linear: LIN-123 — https://linear.app/...`. Worker agents already know to prepend `Closes LIN-123 — …` to the PR body when this line is present (existing behavior in `worker-implementation.md`).
 4. Total length BEFORE the Memory Brief must be ≤ 800 chars. Header + footer of the fixed template is ~500 chars; the 300-char headroom absorbs typical repo paths + coordinate hints.
+
+### The `Worktree:` line (added by ticket #185)
+
+The `Worktree:` line gives the worker its isolated worktree's **absolute path**
+explicitly. It is distinct from `Repo: <owner>/<repo> @ <local_path>` — that path is
+the target-repo clone, which is not necessarily the worker's per-ticket worktree. The
+Bash tool's cwd resets to the main repo between calls and shell vars don't persist, so a
+worker that relies on `cd` or an inferred path can commit on the wrong branch (the
+2026-05-20 cross-branch contamination incident). The explicit line removes the guesswork:
+the worker passes this path to `git -C` for every git operation. Full rationale, the
+mandated `git -C` discipline, the `scripts/assert-worktree-branch.sh` guard, and the
+red→green self-test fixture live in `docs/specs/2026-05-20-worker-git-C-worktree.md`.
 
 ### Why ticket URL instead of ticket body
 
@@ -97,6 +110,7 @@ Spawn prompt is a short envelope, not the full ticket body. Template:
 ```
 Ticket: https://github.com/<o>/<r>/issues/<n>
 Repo: <o>/<r> @ <path>
+Worktree: <abs worktree path>  (git -C target — #185)
 Tier: T<n>
 
 <Memory Brief>

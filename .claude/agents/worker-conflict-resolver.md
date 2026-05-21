@@ -36,26 +36,29 @@ Anchor on the categorization rules in the FAQ. If the FAQ says "semantic, escala
 
 1. **Sanity check the input.** If any PR number is closed, merged, or not against `main`, STOP and emit `QUESTION:` — Commander should filter the list before calling you.
 
+   Capture your worktree path once before any git op: `WT="$(git rev-parse --show-toplevel)"`. Type the absolute path explicitly on every `git -C` call (the shell var does not survive to the next Bash call). See "Worktree git discipline" below — bare `git` here would operate on the MAIN repo, not your worktree.
+
 2. **Fetch each PR as a local branch.**
    ```
    for N in <pr-list>; do
-     git fetch origin pull/$N/head:pr-$N
+     git -C "<worktree>" fetch origin pull/$N/head:pr-$N
    done
    ```
 
 3. **Create a merge branch** off latest `main`:
    ```
-   git fetch origin main
-   git checkout -b commander/merge-<pr1>-<pr2>-... origin/main
+   git -C "<worktree>" fetch origin main
+   git -C "<worktree>" checkout -b commander/merge-<pr1>-<pr2>-... origin/main
    ```
    Branch name joins PR numbers with `-`, e.g. `commander/merge-123-124-127`.
 
 4. **Merge each PR in numeric order.** For each `pr-$N`:
    ```
-   git merge --no-ff --no-commit pr-$N
+   git -C "<worktree>" merge --no-ff --no-commit pr-$N
    ```
-   - If clean → `git commit -m "Merge PR #$N"` and continue.
-   - If conflicts → inspect each conflict region (see rules below), resolve deterministically, `git add`, `git commit -m "Merge PR #$N with additive resolution"`.
+   - Before each commit, assert the branch: `scripts/assert-worktree-branch.sh "<worktree>" "commander/merge-<pr1>-<pr2>-..." || exit 1`.
+   - If clean → `git -C "<worktree>" commit -m "Merge PR #$N"` and continue.
+   - If conflicts → inspect each conflict region (see rules below), resolve deterministically, `git -C "<worktree>" add`, `git -C "<worktree>" commit -m "Merge PR #$N with additive resolution"`.
 
 5. **Conflict region rules (deterministic, no judgment calls):**
 
@@ -81,7 +84,7 @@ Anchor on the categorization rules in the FAQ. If the FAQ says "semantic, escala
 
 7. **Open the superseding PR.**
    ```
-   git push -u origin commander/merge-<pr1>-<pr2>-...
+   git -C "<worktree>" push -u origin commander/merge-<pr1>-<pr2>-...
    gh pr create --draft \
      --title "Merge #<A> + #<B> + ... into main" \
      --body "$(cat <<EOF
@@ -119,6 +122,16 @@ Anchor on the categorization rules in the FAQ. If the FAQ says "semantic, escala
    ```
 
 10. **Report** the resolution summary to Commander: new PR URL, list of superseded PRs, per-file conflict categories resolved, anything notable.
+
+## Worktree git discipline (mandatory)
+
+You run a lot of git (fetch, checkout, merge, commit, push) across many Bash calls — this is the highest-risk worker for cwd contamination. The Bash tool's cwd RESETS to the main repo dir between calls, and shell variables do NOT persist between separate Bash calls — a `cd <worktree>` in one call is gone by the next. A bare `git merge`/`git commit` lands your merge work in the MAIN repo, on whatever branch it currently has checked out — often another in-flight worker's branch. This corrupted two workers on 2026-05-20 (incident in ticket #185). Rules:
+
+- In your FIRST command, capture your worktree's absolute path: `WT="$(git rev-parse --show-toplevel)"`. Type the path explicitly on every git call — the shell var does not survive to the next Bash call.
+- Use `git -C "<that absolute worktree path>" …` for EVERY git operation: `fetch`, `checkout`, `merge`, `add`, `commit`, `push`, `diff`, `log`, `status`. Never a bare `git`, never a `cd`-then-git across Bash calls. The Flow examples above are already written this way — match them.
+- BEFORE every commit (including each per-PR merge commit), assert your branch: `scripts/assert-worktree-branch.sh "<worktree>" "commander/merge-<pr1>-<pr2>-..." || exit 1`. If it fails, STOP — your Bash cwd may have reset to the main repo. The helper lives in the Commander root; where it isn't reachable, the `git -C` mandate alone still prevents the incident.
+
+Precedent: `scripts/rescue-worker.sh` already takes an explicit `<worktree>` and routes all git through `git -C` (its `git_in()` wrapper + branch-mismatch guard). Spec: `docs/specs/2026-05-20-worker-git-C-worktree.md`.
 
 ## Hard rules
 

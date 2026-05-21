@@ -1007,6 +1007,47 @@
       "last_result": null
     },
     {
+      "id": "worker-git-worktree-discipline",
+      "_description": "Script-only self-test for the worker git -C <worktree> discipline (spec: docs/specs/2026-05-20-worker-git-C-worktree.md, ticket #185). Reproduces the 2026-05-20 cwd-reset cross-branch contamination incident with throwaway git repos: RED — a bare `git commit` from the MAIN repo dir (simulating a worker whose Bash cwd reset to main) lands on a SIBLING worker's branch; RED — scripts/assert-worktree-branch.sh pointed at the parked main repo exits 1 with a branch-mismatch message (the guard would have stopped the bad commit); GREEN — the assertion passes for the real worktree and `git -C <worktree> commit` lands on the worker's own branch while the main repo + sibling HEAD stay untouched. Plus helper unit asserts (usage exit 2, nonexistent path exit 1, --help exit 0, bash -n clean). No network, no gh, no Claude auth. Commander runs this before committing changes to scripts/assert-worktree-branch.sh, the .claude/agents/worker-*.md git-discipline sections, or the fixture itself.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "assert-worktree-branch.sh bash -n clean",
+          "cmd": "bash -n scripts/assert-worktree-branch.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "assert-worktree-branch.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/assert-worktree-branch.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage:"
+        },
+        {
+          "name": "assert-worktree-branch.sh wrong arg count returns usage error (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/assert-worktree-branch.sh only-one-arg 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo USAGE_ERR",
+          "expected_exit": 0,
+          "expected_stdout_contains": "USAGE_ERR"
+        },
+        {
+          "name": "worker-git-worktree fixture red->green roundtrip",
+          "cmd": "self-test/fixtures/worker-git-worktree/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PASS"
+        },
+        {
+          "name": "every git-using worker-*.md mandates git -C",
+          "cmd": "for f in worker-implementation worker-codex-implementation worker-test-discovery worker-review worker-conflict-resolver; do grep -q 'git -C' .claude/agents/$f.md || { echo \"MISSING git -C in $f\"; exit 1; }; done; echo ALL_GIT_C",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ALL_GIT_C"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
       "id": "hydra-operator-skill-valid",
       "_description": "Script-only self-test for the hydra-operator Main Agent skill (spec: docs/specs/2026-04-16-hydra-operator-skill.md, ticket #53). Verifies that skills/hydra-operator/SKILL.md exists with the required YAML frontmatter fields (name, description, mcpServers) that Claude Code's skill loader needs, that the install README is present and contains the operator-facing `cp -r` install command, and that copying the skill directory into a fake user-scoped skills dir produces a readable SKILL.md. Runs locally; no worker spawn, no worktree. Commander runs this before committing changes to skills/hydra-operator/.",
       "kind": "script",

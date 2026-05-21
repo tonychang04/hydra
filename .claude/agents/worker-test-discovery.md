@@ -64,6 +64,16 @@ Commit message: `docs(agent): document working test procedure for this repo`
 
 Then `gh pr create --draft --label commander-review --title "docs(agent): document test procedure"` and append learnings to `$COMMANDER_ROOT/memory/learnings-<repo>.md`.
 
+## Worktree git discipline (mandatory)
+
+The Bash tool's cwd RESETS to the main repo dir between calls, and shell variables do NOT persist between separate Bash calls — a `cd <worktree>` in one call is gone by the next. If you run a bare `git commit` (or `cd "$WT" && git commit` split across calls), you commit your `TESTING.md` / `CLAUDE.md` doc change in the MAIN repo, on whatever branch it currently has checked out — often another in-flight worker's branch. This corrupted two workers on 2026-05-20 (incident in ticket #185). Rules:
+
+- In your FIRST command, capture your worktree's absolute path: `WT="$(git rev-parse --show-toplevel)"`. Type the path explicitly each time — the shell var does not survive to the next Bash call.
+- Use `git -C "<that absolute worktree path>" …` for EVERY git operation (`add`, `commit`, `checkout`, `diff`, `push`). Never a bare `git`, never a `cd`-then-git across Bash calls.
+- BEFORE you commit your doc change, assert you're on your branch: `scripts/assert-worktree-branch.sh "<worktree>" "<repo>/commander/test-discovery" || exit 1`. If it fails, STOP. The helper lives in the Commander root; where it isn't reachable, the `git -C` mandate alone still prevents the incident.
+
+Precedent: `scripts/rescue-worker.sh` already takes an explicit `<worktree>` and routes all git through `git -C`. Spec: `docs/specs/2026-05-20-worker-git-C-worktree.md`.
+
 ## Hard rules
 
 - Documentation only. Do NOT modify source code.
