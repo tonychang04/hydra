@@ -34,8 +34,8 @@ PR #65 was a prior in-progress attempt that closed with conflicts 2026-04-17; sc
 
 **Non-goals (explicit, for future PR scope discipline):**
 
-- **No detection rules shipped in v1.** The subagent system prompt describes the categories it looks for (north-star-claim-vs-code-reality drift), but the concrete grep patterns, jq queries, or line-citation heuristics are not in this PR. Those arrive one-by-one as operators notice specific gap shapes. Ship scaffold first, tune later.
-- **No scheduled invocation.** Operator-invoked `audit` is enough for v1. The retro cron piggyback and the `post-merge-audit` hook mentioned in the ticket are follow-ups.
+- **No detection rules shipped in v1.** The subagent system prompt describes the categories it looks for (north-star-claim-vs-code-reality drift), but the concrete grep patterns, jq queries, or line-citation heuristics are not in this PR. Those arrive one-by-one as operators notice specific gap shapes. Ship scaffold first, tune later. **(LANDED 2026-05-21, ticket #179 — see "Extension" below.** The first four LOW-false-positive rules now live in `scripts/audit-detect.sh`; the "one-by-one" tuning model is preserved — new rules are added as testable `rule_*` functions, not prose.)
+- **No scheduled invocation.** Operator-invoked `audit` is enough for v1. The retro cron piggyback and the `post-merge-audit` hook mentioned in the ticket are follow-ups. **(PARTIALLY LANDED 2026-05-21, ticket #179 — see "Extension" below.** The retro-cron piggyback now exists as step 1.7 of the Monday autopickup tick; the `post-merge-audit` hook remains a follow-up.)
 - **No audit of other repos.** Restrict to Hydra-meta loop for now. Filing issues on `insforge-repo/*` has a different trust profile and can wait.
 - **No CLAUDE.md self-editing.** The auditor NEVER proposes direct edits to framework files (CLAUDE.md, policy.md, budget.json). If a gap requires a framework edit, the auditor files an ISSUE describing the gap — the fix is still authored by a regular `worker-implementation` after operator triage.
 
@@ -116,6 +116,91 @@ The self-test case's `assertions` block documents each of the above. When the ru
 1. Revert this PR's commit — removes the subagent definition, the label is cosmetic-only (no config depends on it).
 2. Optionally `gh label delete commander-auto-filed` to strip it from the repo.
 3. No state-file migration needed. The auditor doesn't write to `state/`.
+
+## Extension 2026-05-21 — detection rules + Monday autopickup hook (#179)
+
+Promotes the auditor from scaffold (no rules, manual-only) toward active. Two
+landings, both deliberately conservative.
+
+### 1. Deterministic rule engine — `scripts/audit-detect.sh`
+
+The original v1 left detection as free-form prose ("look for
+schedule-claims-without-schedulers"). Prose is impossible to unit-test and
+prone to false positives — exactly the failure mode that would erode operator
+trust and get the auditor's output bulk-closed. So the first four
+mechanically-checkable, LOW-false-positive rules move into a read-only bash
+script that emits a JSON array of candidate findings. **Detection (the script)
+is split from filing (the agent's `gh issue create`)** so the agent's write
+surface stays minimal and the rules are testable in isolation.
+
+| rule id | tier | predicate (fires ONLY when unambiguous) |
+|---|---|---|
+| `claude-md-ceiling` | T1 | `CLAUDE.md` at/over the WARN band (>= 95% of the ceiling) per `scripts/check-claude-md-size.sh --quiet`. Reuses the graduated guard from #176 so the auditor and preflight agree; the rule collapses NOTICE into the WARN floor so it never fires in the NOTICE band. |
+| `promotion-stale` | T2 | `state/autopickup.json:last_promotion_run` is >= 7 days old (or null) **AND** `state/memory-citations.json` has >= 1 entry with `promotion_threshold_reached` (or count>=3 across 3+ distinct tickets). Both conditions required — never fires on a healthy/empty citation file or a recently-run pipeline. |
+| `worker-stalled` | T2 | A `state/active.json` worker with `status:running`, `started_at` older than the watchdog threshold (12 min, per `docs/specs/2026-04-16-worker-timeout-watchdog.md`), **AND** no `logs/<ticket>.json`. Mirrors the watchdog's own rescue-candidate predicate so the auditor only surfaces what the watchdog also flags. |
+| `broken-spec-pointer` | T1 | A `docs/specs/*.md` path referenced by `CLAUDE.md` that does not exist on disk. Pointers are the load-bearing index of the thin-CLAUDE.md design — a dangling one is unambiguous docs drift. |
+
+Each finding object: `{rule, title, tier, evidence, marker}`. `marker` is a
+stable substring the agent uses for title-dedup, so a rule that re-discovers a
+gap next week dedups against the issue it already filed (idempotency without
+extra state). Thresholds are flags (`--stale-days`, `--watchdog-min`,
+`--claude-warn-pct`) and `--now` makes the time-window rules deterministic.
+
+**Why a script and not more agent prose:** testability. `scripts/test-audit-detect.sh`
+asserts that each rule FIRES on a positive fixture and STAYS SILENT on matched
+negative fixtures (18 assertions). Adding a rule = add a `rule_*` function + a
+fixture pair; reviewers can see the false-positive boundary in the test. This
+keeps the "one-by-one, tune later" model the original non-goal wanted, just in a
+form that can't silently regress.
+
+**Adding rules later:** anything mechanically checkable belongs in the script.
+Anything requiring judgment (semantic spec-vs-impl drift, "is this an intentional
+non-goal?") stays in the agent's free-form scan (Flow step 3) — the script is the
+floor of certainty, not the ceiling of what the auditor can notice.
+
+### 2. Monday autopickup hook (step 1.7)
+
+The auditor now runs automatically on the Monday autopickup tick, alongside the
+retro (step 1.5) and skill-promotion checks. Phasing matches "Alternatives
+considered C" from the original spec: operator-invoked shipped first; the
+schedule lands now that there are concrete, tested rules with a known
+false-positive floor (the rules return `[]` against today's clean repo).
+
+- **When:** `now_local.weekday == Monday AND now_local.time >= 09:00` — the same
+  gate as the scheduled retro (`docs/specs/2026-04-17-scheduled-retro.md`).
+- **Idempotency:** new field `state/autopickup.json:last_audit_run` (ISO-8601
+  local, optional/additive — schema stays `additionalProperties: true`). Skip if
+  `last_audit_run >= <today>T09:00` (lexicographic compare, same trick as
+  `last_retro_run`). Write `last_audit_run = now_local` on a fire. Two ticks in
+  the same Monday window cannot double-file.
+- **Rails unchanged:** the scheduled run is subject to the same preflight +
+  concurrency gates as any spawn (a failed preflight or full
+  `max_concurrent_workers` DEFERS, never bypasses) and obeys the hard ≤3
+  `commander-auto-filed` cap + open-issue dedup. A Monday run can therefore never
+  flood the tracker — worst case it files 3 issues, all deduped against what's
+  already open.
+
+The one-line CLAUDE.md pointer (adding `2026-04-17-worker-auditor-subagent.md`
+to the "Scheduled autopickup" specs line + a "step 1.7 audit" mention) is
+intentionally NOT in the #179 PR to avoid colliding with concurrent edits to
+the autopickup section; it's a trivial follow-up noted in the PR body. The
+behavior is fully specified here and in `.claude/agents/worker-auditor.md`.
+
+### Files touched (#179)
+
+- `scripts/audit-detect.sh` (new) — the read-only rule engine.
+- `scripts/test-audit-detect.sh` (new) — positive/negative fixture per rule.
+- `.claude/agents/worker-auditor.md` — Flow step 2 ("run the engine first"),
+  the "Deterministic rule engine" + "Scheduled invocation" sections, frontmatter
+  description.
+- `state/schemas/autopickup.schema.json` + `state/autopickup.json.example` —
+  optional additive `last_audit_run` field.
+- `self-test/golden-cases.example.json` — a `kind: script` case wiring
+  `test-audit-detect.sh` into CI.
+- This spec.
+
+NOT touched (per #179 conflict-avoidance): `CLAUDE.md`, `worker-review.md`,
+`worker-implementation.md`, logs/traces.
 
 ## Implementation notes
 
