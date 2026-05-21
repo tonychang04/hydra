@@ -9,6 +9,7 @@ skills:
   - superpowers:brainstorming
   - superpowers:writing-plans
   - superpowers:test-driven-development
+  - superpowers:systematic-debugging
   - superpowers:executing-plans
   - superpowers:requesting-code-review
   - superpowers:verification-before-completion
@@ -54,7 +55,7 @@ If the ticket is genuinely ambiguous, use `superpowers:brainstorming` to refine 
 ## Flow
 
 1. Decide the skill chain based on the ticket. Minimum: (spec if non-trivial) → implement → run repo-documented tests → `/review` → `/codex review` → PR.
-2. **Iron Law for bugs** (borrowed from gstack/investigate): if the ticket is a bug fix, you MUST establish root cause BEFORE proposing a fix. Use `/investigate` or inline reproduction. If you can't explain WHY the bug exists, you cannot ship a fix — return with a `QUESTION:` block containing your best hypothesis and the evidence gap. "Symptom-patched this" is never an acceptable PR description.
+2. **Iron Law for bugs** (borrowed from gstack/investigate): if the ticket is a bug fix, you MUST establish root cause BEFORE proposing a fix. **Bug-class detection** — treat a ticket as bug-class if ANY of: it carries the label `type:bug` or `bug`; its body contains the keywords `error`, `broken`, or `regression` (case-insensitive); or it includes a stack trace. For a bug-class ticket, invoke `superpowers:systematic-debugging` and complete its Phase 1 (root cause) before writing any fix — that skill IS the formalization of this Iron Law (four phases: root cause → pattern analysis → single-hypothesis test → fix the cause, not the symptom; "NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST"). If you can't explain WHY the bug exists after Phase 1, you cannot ship a fix — return with a `QUESTION:` block containing your best hypothesis and the evidence gap. "Symptom-patched this" is never an acceptable PR description. **Non-bug tickets stay unchanged** — feature, refactor, docs, and typo work skip systematic-debugging; don't tax them with debugging ceremony. (If a feature ticket happens to mention "error" — e.g. "add error toasts" — note "no defect to root-cause; proceeding as feature work" and continue.)
 3. If the ticket touches UI paths (`packages/dashboard/**`, `*.tsx`, `*.css`), add `/qa` or `/design-review` after implementing.
 4. Refuse and return "Tier 3" if the ticket needs auth, migration, infra, secrets, or `.github/workflows/` changes.
 5. Commit on a branch named `<repo>/commander/<ticket-num>`. Spec commit goes first, then implementation commits.
@@ -65,6 +66,28 @@ If the ticket is genuinely ambiguous, use `superpowers:brainstorming` to refine 
 8. Append to `$COMMANDER_ROOT/logs/<num>.json`: ticket, PR URL, tier, files changed, tests run + results, wall-clock minutes, any surprises
 9. Append ONLY truly non-obvious repo learnings to `$COMMANDER_ROOT/memory/learnings-<repo>.md`
 10. In your final report, list every memory entry you cited via `MEMORY_CITED: learnings-<repo>.md#"<quote>"` lines — one per cited entry
+
+### Bug-class flow (example)
+
+Concrete shape of the Iron Law in step 2 — bug → investigate → fix:
+
+```
+Ticket #312 (label type:bug): "deploy CLI throws TypeError on empty config"
+→ bug-class detected (label type:bug + "throws" stack-trace shape)
+→ invoke superpowers:systematic-debugging
+  Phase 1 (root cause): reproduce on an empty config → read the stack trace →
+           trace the bad value back to where it originates
+  Phase 2 (pattern):    find the working (non-empty) config path; diff it
+           against the failing path; list every difference
+  Phase 3 (hypothesis): ONE hypothesis — "origin reads config before defaults
+           are applied" — and the smallest change that would test it
+  Phase 4 (fix):        write the failing test FIRST (TDD), then fix at the
+           origin (apply defaults before read), not at the throw site
+→ PR description names the ROOT CAUSE ("config read ran before defaults"),
+  never the symptom ("guarded the throw site so it stops crashing")
+```
+
+A non-bug ticket (e.g. "add a `--json` flag to the status command") skips all of the above — go straight to spec → implement → test.
 
 ## Dynamic test discovery
 
