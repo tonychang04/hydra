@@ -61,13 +61,22 @@ out_override=""
 now_override=""
 no_write=0
 
+# Require a value for a value-taking flag; usage error (exit 2) if absent.
+need_val() {
+  if [[ $# -lt 2 ]]; then
+    echo "build-board: option '$1' requires a value" >&2
+    usage >&2
+    exit 2
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --state-dir)   state_dir_override="${2:-}"; shift 2 ;;
-    --logs-dir)    logs_dir_override="${2:-}"; shift 2 ;;
-    --out)         out_override="${2:-}"; shift 2 ;;
-    --now)         now_override="${2:-}"; shift 2 ;;
+    --state-dir)   need_val "$@"; state_dir_override="$2"; shift 2 ;;
+    --logs-dir)    need_val "$@"; logs_dir_override="$2"; shift 2 ;;
+    --out)         need_val "$@"; out_override="$2"; shift 2 ;;
+    --now)         need_val "$@"; now_override="$2"; shift 2 ;;
     --no-write)    no_write=1; shift ;;
     --state-dir=*) state_dir_override="${1#--state-dir=}"; shift ;;
     --logs-dir=*)  logs_dir_override="${1#--logs-dir=}"; shift ;;
@@ -100,26 +109,52 @@ now_epoch() {
 }
 
 # Convert an ISO-8601 timestamp to epoch seconds. Echoes empty on failure.
-# Handles both GNU date (-d) and BSD date (-j -f). Strips a trailing 'Z' and
-# any fractional seconds, normalizing to "YYYY-MM-DDTHH:MM:SS".
+# Honors the timezone designator: 'Z' or none → UTC; an explicit '+HH:MM' /
+# '-HH:MM' offset is applied so the epoch is correct (a +HH offset means the
+# wall clock is ahead of UTC, so we subtract it to get UTC, and vice versa).
+# Portable across GNU date (-d) and BSD date (-j -f) — the offset is applied
+# arithmetically rather than handed to date, so neither variant has to parse it.
 iso_to_epoch() {
   local ts="$1"
   [[ -n "$ts" ]] || { echo ""; return; }
-  # Normalize: drop fractional seconds and timezone suffix, treat as UTC.
-  local norm="${ts%%.*}"      # strip ".123" fractional
-  norm="${norm%%+*}"          # strip "+00:00" offset (best-effort)
-  norm="${norm%Z}"            # strip trailing Z
+
+  # Drop fractional seconds (".123") if present.
+  local body="${ts%%.*}"
+
+  # Split off the timezone designator. Default offset is 0 (UTC).
+  local offset_sign="" offset_h=0 offset_m=0
+  if [[ "$body" == *Z ]]; then
+    body="${body%Z}"
+  elif [[ "$body" =~ ^(.*)([+-])([0-9]{2}):?([0-9]{2})$ ]]; then
+    body="${BASH_REMATCH[1]}"
+    offset_sign="${BASH_REMATCH[2]}"
+    offset_h="${BASH_REMATCH[3]}"
+    offset_m="${BASH_REMATCH[4]}"
+  fi
+  # body is now "YYYY-MM-DDTHH:MM:SS" with no zone — interpret as UTC.
+
+  local base_epoch=""
   # GNU date
-  if date -u -d "${norm}Z" +%s >/dev/null 2>&1; then
-    date -u -d "${norm}Z" +%s
-    return
-  fi
+  if date -u -d "${body}Z" +%s >/dev/null 2>&1; then
+    base_epoch="$(date -u -d "${body}Z" +%s)"
   # BSD date
-  if date -u -j -f "%Y-%m-%dT%H:%M:%S" "$norm" +%s >/dev/null 2>&1; then
-    date -u -j -f "%Y-%m-%dT%H:%M:%S" "$norm" +%s
+  elif date -u -j -f "%Y-%m-%dT%H:%M:%S" "$body" +%s >/dev/null 2>&1; then
+    base_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "$body" +%s)"
+  else
+    echo ""
     return
   fi
-  echo ""
+
+  # Apply the offset. "+05:30" wall time is 5h30m AHEAD of UTC → subtract to
+  # recover the UTC instant; "-07:00" is behind → add.
+  local offset_secs=$(( (10#$offset_h * 3600) + (10#$offset_m * 60) ))
+  if [[ "$offset_sign" == "+" ]]; then
+    echo $(( base_epoch - offset_secs ))
+  elif [[ "$offset_sign" == "-" ]]; then
+    echo $(( base_epoch + offset_secs ))
+  else
+    echo "$base_epoch"
+  fi
 }
 
 # Humanize a duration in seconds into "Nm" / "NhMm" / "NdMh". Negative or
@@ -210,22 +245,37 @@ render_log_line() {
 # -----------------------------------------------------------------------------
 # gather workers
 # -----------------------------------------------------------------------------
-# Each worker is emitted as a TAB-separated record:
-#   status \t ticket \t started_at \t tier \t subagent_type
-# (TAB chosen because none of those fields contain tabs.)
+# Each worker is emitted as one line of fields joined by the ASCII unit
+# separator (US, 0x1f):
+#   status US ticket US started_at US tier US subagent_type
+# US is chosen over TAB because TAB is IFS-whitespace: `read` would collapse
+# adjacent tabs and drop empty middle fields (e.g. a missing started_at would
+# shift every later column left). US is not IFS-whitespace, so empty fields are
+# preserved positionally. US also never appears in JSON string content in
+# practice. (Codex review finding: empty-field column shift.)
+US=$'\x1f'
 workers_tsv=""
 worker_count=0
+state_unreadable=0
 if [[ -f "$ACTIVE_FILE" ]]; then
-  workers_tsv="$(jq -r '
-    .workers[]? |
-    [ (.status // "unknown"),
-      (.ticket // "?"),
-      (.started_at // ""),
-      (.tier // "?"),
-      (.subagent_type // "?") ] | @tsv
-  ' "$ACTIVE_FILE" 2>/dev/null || true)"
-  if [[ -n "$workers_tsv" ]]; then
-    worker_count="$(printf '%s\n' "$workers_tsv" | grep -c . || true)"
+  # Capture jq's exit status so a present-but-broken state file is reported
+  # rather than silently masquerading as an empty fleet (observability).
+  if workers_tsv="$(jq -r '
+        .workers[]? |
+        [ (.status // "unknown"),
+          (.ticket // "?"),
+          (.started_at // ""),
+          (.tier // "?"),
+          (.subagent_type // "?") ] | join("\u001f")
+      ' "$ACTIVE_FILE" 2>/dev/null)"; then
+    if [[ -n "$workers_tsv" ]]; then
+      worker_count="$(printf '%s\n' "$workers_tsv" | grep -c . || true)"
+    fi
+  else
+    # File exists but jq failed (malformed JSON, unreadable, or jq missing).
+    state_unreadable=1
+    workers_tsv=""
+    echo "build-board: warning: $ACTIVE_FILE present but could not be parsed" >&2
   fi
 fi
 
@@ -249,7 +299,13 @@ render_board() {
   printf '_\n'
 
   if (( worker_count == 0 )); then
-    printf '\n_No active workers._\n'
+    if (( state_unreadable )); then
+      # File present but unparseable — don't masquerade as a healthy empty
+      # fleet. Make the broken state visible on the board itself.
+      printf '\n_⚠️ active.json is present but could not be parsed — worker state unknown._\n'
+    else
+      printf '\n_No active workers._\n'
+    fi
     return
   fi
 
@@ -276,13 +332,13 @@ render_board() {
 
   # Other: any worker whose status is not in known_statuses.
   local other_rows
-  other_rows="$(printf '%s\n' "$workers_tsv" | while IFS=$'\t' read -r status ticket started tier stype; do
+  other_rows="$(printf '%s\n' "$workers_tsv" | while IFS="$US" read -r status ticket started tier stype; do
     [[ -n "$status" ]] || continue
     # Known status → skip; otherwise it falls into Other so nothing is dropped.
     if [[ "$known_statuses" == *" $status "* ]]; then
       continue
     fi
-    printf '%s\t%s\t%s\t%s\t%s\n' "$status" "$ticket" "$started" "$tier" "$stype"
+    printf "%s${US}%s${US}%s${US}%s${US}%s\n" "$status" "$ticket" "$started" "$tier" "$stype"
   done)"
   if [[ -n "$other_rows" ]]; then
     render_section_from_rows "Other" "$other_rows"
@@ -294,18 +350,19 @@ render_board() {
 render_section() {
   local title="$1" matchers="$2"
   local rows
-  rows="$(printf '%s\n' "$workers_tsv" | while IFS=$'\t' read -r status ticket started tier stype; do
+  rows="$(printf '%s\n' "$workers_tsv" | while IFS="$US" read -r status ticket started tier stype; do
     [[ -n "$status" ]] || continue
     local hit=0
     for m in $matchers; do
       [[ "$status" == "$m" ]] && { hit=1; break; }
     done
-    (( hit )) && printf '%s\t%s\t%s\t%s\t%s\n' "$status" "$ticket" "$started" "$tier" "$stype"
+    (( hit )) && printf "%s${US}%s${US}%s${US}%s${US}%s\n" "$status" "$ticket" "$started" "$tier" "$stype"
   done)"
   render_section_from_rows "$title" "$rows"
 }
 
-# Render a section header + table from a TSV blob of rows (may be empty).
+# Render a section header + table from a US-separated blob of rows (may be
+# empty). Each row is "status US ticket US started_at US tier US subagent_type".
 render_section_from_rows() {
   local title="$1" rows="$2"
   local count=0
@@ -319,7 +376,7 @@ render_section_from_rows() {
 
   printf '| Ticket | Age | Tier | Type | Last log |\n'
   printf '|---|---|---|---|---|\n'
-  printf '%s\n' "$rows" | while IFS=$'\t' read -r status ticket started tier stype; do
+  printf '%s\n' "$rows" | while IFS="$US" read -r status ticket started tier stype; do
     [[ -n "$status" ]] || continue
     local link age secs logline
     link="$(render_ticket "$ticket")"

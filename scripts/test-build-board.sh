@@ -308,6 +308,87 @@ ec=$?
 set -e
 if [[ "$ec" -eq 2 ]]; then ok "exit 2 on unknown flag"; else bad "expected exit 2, got $ec"; fi
 
+# --- Test 11: missing started_at must NOT shift columns -------------------
+# (codex review: TSV empty-field collapse). A worker with no started_at should
+# still render Tier and Type correctly, with Age "?".
+say "Test 11: missing started_at keeps Tier/Type aligned, Age '?'"
+root11="$tmpdir/t11"
+mk_dirs "$root11"
+cat > "$root11/state/active.json" <<'EOF'
+{"workers":[{"id":"w1","ticket":"tonychang04/hydra#7","repo":"tonychang04/hydra","tier":"T2","subagent_type":"worker-implementation","status":"running"}]}
+EOF
+ec=$(run_board "$root11" "$tmpdir/t11.out" "$tmpdir/t11.err")
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+# The row must contain "| ? | T2 | worker-implementation |" — tier and type in
+# their proper cells, age "?". A column shift would put T2 in the Age cell.
+row="$(grep '#7' "$tmpdir/t11.out")"
+if printf '%s' "$row" | grep -qF '| ? | T2 | worker-implementation |'; then
+  ok "columns aligned despite missing started_at"
+else
+  bad "columns shifted; row was:"
+  printf '    %s\n' "$row"
+fi
+
+# --- Test 12: timezone offset is honored in age math ---------------------
+# (codex review: ISO-8601 offset mishandling). 05:00 at -07:00 == 12:00 UTC.
+say "Test 12: started_at with -07:00 offset → age 0m at now=12:00Z"
+root12="$tmpdir/t12"
+mk_dirs "$root12"
+cat > "$root12/state/active.json" <<'EOF'
+{"workers":[{"id":"w1","ticket":"tonychang04/hydra#8","repo":"tonychang04/hydra","tier":"T2","started_at":"2026-05-21T05:00:00-07:00","subagent_type":"worker-implementation","status":"running"}]}
+EOF
+ec=$(run_board "$root12" "$tmpdir/t12.out" "$tmpdir/t12.err")
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+row="$(grep '#8' "$tmpdir/t12.out")"
+if printf '%s' "$row" | grep -qF '| 0m |'; then
+  ok "offset -07:00 resolves to UTC (age 0m)"
+else
+  bad "offset not honored; row was:"
+  printf '    %s\n' "$row"
+fi
+
+# --- Test 13: present-but-unparseable active.json is surfaced -------------
+# (codex review: malformed JSON must not masquerade as a healthy empty fleet).
+say "Test 13: malformed active.json → visible notice + stderr warning"
+root13="$tmpdir/t13"
+mk_dirs "$root13"
+printf 'not valid json {\n' > "$root13/state/active.json"
+ec=$(run_board "$root13" "$tmpdir/t13.out" "$tmpdir/t13.err")
+if [[ "$ec" -eq 0 ]]; then ok "exit 0 (degrade, don't crash)"; else bad "expected exit 0, got $ec"; fi
+if grep -qF 'could not be parsed' "$tmpdir/t13.out"; then
+  ok "board shows an unreadable-state notice"
+else
+  bad "expected unreadable-state notice in board; got:"
+  sed 's/^/    /' "$tmpdir/t13.out"
+fi
+if grep -qiF 'warning' "$tmpdir/t13.err"; then
+  ok "stderr carries a warning"
+else
+  bad "expected a stderr warning; got:"
+  sed 's/^/    /' "$tmpdir/t13.err"
+fi
+# Crucially it must NOT claim "No active workers" (that's the healthy-empty path).
+if grep -qF '_No active workers._' "$tmpdir/t13.out"; then
+  bad "must not show healthy-empty message for a broken file"
+else
+  ok "does not masquerade as a healthy empty fleet"
+fi
+
+# --- Test 14: value-taking flag with no value → exit 2 -------------------
+# (codex review: shift 2 without arg check exited 1, not the documented 2).
+say "Test 14: --state-dir / --now with no value → exit 2"
+for flag in --state-dir --logs-dir --out --now; do
+  set +e
+  NO_COLOR=1 "$BOARD" "$flag" > /dev/null 2> "$tmpdir/t14.err"
+  ec=$?
+  set -e
+  if [[ "$ec" -eq 2 ]]; then
+    ok "$flag with no value → exit 2"
+  else
+    bad "$flag with no value: expected exit 2, got $ec"
+  fi
+done
+
 # --- Summary --------------------------------------------------------------
 echo ""
 echo "${C_BOLD}Total: $((passed + failed))  passed: ${C_GREEN}${passed}${C_RESET}  failed: ${C_RED}${failed}${C_RESET}"

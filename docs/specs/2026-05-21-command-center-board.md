@@ -39,6 +39,16 @@ This directly attacks Hydra's weakest pillar: **observability (P1)**.
 
 ## Non-goals
 
+- **Reconstructing terminal work from `logs/` alone.** The board groups workers
+  that are *currently present in `state/active.json`*. The `active.json` status
+  enum includes `complete`, `failed`, and `rescued`, so terminal entries do show
+  up in those sections for as long as Commander leaves them in `active.json`.
+  Once Commander prunes a finished worker out of `active.json`, it drops off the
+  board. Surfacing a "recently shipped" section by scanning `logs/<N>.json` for
+  workers no longer in `active.json` is a reasonable follow-up (it would make the
+  board a fuller wake-up view) but is **out of scope** here — it changes the
+  data model from "in-flight fleet snapshot" to "fleet + recent history" and
+  needs its own retention/windowing decision. Tracked as a follow-up in the PR.
 - No live/streaming TUI, no auto-refresh loop, no colors-in-file. Plain Markdown
   only. (A watcher can re-run the script; `/loop` already exists for that.)
 - No edits to `CLAUDE.md` — PR #182 is unmerged and edits the commands table.
@@ -83,7 +93,7 @@ dropped (forward-compat if the schema adds a state before the board learns it).
 | Column     | Source                                                              |
 |------------|--------------------------------------------------------------------|
 | Ticket     | `worker.ticket`, rendered as a GitHub link when it parses as `owner/repo#N`; otherwise shown verbatim (e.g. `LIN-123`). |
-| Age        | now − `worker.started_at`, humanized (`5m`, `2h`, `1d3h`). `?` if `started_at` is missing/unparseable. |
+| Age        | now − `worker.started_at`, humanized (`5m`, `1h30m`, `1d3h`). `?` if `started_at` is missing/unparseable. ISO-8601 timezone offsets (`+05:30` / `-07:00`) are honored: the offset is applied arithmetically so the epoch is correct on both GNU and BSD `date`. |
 | Tier       | `worker.tier` (`T1`/`T2`/`T3`).                                     |
 | Type       | `worker.subagent_type`.                                             |
 | Last log   | One-line summary derived from `logs/<N>.json`: `result` + a short PR ref (`#502`) + wall-clock if present. Empty cell when no log exists. |
@@ -187,8 +197,17 @@ bash, colored pass/fail counter, `mktemp -d` fixture, no external harness):
 9. **Unknown status** — a worker with `status=foobar` lands in an **Other**
    section (nothing dropped).
 10. **Usage error** — unknown flag → exit 2.
+11. **Missing `started_at`** — the row still renders Tier/Type in their proper
+    cells with Age `?` (a US field separator keeps empty fields positional;
+    a TAB separator would collapse and shift columns).
+12. **Timezone offset** — `started_at` with a `-07:00` offset resolves to the
+    correct UTC instant (age math is offset-aware).
+13. **Present-but-unparseable `active.json`** — emits a visible board notice
+    plus a stderr warning, and does NOT masquerade as a healthy empty fleet.
+14. **Value-taking flag with no value** — `--state-dir` / `--logs-dir` /
+    `--out` / `--now` with no following value → exit 2 (documented usage error).
 
-Run: `scripts/test-build-board.sh` — expect all green, exit 0.
+Run: `scripts/test-build-board.sh` — 40 assertions, expect all green, exit 0.
 
 ## Risks / rollback
 
@@ -199,6 +218,10 @@ Run: `scripts/test-build-board.sh` — expect all green, exit 0.
 - **Risk:** `state/board.md` accidentally committed. *Mitigation:* added to
   `.gitignore` alongside the other `state/*` runtime artifacts; the test never
   writes into the repo tree (uses `mktemp`).
+- **Risk:** a broken/locked `active.json` reads as "no workers" and the operator
+  trusts a board that's actually blind. *Mitigation:* a present-but-unparseable
+  file is distinguished from an absent one — the board shows an explicit
+  unreadable-state notice and a stderr warning instead of `_No active workers._`.
 - **Rollback:** delete `scripts/build-board.sh`, `scripts/test-build-board.sh`,
   this spec, and the `.gitignore` line. Nothing else depends on the board; it is
   purely additive and read-only.
