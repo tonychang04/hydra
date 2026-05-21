@@ -25,12 +25,22 @@
 #   --only <key>             only consider one citation key (for tests)
 #   --author <name>          default: "hydra worker"
 #   --now <YYYY-MM-DD>       override today's date (for deterministic tests)
+#   --check-due              once/day gate for the autopickup tick: compare
+#                            state/autopickup.json:last_promotion_run to today.
+#                            Exit 0 = due (run promotion); exit 10 = already
+#                            ran today (skip). No side effects.
+#   --greeting-count         print the number of open draft commander-skill-
+#                            promotion PRs across enabled repos (for the
+#                            session-greeting one-liner). Always exits 0;
+#                            best-effort (prints 0 on any error).
 #   -h, --help               show this help
 #
 # Exit codes:
-#   0  success (PRs may have been opened; empty-list days are success too)
+#   0  success (PRs may have been opened; empty-list days are success too).
+#      For --check-due: "due" (promotion should run today).
 #   1  unexpected error (git/gh failure, malformed JSON)
 #   2  usage error
+#   10 (--check-due only) not due — promotion already ran today
 
 set -euo pipefail
 
@@ -43,7 +53,7 @@ CITATIONS_START="<!-- hydra:citations-start -->"
 CITATIONS_END="<!-- hydra:citations-end -->"
 
 usage() {
-  sed -n '5,30p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '5,43p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 state_dir=""
@@ -53,6 +63,8 @@ dry_run=0
 only_key=""
 author="hydra worker"
 now_override=""
+check_due=0
+greeting_count=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,6 +88,10 @@ while [[ $# -gt 0 ]]; do
     --now)
       [[ $# -ge 2 ]] || { echo "promote-citations: --now needs a value" >&2; exit 2; }
       now_override="$2"; shift 2 ;;
+    --check-due)
+      check_due=1; shift ;;
+    --greeting-count)
+      greeting_count=1; shift ;;
     -h|--help)
       usage; exit 0 ;;
     --)
@@ -97,6 +113,76 @@ if [[ -z "$repos_file" ]]; then
   repos_file="$state_dir/repos.json"
 fi
 
+if [[ "$check_due" -eq 1 && "$greeting_count" -eq 1 ]]; then
+  echo "promote-citations: --check-due and --greeting-count are mutually exclusive" >&2
+  exit 2
+fi
+
+# Today (ISO). Override for tests. Resolved early so the gate modes can use it.
+if [[ -n "$now_override" ]]; then
+  today="$now_override"
+else
+  today="$(date -u +%Y-%m-%d)"
+fi
+
+# --- Mode: --check-due -----------------------------------------------------
+# Once/day gate for the autopickup tick. Compares
+# state/autopickup.json:last_promotion_run to today. The tick runs this; on
+# exit 0 it runs the real promotion and stamps last_promotion_run=today. A
+# missing autopickup.json (or missing/null last_promotion_run) means promotion
+# has never run today → due. No mutation here — stamping is the tick's job.
+if [[ "$check_due" -eq 1 ]]; then
+  autopickup_file="$state_dir/autopickup.json"
+  if [[ ! -f "$autopickup_file" ]]; then
+    # Fresh install — never promoted. Due.
+    exit 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "promote-citations: jq is required for --check-due" >&2
+    exit 2
+  fi
+  last_run="$(jq -r '.last_promotion_run // ""' "$autopickup_file" 2>/dev/null || true)"
+  if [[ "$last_run" == "$today" ]]; then
+    exit 10   # already promoted today — not due
+  fi
+  exit 0      # null / missing / stale → due
+fi
+
+# --- Mode: --greeting-count ------------------------------------------------
+# Print the number of open draft commander-skill-promotion PRs across enabled
+# repos, for the session-greeting one-liner. Best-effort: always exits 0 and
+# prints an integer (0 on any error). Tests inject HYDRA_PROMOTION_COUNT_CMD
+# to avoid network: it is invoked once per enabled repo with the repo's
+# <owner>/<name> as $1 and is expected to print that repo's count.
+if [[ "$greeting_count" -eq 1 ]]; then
+  total=0
+  if [[ -f "$repos_file" ]] && command -v jq >/dev/null 2>&1; then
+    while IFS= read -r nwo; do
+      [[ -z "$nwo" ]] && continue
+      n=0
+      if [[ -n "${HYDRA_PROMOTION_COUNT_CMD:-}" ]]; then
+        # Test/override hook: run the command with the repo nwo available as
+        # $1. The command's stdout is taken as that repo's count.
+        n="$(bash -c "$HYDRA_PROMOTION_COUNT_CMD" _ "$nwo" 2>/dev/null || echo 0)"
+      else
+        n="$(gh pr list --repo "$nwo" --state open --draft \
+              --label "$SKILL_LABEL" --json number \
+              --jq 'length' 2>/dev/null || echo 0)"
+      fi
+      # Coerce to a non-negative integer; ignore garbage.
+      [[ "$n" =~ ^[0-9]+$ ]] || n=0
+      total=$((total + n))
+    done < <(jq -r '
+      .repos // []
+      | map(select(.enabled != false))
+      | .[]
+      | "\(.owner)/\(.name)"
+    ' "$repos_file" 2>/dev/null)
+  fi
+  printf '%d\n' "$total"
+  exit 0
+fi
+
 citations_file="$state_dir/memory-citations.json"
 
 # Missing citations file is not an error — just means nothing to promote.
@@ -112,24 +198,16 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-# Today (ISO). Override for tests.
-if [[ -n "$now_override" ]]; then
-  today="$now_override"
-else
-  today="$(date -u +%Y-%m-%d)"
-fi
+# ($today is resolved above, before the --check-due / --greeting-count modes.)
 
 # --- Selection -------------------------------------------------------------
 # Emit TSV of eligible keys: <key>\t<count>\t<tickets_csv>\t<last_cited>
 # where tickets_csv is comma-separated distinct tickets.
 
 select_eligible() {
-  local only_filter='.'
-  if [[ -n "$only_key" ]]; then
-    # Quote safely for jq via --arg.
-    only_filter='select(.key == $only)'
-  fi
-
+  # The optional --only filter is applied inline in the jq pipeline below via
+  # --arg only (the "if ($only | length) > 0" branch); there is no separate
+  # bash-side filter string.
   jq -r --arg only "$only_key" '
     .citations // {}
     | to_entries
@@ -230,11 +308,13 @@ resolve_target_repo() {
 extract_context() {
   local memfile="$1" quote="$2"
   if [[ ! -f "$memfile" ]]; then
+    echo "promote-citations: warning: memory file not found, no context for quote: $memfile" >&2
     return 0
   fi
   local lineno
   lineno="$(grep -nF -- "$quote" "$memfile" 2>/dev/null | head -n1 | cut -d: -f1 || true)"
   if [[ -z "$lineno" ]]; then
+    echo "promote-citations: warning: quote not found in $memfile — skill will have empty context: \"$quote\"" >&2
     return 0
   fi
   local start=$((lineno - 2))
@@ -245,6 +325,12 @@ extract_context() {
 
 # Build the SKILL.md body. Uses the shape documented in .claude/skills/README.md.
 # Inputs: name, description, quote, source_file, context_block, citations_block.
+#
+# HARDENING (#166): the template is a QUOTED heredoc (<<'TEMPLATE') so none of
+# the worker-controlled inputs ($quote, $description, $context, $citations) are
+# subject to shell expansion or command substitution. Values are spliced in
+# afterwards via bash parameter-expansion replacement (${t//@@X@@/$v}), which
+# treats the replacement as literal data — no eval, no second pass.
 build_skill_body() {
   local name="$1"
   local description="$2"
@@ -253,24 +339,37 @@ build_skill_body() {
   local context="$5"
   local citations="$6"
 
-  cat <<EOF
+  # Build the Process section (literal data, never expanded).
+  local process_block
+  if [[ -n "$context" ]]; then
+    process_block="$(printf 'Context excerpt from the source memory entry:\n\n```\n%s\n```' "$context")"
+  else
+    process_block='_No extra context was found in the source memory file — edit this section to fill in the procedure._'
+  fi
+
+  # Static template with @@PLACEHOLDERS@@. Quoted heredoc → zero expansion of
+  # the literal backticks and the placeholder names themselves. We read it
+  # straight into the variable via `read -d ''` rather than `$(cat <<'…')` —
+  # nesting a backtick-containing heredoc inside $( ) trips the bash parser.
+  local template
+  IFS= read -r -d '' template <<'TEMPLATE' || true
 ---
-name: $name
+name: @@NAME@@
 description: |
-  $description
+  @@DESCRIPTION@@
 ---
 
-# $name
+# @@NAME@@
 
 ## Overview
 
-Promoted from \`memory/$source_file\` — the operator cited this pattern 3+
+Promoted from `memory/@@SOURCE_FILE@@` — the operator cited this pattern 3+
 times across 3+ distinct tickets, so it graduates here for every worker
-to pick up automatically (Step 0 reads \`.claude/skills/*\`).
+to pick up automatically (Step 0 reads `.claude/skills/*`).
 
 The load-bearing quote from memory is:
 
-> $quote
+> @@QUOTE@@
 
 ## When to Use
 
@@ -281,22 +380,31 @@ is the one that Claude's skill matcher keys on.)
 
 ## Process
 
-$(if [[ -n "$context" ]]; then
-    printf 'Context excerpt from the source memory entry:\n\n```\n%s\n```\n' "$context"
-  else
-    printf '_No extra context was found in the source memory file — edit this section to fill in the procedure._\n'
-  fi)
+@@PROCESS@@
 
 ## Citations
 
-$CITATIONS_START
-$citations
-$CITATIONS_END
+@@CITATIONS_START@@
+@@CITATIONS@@
+@@CITATIONS_END@@
 
 ## Verification
 
 How to confirm a worker applied this skill correctly. (Edit post-merge.)
-EOF
+TEMPLATE
+
+  # Literal substitution. ${var//search/replace} does NOT re-expand the
+  # replacement, so command substitution inside any input is inert.
+  template="${template//@@NAME@@/$name}"
+  template="${template//@@DESCRIPTION@@/$description}"
+  template="${template//@@SOURCE_FILE@@/$source_file}"
+  template="${template//@@QUOTE@@/$quote}"
+  template="${template//@@PROCESS@@/$process_block}"
+  template="${template//@@CITATIONS_START@@/$CITATIONS_START}"
+  template="${template//@@CITATIONS@@/$citations}"
+  template="${template//@@CITATIONS_END@@/$CITATIONS_END}"
+
+  printf '%s\n' "$template"
 }
 
 # Render the citations block body: bullet list of tickets + last-promoted date.
@@ -349,18 +457,18 @@ splice_citations_block() {
 }
 
 # Ensure the skill-promotion label exists on the repo. Idempotent.
+# #166: dropped the redundant `gh label list` pre-check — `gh label create`
+# already 422s harmlessly when the label exists, and the call is `|| true`, so
+# the pre-check was a wasted API round-trip with no behavioral effect.
 ensure_label() {
   local repo_nwo="$1"
   if [[ "$dry_run" -eq 1 ]]; then
     return 0
   fi
-  if ! gh label list --repo "$repo_nwo" --json name \
-      | jq -e --arg n "$SKILL_LABEL" '.[] | select(.name == $n)' >/dev/null 2>&1; then
-    gh label create "$SKILL_LABEL" \
-      --repo "$repo_nwo" \
-      --color "$SKILL_LABEL_COLOR" \
-      --description "$SKILL_LABEL_DESC" 2>/dev/null || true
-  fi
+  gh label create "$SKILL_LABEL" \
+    --repo "$repo_nwo" \
+    --color "$SKILL_LABEL_COLOR" \
+    --description "$SKILL_LABEL_DESC" 2>/dev/null || true
 }
 
 # Apply a label to a PR via the REST API (per CLAUDE.md § "Applying labels").
@@ -402,12 +510,16 @@ process_entry() {
   local local_path repo_nwo
   IFS=$'\t' read -r local_path repo_nwo <<<"$resolve_out"
 
-  # Slug = file-prefix + slugified-quote; caps each half.
+  # Slug = file-prefix + slugified-quote. Per the spec ("Skill naming"), the
+  # QUOTE slug is capped at 60 by slugify(); the file prefix is additive and
+  # disambiguates same-quote entries from different memory files. We do NOT
+  # re-truncate the combined string — the prior code applied a second,
+  # undocumented 80-char cap (#166 reconciliation), which could chop a slug
+  # mid-word and silently collide two distinct entries.
   local file_prefix_slug quote_slug combined_slug
   file_prefix_slug="$(file_prefix "$file")"
   quote_slug="$(slugify "$quote")"
   combined_slug="${file_prefix_slug}-${quote_slug}"
-  combined_slug="${combined_slug:0:80}"
 
   local skill_dir=".claude/skills/$combined_slug"
   local skill_path="$skill_dir/SKILL.md"
@@ -487,18 +599,18 @@ process_entry() {
 
   # Commit + push + PR.
   git -C "$worktree_dir" add "$skill_path" >/dev/null
+  # HARDENING (#166): build the commit message with printf passing the
+  # worker-controlled values ($quote, $combined_slug, $file, $tickets_csv) as
+  # literal arguments — no heredoc expansion, so command substitution inside a
+  # citation quote cannot execute.
   local msg
-  msg="$(cat <<EOM
-chore(skills): promote $combined_slug (cited $count times)
-
-Source: memory/$file
-Quote: "$quote"
-Tickets: $tickets_csv
-
-Spec: docs/specs/2026-04-17-skill-promotion-automation.md
-Closes: none (automated skill promotion; operator reviews before merge)
-EOM
-  )"
+  msg="$(printf '%s\n\n%s\n%s\n%s\n\n%s\n%s\n' \
+    "chore(skills): promote $combined_slug (cited $count times)" \
+    "Source: memory/$file" \
+    "Quote: \"$quote\"" \
+    "Tickets: $tickets_csv" \
+    "Spec: docs/specs/2026-04-17-skill-promotion-automation.md" \
+    "Closes: none (automated skill promotion; operator reviews before merge)")"
   git -C "$worktree_dir" commit -m "$msg" --author "$author <hydra@localhost>" >/dev/null 2>&1 || {
     echo "promote-citations: nothing to commit in $worktree_dir (skipping PR)" >&2
     return 0

@@ -344,11 +344,20 @@ command to call instead of inlining the `gh pr list` loop:
 ### 3. Heredoc hardening (AC #3 from #166 ticket)
 
 `build_skill_body` and the commit-message builder used unquoted heredocs
-(`cat <<EOF` / `cat <<EOM`), so worker-controlled strings (`$quote`,
-`$description`, `$context`) were interpolated by the shell — a `$(...)` inside
-a citation quote would execute. Trust-bounded today (citations come from
-Commander-parsed worker reports, not arbitrary input), but the autopickup hook
-makes this fire unattended, so we close the surface now:
+(`cat <<EOF` / `cat <<EOM`) that interpolated worker-controlled strings
+(`$quote`, `$description`, `$context`).
+
+**Threat-model note (verified):** bash heredoc variable expansion is
+single-pass — a `$(...)` or backtick inside a variable's *value* is inserted
+verbatim, **not** re-executed. So the unquoted heredocs were not actually
+exploitable through the data values; the ticket's "command substitution on
+worker-controlled strings" framing overstates the live risk. The change is
+nonetheless worth making as defense-in-depth and correctness: the unquoted
+heredocs required escaping every literal `` ` `` and `$` in the template body
+(error-prone), and an unquoted heredoc *is* a latent footgun if anyone later
+moves a literal `$(...)` into the body or changes the trust boundary. The
+autopickup hook makes this code fire unattended, so we lock the invariant
+("inputs are literal data, never code") down now:
 
 - `build_skill_body` switches to a quoted heredoc template
   (`cat <<'TEMPLATE'`) containing literal `@@NAME@@` / `@@DESCRIPTION@@` /

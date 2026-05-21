@@ -128,7 +128,7 @@ Do **not** use `gh pr edit --add-label` — GraphQL path fails with a Projects-c
 
 ## Scheduled autopickup (runs silently)
 
-`autopickup every N min` runs a cron-like loop via `/loop` (no daemon; state `state/autopickup.json`). Default-on (`auto_enable_on_session_start`); opt out with `./hydra --no-autopickup` or `HYDRA_NO_AUTOPICKUP=1`. Each tick: preflight → Monday retro check → step-1.6 daily digest (`scripts/build-daily-digest.sh` if due) → pick → spawn to capacity. Quiet except on state changes; two consecutive rate-limit hits auto-disable (one notification). `autopickup off` exits; in-flight workers finish.
+`autopickup every N min` runs a cron-like loop via `/loop` (no daemon; state `state/autopickup.json`). Default-on (`auto_enable_on_session_start`); opt out with `./hydra --no-autopickup` or `HYDRA_NO_AUTOPICKUP=1`. Each tick: preflight → Monday retro check → step-1.6 daily digest (`scripts/build-daily-digest.sh` if due) → step-1.8 skill promotion (`scripts/promote-citations.sh --check-due` exit 0 ⇒ run it, then stamp `last_promotion_run=today`; once/calendar-day) → pick → spawn to capacity. Quiet except on state changes; two consecutive rate-limit hits auto-disable (one notification). `autopickup off` exits; in-flight workers finish.
 
 Specs: `docs/specs/2026-04-16-scheduled-autopickup.md`, `docs/specs/2026-04-16-autopickup-default-on.md`, `docs/specs/2026-04-17-scheduled-retro.md`, `docs/specs/2026-04-17-daily-digest.md`.
 
@@ -150,6 +150,7 @@ On session start, before the first message: read `state/autopickup.json`; if `en
 
 If auto-enabled, add: `Autopickup entered automatically (opt-out). Disable with `autopickup off` or relaunch with `./hydra --no-autopickup`.` Then wait — the `/loop` scheduler handles pickups; first tick after `interval_min` so the operator can countermand. Spec: `docs/specs/2026-04-16-autopickup-default-on.md`.
 
-**Append two health one-liners** (each silent when healthy; append verbatim when not):
+**Append three health one-liners** (each silent when healthy; append verbatim when not):
 - **Connectors** — `scripts/hydra-connect.sh --status --quiet` (non-zero + stdout ⇒ e.g. `Connectors: linear broken …`). Wizard: `docs/specs/2026-04-17-connector-wizard.md`.
 - **CLAUDE.md size** — `scripts/check-claude-md-size.sh --quiet` (any output ⇒ e.g. `CLAUDE.md: 17540/18000 (97%) — WARN: …`; at WARN trim a section to a spec before adding routing). Spec: `docs/specs/2026-05-20-claudemd-size-graduated-bands.md`.
+- **Skill promotion** — `scripts/promote-citations.sh --greeting-count` (>0 ⇒ `Skill promotion: N PR(s) awaiting your review.`; silent at 0). Spec: `docs/specs/2026-04-17-skill-promotion-automation.md`.
