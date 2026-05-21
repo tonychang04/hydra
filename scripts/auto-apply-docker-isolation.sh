@@ -156,10 +156,23 @@ project_name="hydra-${sanitized_id}"
 # while inside a `ports:` list, each list entry.
 # ---------------------------------------------------------------------------
 
-# Parallel arrays of allocated results.
-svc_names=()      # service name per allocated port
-remap_lines=()    # "<allocated>:<container>" per allocated port
-hydra_exports=()  # "HYDRA_<SVC>_PORT=<allocated>" per allocated port
+# Per-port-entry records, in first-seen order. Each published port entry of a
+# service (whether we remap it or pass it through verbatim) gets one slot in
+# these parallel arrays so the `!override` block can reproduce the FULL port
+# list — replacing it with only the remapped subset would silently drop the
+# entries we couldn't remap (long-form, container-only, alloc-failed).
+entry_services=()  # service name for this port entry
+entry_lines=()     # the yaml value to emit (remapped "<port>:<c>" or verbatim)
+entry_remapped=()  # 1 if this entry was remapped (host port reallocated), else 0
+
+# Export lines (HYDRA_<SVC>_PORT=<allocated>) for remapped entries only.
+hydra_exports=()
+
+# Worker host ports already handed out THIS run, so two services that resolve to
+# the same desired port don't both publish it (the allocator is stateless and
+# probes only currently-bound sockets, so it would otherwise return the same
+# free port twice → the very collision we're preventing).
+claimed_ports=()
 
 current_service=""
 in_services=0
@@ -180,31 +193,71 @@ env_name_for() {
   printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_'
 }
 
+# Record one port entry. $1 service, $2 yaml-value to emit, $3 remapped-flag (0/1).
+record_entry() {
+  entry_services+=("$1")
+  entry_lines+=("$2")
+  entry_remapped+=("$3")
+}
+
+# True if the given worker host port was already handed out this run.
+port_already_claimed() {
+  local p="$1" c
+  for c in "${claimed_ports[@]:-}"; do
+    [[ "$c" == "$p" ]] && return 0
+  done
+  return 1
+}
+
 allocate_for() {
-  # $1 service, $2 host-port-token, $3 container-port
-  local service="$1" host_tok="$2" container="$3"
+  # $1 service, $2 host-port-token, $3 container-port, $4 host-ip-prefix ("" if none).
+  # On success records a remapped entry "<ip:>?<allocated>:<container>" and the
+  # HYDRA_<SVC>_PORT export. On failure records the ORIGINAL entry verbatim
+  # (passthrough) so the !override block doesn't drop it, and warns.
+  local service="$1" host_tok="$2" container="$3" ip_prefix="${4:-}"
+  local original_value="${ip_prefix}${host_tok}:${container}"
+
   # Extract a numeric desired host port from the token if possible.
   # Tokens may be "5432", "${PG_PORT:-5432}", etc. Pull the trailing digits.
   local host_num
   host_num="$(printf '%s' "$host_tok" | grep -oE '[0-9]+' | tail -1 || true)"
   [[ -n "$host_num" ]] || host_num="$container"
-  local desired=$(( base_port + worker_slot * ports_per_slot + host_num % ports_per_slot ))
-  local allocated rc
-  set +e
-  allocated="$("$allocator" --worker-slot "$worker_slot" --service "$service" \
-    --desired-port "$desired" --base-port "$base_port" --ports-per-slot "$ports_per_slot" 2>/dev/null)"
-  rc=$?
-  set -e
+
+  # Try desired offsets in order, skipping any port already claimed this run so
+  # two services that resolve to the same offset get distinct worker ports.
+  local base_offset=$(( host_num % ports_per_slot ))
+  local allocated="" rc=1 attempt desired
+  for (( attempt = 0; attempt < ports_per_slot; attempt++ )); do
+    desired=$(( base_port + worker_slot * ports_per_slot + (base_offset + attempt) % ports_per_slot ))
+    if port_already_claimed "$desired"; then
+      continue
+    fi
+    set +e
+    allocated="$("$allocator" --worker-slot "$worker_slot" --service "$service" \
+      --desired-port "$desired" --base-port "$base_port" --ports-per-slot "$ports_per_slot" 2>/dev/null)"
+    rc=$?
+    set -e
+    if [[ "$rc" -eq 0 && -n "$allocated" ]] && ! port_already_claimed "$allocated"; then
+      break
+    fi
+    # Allocator returned an already-claimed port (it can't know about ports we've
+    # only written to a not-yet-started override) — keep looking.
+    allocated=""
+    rc=1
+  done
+
   if [[ "$rc" -ne 0 || -z "$allocated" ]]; then
-    warn "could not allocate a host port for service '$service' (container $container) — leaving it unmapped"
+    warn "could not allocate a host port for service '$service' (container $container) — passing the original binding through unmapped"
+    record_entry "$service" "$original_value" 0
     return 0
   fi
-  svc_names+=("$service")
-  remap_lines+=("${allocated}:${container}")
+
+  claimed_ports+=("$allocated")
+  record_entry "$service" "${ip_prefix}${allocated}:${container}" 1
   hydra_exports+=("HYDRA_$(env_name_for "$service")_PORT=${allocated}")
 }
 
-# Parse a single ports list entry, dispatch to allocate_for.
+# Parse a single ports list entry, dispatch to allocate_for / record passthrough.
 parse_ports_entry() {
   # $1 = the content after the leading "- " of a list item.
   local entry="$1"
@@ -223,23 +276,27 @@ parse_ports_entry() {
 
   case "$ncolon" in
     0)
-      # Single value, e.g. "5432" — container-only, host port auto-assigned by
-      # Docker → no fixed host binding to collide → nothing to remap.
-      return 0
+      # Single value, e.g. "9090" — container-only, host port auto-assigned by
+      # Docker → no fixed host binding to collide → nothing to remap. Record it
+      # as a passthrough so a sibling-remapped service keeps it in !override.
+      record_entry "$current_service" "$entry" 0
       ;;
     1)
       # host:container
       local host="${entry%%:*}" container="${entry##*:}"
-      allocate_for "$current_service" "$host" "$container"
+      allocate_for "$current_service" "$host" "$container" ""
       ;;
     2)
-      # host-ip:host:container — drop the ip, keep host:container.
+      # host-ip:host:container — preserve the IP prefix so a loopback-only
+      # binding stays loopback-only after remapping.
+      local ip="${entry%%:*}"
       local rest="${entry#*:}"           # host:container
       local host="${rest%%:*}" container="${rest##*:}"
-      allocate_for "$current_service" "$host" "$container"
+      allocate_for "$current_service" "$host" "$container" "${ip}:"
       ;;
     *)
-      warn "unrecognized ports entry '$entry' in service '$current_service' — skipping"
+      warn "unrecognized ports entry '$entry' in service '$current_service' — passing it through unmapped"
+      record_entry "$current_service" "$entry" 0
       ;;
   esac
 }
@@ -349,8 +406,16 @@ done < "$compose_path"
 
 # ---------------------------------------------------------------------------
 # Decide what to write.
+#
+# Only services that have at least one *remapped* port need an override block:
+# a service with only passthrough / container-only ports keeps its base bindings
+# unchanged, so writing a `!override` for it would be a no-op at best (and risks
+# dropping entries at worst). Count the remapped entries to gate the no-op path.
 # ---------------------------------------------------------------------------
-n_alloc=${#remap_lines[@]}
+n_alloc=0
+for r in "${entry_remapped[@]:-}"; do
+  [[ "$r" == "1" ]] && n_alloc=$(( n_alloc + 1 ))
+done
 
 if [[ "$n_alloc" -eq 0 ]]; then
   if [[ "$saw_longform" -eq 1 ]]; then
@@ -369,9 +434,11 @@ if [[ "$saw_longform" -eq 1 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Write the override. Group remap lines by service so each service has exactly
-# one `ports: !override` block (idempotent, no duplication).
-# Output ordering is deterministic: services in first-seen order.
+# Write the override. One `ports: !override` block per service that has ≥1
+# remapped port, in first-seen order. CRITICAL: because `!override` REPLACES the
+# base service's whole ports list, the block must reproduce EVERY original port
+# entry for that service — remapped ones rewritten, passthrough ones verbatim —
+# or the un-remapped bindings would silently vanish from the compose model.
 # ---------------------------------------------------------------------------
 override_path="$worktree/docker-compose.override.yml"
 tmp_override="$(mktemp)"
@@ -385,20 +452,28 @@ tmp_override="$(mktemp)"
   echo "services:"
 } > "$tmp_override"
 
-# Emit per service, preserving first-seen order, one ports block each.
 emitted_services=""
-for i in "${!svc_names[@]}"; do
-  svc="${svc_names[$i]}"
+for i in "${!entry_services[@]}"; do
+  svc="${entry_services[$i]}"
   case "$emitted_services" in
     *" $svc "*) continue ;;  # already emitted this service's block
   esac
+  # Skip services that have no remapped port (they don't need an override).
+  svc_has_remap=0
+  for j in "${!entry_services[@]}"; do
+    if [[ "${entry_services[$j]}" == "$svc" && "${entry_remapped[$j]}" == "1" ]]; then
+      svc_has_remap=1
+      break
+    fi
+  done
+  [[ "$svc_has_remap" -eq 1 ]] || continue
   emitted_services="$emitted_services $svc "
   {
     echo "  $svc:"
     echo "    ports: !override"
-    for j in "${!svc_names[@]}"; do
-      if [[ "${svc_names[$j]}" == "$svc" ]]; then
-        echo "      - \"${remap_lines[$j]}\""
+    for j in "${!entry_services[@]}"; do
+      if [[ "${entry_services[$j]}" == "$svc" ]]; then
+        echo "      - \"${entry_lines[$j]}\""
       fi
     done
   } >> "$tmp_override"

@@ -86,6 +86,26 @@ exit 1
 STUB
 chmod +x "$fail_alloc"
 
+# "echo-desired" stub: returns the --desired-port verbatim. Used to reproduce
+# the duplicate-port collision (two services asking for the SAME desired port
+# would both get it back) — the caller must de-dup so the override never
+# publishes the same worker port twice.
+echo_alloc="$tmpdir/alloc-echo.sh"
+cat > "$echo_alloc" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+desired=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --desired-port) desired="$2"; shift 2 ;;
+    --worker-slot|--service|--base-port|--ports-per-slot|--probe-host) shift 2 ;;
+    *) shift ;;
+  esac
+done
+echo "$desired"
+STUB
+chmod +x "$echo_alloc"
+
 # Helper: create a worktree dir + a repo dir with a compose file of given content.
 make_case() {
   local name="$1" compose_body="$2"
@@ -273,6 +293,129 @@ if [[ ! -f "$wt/docker-compose.override.yml" ]]; then
   ok "no (malformed) override written for long-form-only compose"
 else
   bad "override should NOT exist when only long-form ports present; got: $(cat "$wt/docker-compose.override.yml")"
+fi
+
+# ---------- Test 7: duplicate-offset ports get distinct worker ports ----------
+# Two services whose host ports share the same (host mod 100) offset would, with
+# a naive desired-port formula, ask for the SAME desired port. With the
+# echo-desired stub (returns desired verbatim), a buggy helper would emit the
+# same worker port twice → docker compose up collides. The helper must de-dup.
+say "Test 7: two services with same mod-100 offset → distinct worker ports"
+COMPOSE_DUP='services:
+  alpha:
+    image: a
+    ports:
+      - "3000:3000"
+  beta:
+    image: b
+    ports:
+      - "8000:8000"'
+IFS='|' read -r wt repo <<< "$(make_case t7 "$COMPOSE_DUP")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id dup --allocator "$echo_alloc" > "$tmpdir/t7.out" 2> "$tmpdir/t7.err"
+ec=$?
+set -e
+override="$wt/docker-compose.override.yml"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+# Collect the host-side worker ports from the override.
+host_ports="$(grep -oE '"[0-9]+:[0-9]+"' "$override" 2>/dev/null | sed -E 's/"([0-9]+):.*/\1/' | sort)"
+uniq_count="$(printf '%s\n' "$host_ports" | sort -u | grep -c . || true)"
+total_count="$(printf '%s\n' "$host_ports" | grep -c . || true)"
+if [[ "$total_count" -eq 2 && "$uniq_count" -eq 2 ]]; then
+  ok "two distinct worker host ports allocated (no duplicate)"
+else
+  bad "expected 2 distinct host ports; got $total_count total / $uniq_count unique:"
+  printf '%s\n' "$host_ports" | sed 's/^/    /'
+fi
+
+# ---------- Test 8: loopback host-IP prefix preserved ----------
+# A base entry "127.0.0.1:5432:5432" deliberately binds loopback only. The
+# remap must keep the IP so the service stays loopback-only (dropping it would
+# bind on all interfaces — a security regression).
+say "Test 8: host-IP short form keeps the loopback prefix in the remap"
+COMPOSE_LOOPBACK='services:
+  db:
+    image: postgres:16
+    ports:
+      - "127.0.0.1:5432:5432"'
+IFS='|' read -r wt repo <<< "$(make_case t8 "$COMPOSE_LOOPBACK")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id lb --allocator "$ok_alloc" > "$tmpdir/t8.out" 2> "$tmpdir/t8.err"
+ec=$?
+set -e
+override="$wt/docker-compose.override.yml"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+# ok stub: desired = 40000 + (5432 mod 100 = 32) = 40032 → returns 40033.
+if [[ -f "$override" ]] && grep -q '"127.0.0.1:40033:5432"' "$override"; then
+  ok "remap preserves loopback IP (127.0.0.1:40033:5432)"
+else
+  bad "expected '127.0.0.1:40033:5432'; got: $( [[ -f "$override" ]] && cat "$override" )"
+fi
+# Must NOT emit an all-interfaces binding (no bare "40033:5432" line).
+if [[ -f "$override" ]] && grep -qE '^\s*- "40033:5432"\s*$' "$override"; then
+  bad "override emitted an all-interfaces binding, dropping the loopback IP"
+else
+  ok "no all-interfaces binding emitted"
+fi
+
+# ---------- Test 9: skipped ports carried through the !override block ----------
+# A service with BOTH a remappable short-form port AND a container-only entry
+# (no host binding). The !override block replaces the whole base list, so the
+# helper must carry the un-remapped entry through verbatim or it vanishes from
+# the compose model.
+say "Test 9: service with a remapped + a passthrough port keeps both"
+COMPOSE_MIXED='services:
+  app:
+    image: app
+    ports:
+      - "8080:8080"
+      - "9090"'
+IFS='|' read -r wt repo <<< "$(make_case t9 "$COMPOSE_MIXED")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id mixed --allocator "$ok_alloc" > "$tmpdir/t9.out" 2> "$tmpdir/t9.err"
+ec=$?
+set -e
+override="$wt/docker-compose.override.yml"
+if [[ "$ec" -eq 0 ]]; then ok "exit 0"; else bad "expected exit 0, got $ec"; fi
+# 8080 mod 100 = 80 → desired 40080 → ok stub returns 40081.
+if [[ -f "$override" ]] && grep -q '"40081:8080"' "$override"; then
+  ok "short-form port remapped (40081:8080)"
+else
+  bad "expected '40081:8080'; got: $( [[ -f "$override" ]] && cat "$override" )"
+fi
+# The container-only "9090" entry must survive in the !override block.
+if [[ -f "$override" ]] && grep -qE '"?9090"?' "$override"; then
+  ok "passthrough container-only port (9090) carried through"
+else
+  bad "container-only '9090' was dropped from the !override block; got: $( [[ -f "$override" ]] && cat "$override" )"
+fi
+
+# ---------- Test 10: alloc-failed port in a multi-port service is preserved ----------
+# Service with two short-form ports; allocator fails for BOTH (fail stub). With
+# every port unremappable the service has nothing to !override, so no service
+# block should be written for it (writing an empty/partial !override would drop
+# the base ports). Net: no override file at all (single service, all failed).
+say "Test 10: multi-port service, all allocations fail → no partial override"
+COMPOSE_TWOPORT='services:
+  multi:
+    image: m
+    ports:
+      - "5432:5432"
+      - "6379:6379"'
+IFS='|' read -r wt repo <<< "$(make_case t10 "$COMPOSE_TWOPORT")"
+set +e
+NO_COLOR=1 bash "$HELPER" --worktree "$wt" --repo-path "$repo" \
+  --worker-slot 0 --worker-id allfail --allocator "$fail_alloc" > "$tmpdir/t10.out" 2> "$tmpdir/t10.err"
+ec=$?
+set -e
+if [[ "$ec" -eq 0 ]]; then ok "exit 0 (graceful)"; else bad "expected exit 0, got $ec"; fi
+if [[ ! -f "$wt/docker-compose.override.yml" ]]; then
+  ok "no partial override written when all allocations fail"
+else
+  bad "override should NOT exist when all allocations fail; got: $(cat "$wt/docker-compose.override.yml")"
 fi
 
 # ---------- summary ----------
