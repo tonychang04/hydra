@@ -57,12 +57,13 @@ Tier: T<n>
 Fetch full body via `gh issue view <n> --repo <owner>/<repo>` (fall back to `gh api /repos/<owner>/<repo>/issues/<n>` if classic-projects deprecation fires).
 Worker type: <type>.
 Coordinate-with hints: <1–2 lines listing in-flight tickets touching overlapping files, or "none">.
+First milestone: skeleton commit → push → DRAFT PR (so a stall is recoverable). THEN iterate.
 Done = draft PR with "Closes #<n>" + tests passing. Report: branch, PR #, test output, any QUESTION blocks.
 ```
 
 Rules:
 
-1. The header lines (`Ticket:`, `Repo:`, `Worktree:`, `Tier:`, blank) and the four footer lines (`Fetch full body…`, `Worker type:`, `Coordinate-with hints:`, `Done =…`) are fixed. Commander substitutes the angle-bracketed fields.
+1. The header lines (`Ticket:`, `Repo:`, `Worktree:`, `Tier:`, blank) and the five footer lines (`Fetch full body…`, `Worker type:`, `Coordinate-with hints:`, `First milestone:`, `Done =…`) are fixed. Commander substitutes the angle-bracketed fields.
 2. The Memory Brief is spliced in between header and footer. When the brief is empty (fresh repo, per #141 failure mode), the region is a single blank line.
 3. Linear-sourced spawns get an extra line immediately after `Tier:`, e.g. `Linear: LIN-123 — https://linear.app/...`. Worker agents already know to prepend `Closes LIN-123 — …` to the PR body when this line is present (existing behavior in `worker-implementation.md`).
 4. Total length BEFORE the Memory Brief must be ≤ 800 chars. Header + footer of the fixed template is ~500 chars; the 300-char headroom absorbs typical repo paths + coordinate hints.
@@ -78,6 +79,22 @@ worker that relies on `cd` or an inferred path can commit on the wrong branch (t
 the worker passes this path to `git -C` for every git operation. Full rationale, the
 mandated `git -C` discipline, the `scripts/assert-worktree-branch.sh` guard, and the
 red→green self-test fixture live in `docs/specs/2026-05-20-worker-git-C-worktree.md`.
+
+### The `First milestone:` footer line (added by ticket #188)
+
+The `First milestone:` footer line tells the worker, at spawn time, to **open the
+draft PR early**: make a skeleton commit (the spec or a WIP stub), push the
+branch, and open a DRAFT PR within its first few actions — *then* iterate. It is
+the spawn-prompt half of the skeleton-first doctrine that
+`worker-implementation.md` documents in full (its "Early-PR discipline" section).
+The motivation: workers that batch all their work and create the PR at the end
+lose everything when the ~13-min turn limit fires mid-implementation, leaving an
+orphaned worktree that needs manual rescue (incidents #157/#176/#159). A draft PR
+opened first is the recoverable artifact — Commander reads and continues it. Full
+rationale + the agent-def changes + the red→green self-test fixture live in
+`docs/specs/2026-05-21-early-pr-skeleton-first.md`. The line is ~95 chars; the
+≤ 800-char envelope budget (rule 4) is re-measured by the slim fixture's test 2
+on every run, so the addition can't silently blow the cap.
 
 ### Why ticket URL instead of ticket body
 

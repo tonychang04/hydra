@@ -52,6 +52,20 @@ Trivial tickets (typos, tiny patches) skip the spec but still note in the PR why
 
 If the ticket is genuinely ambiguous, use `superpowers:brainstorming` to refine into a clear spec BEFORE coding.
 
+## Early-PR discipline (skeleton-first, MANDATORY)
+
+**Open a DRAFT PR within your first few actions — before the heavy implementation.** This is the single most important recoverability rule. Workers repeatedly hit the ~13-min turn / stream-idle limit having *done the work* but never committed, pushed, or opened a PR — leaving an orphaned worktree that needs manual `scripts/rescue-worker.sh` surgery (incidents #157/#176/#159). If your branch + a draft PR already exist, a stall leaves a recoverable draft PR Commander can read and continue, not an orphan. Spec: `docs/specs/2026-05-21-early-pr-skeleton-first.md`.
+
+The milestone, in order, as your FIRST concrete actions after Step 0:
+
+1. **Branch** off `origin/main` in your worktree (Worktree git discipline below applies — `git -C "<worktree>"` for every git op).
+2. **Initial commit** as early as possible — the **skeleton commit**. For a non-trivial ticket this is your spec file (you write the spec before code anyway, per the spec-driven rule above). For the rare trivial ticket, a tiny WIP stub commit.
+3. **Push the branch** (`git -C "<worktree>" push -u origin <repo>/commander/<ticket>`).
+4. **Open a draft PR** — `gh pr create --draft` — title `[T<tier>] <title>`, body `Closes #<num>` plus a one-line "WIP — skeleton commit, iterating" note. THIS is the recoverable artifact.
+5. **THEN implement**, committing + pushing **incrementally** so each increment lands on the remote. Don't batch all commits to the end — a stall mid-implementation should still leave the latest pushed increment on the draft PR.
+
+Because the draft PR already exists from this milestone, the Flow's PR step (step 6) is a **finalize**, not a create: do NOT call `gh pr create` again (it errors "a pull request for branch X already exists" — see `memory/learnings-hydra.md` 2026-04-17 #84). Push the final commits (they append to the existing PR) and update the body with `gh api --method PATCH /repos/.../pulls/<n> -f body=…` to the full summary + test plan.
+
 ## Flow
 
 1. Decide the skill chain based on the ticket. Minimum: (spec if non-trivial) → implement → run repo-documented tests → `/review` → `/codex review` → PR.
@@ -59,7 +73,7 @@ If the ticket is genuinely ambiguous, use `superpowers:brainstorming` to refine 
 3. If the ticket touches UI paths (`packages/dashboard/**`, `*.tsx`, `*.css`), add `/qa` or `/design-review` after implementing.
 4. Refuse and return "Tier 3" if the ticket needs auth, migration, infra, secrets, or `.github/workflows/` changes.
 5. Commit on a branch named `<repo>/commander/<ticket-num>`. Spec commit goes first, then implementation commits.
-6. `gh pr create --draft --title "[T<tier>] <title>" --body "Closes #<num>\n\n## Summary\n...\n\n## Test plan\n..."` — include: closes line, summary, risk tier, test plan. **When the ticket source is Linear** (you received a `linear_url` and `linear_identifier` in the spawn prompt), prepend the PR body with a Linear cross-reference line: `Closes LIN-123 — https://linear.app/...`. GitHub treats this as informational (no auto-close); the Linear issue is closed via the MCP state transition on PR merge. This keeps the PR ↔ ticket link visible to humans reviewing the PR.
+6. **Finalize the draft PR** (it already exists from the Early-PR milestone above — finalize, don't recreate). Push the final commits, then set the full body via `gh api --method PATCH /repos/.../pulls/<n> -f body=…` — include: closes line, summary, risk tier, test plan. (Only if no draft PR exists yet — e.g. a truly trivial one-action ticket — fall back to `gh pr create --draft --title "[T<tier>] <title>" --body "Closes #<num>\n\n## Summary\n...\n\n## Test plan\n..."`.) **When the ticket source is Linear** (you received a `linear_url` and `linear_identifier` in the spawn prompt), prepend the PR body with a Linear cross-reference line: `Closes LIN-123 — https://linear.app/...`. GitHub treats this as informational (no auto-close); the Linear issue is closed via the MCP state transition on PR merge. This keeps the PR ↔ ticket link visible to humans reviewing the PR.
 7. Ticket-source update (whichever applies):
    - **GitHub:** `gh issue edit <num> --remove-label commander-working --add-label commander-review`
    - **Linear:** via the `linear` MCP server, transition issue state to what `$COMMANDER_ROOT/state/linear.json:state_transitions.on_pr_opened` says (default "In Review"), and post a comment linking the PR
