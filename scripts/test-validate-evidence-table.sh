@@ -273,6 +273,45 @@ EOF
 run_stdin "$tmpdir/t13.md"
 if [[ "$EC" -eq 0 ]]; then ok "lowercase verdicts accepted"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
 
+# ---------- Test 14: escaped pipe (\|) inside a cell does NOT shift columns ----------
+# A criterion or evidence cell with a shell pipeline must escape the pipe as \|
+# (GitHub renders it literally). The splitter must treat \| as content, so the
+# verdict column stays PASS and the row validates. Regression for the codex P2.
+say "Test 14: escaped pipe \\| in Criterion AND Evidence cells -> exit 0 (no column shift)"
+cat > "$tmpdir/t14.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | counts matching lines with `grep x \| wc -l` | PASS | ran `grep x f \| wc -l` -> `3` |
+EOF
+run_stdin "$tmpdir/t14.md"
+if [[ "$EC" -eq 0 ]]; then
+  ok "escaped pipes kept as content; verdict column not shifted (exit 0)"
+else
+  bad "expected exit 0 for escaped-pipe row, got $EC; out: $(cat "$tmpdir/out")"
+fi
+
+# ---------- Test 15: escaped pipe must NOT smuggle empty evidence past the gate ----------
+# `\|` is restored as a literal pipe, which is NOT a placeholder, so a PASS whose
+# evidence is only an escaped pipe is still treated as having content. But a PASS
+# with a genuinely empty evidence cell that merely has \| in the CRITERION must
+# still be caught.
+say "Test 15: \\| in Criterion but EMPTY Evidence on a PASS row -> exit 1 (still caught)"
+cat > "$tmpdir/t15.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | pipeline `a \| b` works | PASS |  |
+EOF
+run_stdin "$tmpdir/t15.md"
+if [[ "$EC" -eq 1 ]]; then
+  ok "empty evidence still caught even when criterion has an escaped pipe"
+else
+  bad "expected exit 1 (empty evidence), got $EC; out: $(cat "$tmpdir/out")"
+fi
+
 # ---------- summary ----------
 echo ""
 echo "============================================================"

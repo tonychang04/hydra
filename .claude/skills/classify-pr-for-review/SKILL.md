@@ -86,11 +86,16 @@ This is the operator's "verify, don't trust" rule made mechanical (ticket #196,
 spec `docs/specs/2026-05-21-evidence-based-review-gate.md`; EviBound /
 Coordinator-Implementor-Verifier pattern).
 
-1. **Approval gate (a) — extract the criteria.** Before reviewing, read the
-   ticket (`gh issue view <n>` or the PR's `Closes #<n>` target) and pull its
-   acceptance criteria into a list — one row per criterion. If the ticket has no
-   explicit "acceptance criteria" section, derive them from the ticket's stated
-   goals / "Output:" / test-for-real instructions (each becomes one criterion).
+1. **Approval gate (a) — extract the criteria.** Before reviewing, pull the
+   acceptance criteria into a list — one row per criterion — from the best
+   available source: a GitHub `Closes #<n>` ticket (`gh issue view <n>`), a
+   Linear `Closes LIN-123` issue (via the `linear` MCP server), or — when the PR
+   has no ticket reference at all (a `worker-test-discovery` /
+   `worker-conflict-resolver` PR) — the PR body + commit messages
+   (`gh pr view <n> --json body,title` + the commit log). If the source has no
+   explicit "acceptance criteria" section, derive criteria from its stated goals
+   / "Output:" / test-for-real instructions. The gate never stalls for lack of a
+   GitHub ticket — the PR body is always a usable source.
 2. **Verification gate (b) — attach evidence per criterion.** For each row, pick
    a verdict and cite the evidence that justifies it:
    - `PASS` — REQUIRES concrete evidence: a command + its output, a test name +

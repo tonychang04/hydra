@@ -42,11 +42,13 @@
 #     non-empty cell counts as evidence regardless of kind, so trace: works
 #     with NO change here. (#197 extension point.)
 #
-# Known limitation (safe by construction): a literal `|` inside an Evidence cell
-# splits the row at the first pipe, truncating the cell's tail into a discarded
-# remainder. This can only make a cell SHORTER, never turn an empty cell into a
-# non-empty one — so it cannot manufacture a false PASS. Reviewers who need a
-# pipe in evidence should escape it as `\|` (GitHub renders it literally).
+# Pipes in cells: a pipe meant as literal content (a shell pipeline in evidence,
+# table text in a criterion) must be escaped as `\|` — exactly how GitHub renders
+# a pipe inside a table cell. The splitter honors `\|` (protects it, restores it
+# as a literal `|`), so an escaped pipe never shifts columns. A RAW, unescaped `|`
+# still splits the row at the first occurrence (truncating the tail into a
+# discarded remainder) — but that can only make a cell SHORTER, never turn an
+# empty cell into a non-empty one, so it cannot manufacture a false PASS.
 #
 # Exit codes:
 #   0 = valid (every PASS has evidence; verdicts all legal; >=1 criterion).
@@ -209,9 +211,18 @@ is_placeholder_evidence() {
 # Normalize a table row into US-delimited cells (skip the leading/trailing
 # empties produced by the bordering pipes). US (\x1f) is not table content and
 # survives empty middle cells (unlike collapsing on whitespace).
+#
+# Escaped pipes (`\|`) inside a cell are LITERAL content (that's how GitHub
+# renders a pipe in a table cell), NOT column separators. We protect them with a
+# placeholder (RS, \x1e) before splitting on `|`, then restore them as a literal
+# `|` in each cell. Without this, a criterion or evidence cell containing a shell
+# pipeline (`grep x \| wc -l`) would shift every later column and the validator
+# would reject a correctly-rendered table.
 split_row() {
   # echoes cell0 \x1f cell1 \x1f ... for the row passed as $1
   local row="$1"
+  # Protect escaped pipes: `\|` -> RS placeholder so the split skips them.
+  row="${row//\\|/$'\x1e'}"
   # strip one leading and one trailing pipe (with surrounding spaces) if present
   row="$(trim "$row")"
   row="${row#|}"
@@ -219,9 +230,11 @@ split_row() {
   local IFS='|'
   local -a cells=()
   read -r -a cells <<< "$row" || true
-  # `read -a` with IFS='|' splits but trims nothing; emit US-joined trimmed cells
+  # `read -a` with IFS='|' splits but trims nothing; emit US-joined trimmed cells.
+  # Restore each protected pipe as a literal `|` (GitHub-rendered form).
   local out="" first=1 c
   for c in "${cells[@]}"; do
+    c="${c//$'\x1e'/|}"
     if [[ "$first" -eq 1 ]]; then first=0; else out+=$'\x1f'; fi
     out+="$(trim "$c")"
   done
