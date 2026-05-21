@@ -45,10 +45,18 @@ review rubric).
 4. **Review every `include` file in depth.** Mention `exclude` files only if their
    *presence* is the problem (a committed `.env`, a lockfile change in a docs-only
    PR — a scope smell worth a Concern).
-5. **Synthesize** `/review` + `/codex review` (+ `/cso` if run) into ONE comment
-   using the template below; deduplicate findings the tools both raise.
-6. **Post** per `.claude/agents/worker-review.md` flow (steps 8-10): blockers →
-   `--request-changes`; `SECURITY:` blocker → also label `commander-stuck`.
+5. **Build the EVIDENCE TABLE** (the two gates — see "Evidence-bound review"
+   below): extract the ticket's acceptance criteria (approval gate), then attach
+   a verdict + concrete evidence per criterion (verification gate). No `PASS`
+   without evidence.
+6. **Synthesize** `/review` + `/codex review` (+ `/cso` if run) into ONE comment
+   using the template below; deduplicate findings the tools both raise. The
+   evidence table sits between the `Commander review` header and `**Blockers**`.
+7. **Validate the comment body** through `scripts/validate-evidence-table.sh`
+   before posting (exit 0 required — see "Verification").
+8. **Post** per `.claude/agents/worker-review.md` flow (post + label steps):
+   blockers → `--request-changes`; `SECURITY:` blocker → also label
+   `commander-stuck`.
 
 ### Decision table: file-path glob → action
 
@@ -69,10 +77,60 @@ set):** a `*secret*` / `*token*` / `*password*` path, or a bare `*.sql` outside
 migrations, is *also* worth a `/cso` pass if it reads credentials or runs raw
 SQL.
 
+### Evidence-bound review: the two gates (required)
+
+A "clean" verdict is no longer a judgment call — it must be **evidence-bound**.
+For EACH acceptance criterion the reviewer attaches concrete evidence, or marks
+it explicitly unverified. **No criterion gets a clean PASS without evidence.**
+This is the operator's "verify, don't trust" rule made mechanical (ticket #196,
+spec `docs/specs/2026-05-21-evidence-based-review-gate.md`; EviBound /
+Coordinator-Implementor-Verifier pattern).
+
+1. **Approval gate (a) — extract the criteria.** Before reviewing, pull the
+   acceptance criteria into a list — one row per criterion — from the best
+   available source: a GitHub `Closes #<n>` ticket (`gh issue view <n>`), a
+   Linear `Closes LIN-123` issue (via the `linear` MCP server), or — when the PR
+   has no ticket reference at all (a `worker-test-discovery` /
+   `worker-conflict-resolver` PR) — the PR body + commit messages
+   (`gh pr view <n> --json body,title` + the commit log). If the source has no
+   explicit "acceptance criteria" section, derive criteria from its stated goals
+   / "Output:" / test-for-real instructions. The gate never stalls for lack of a
+   GitHub ticket — the PR body is always a usable source.
+2. **Verification gate (b) — attach evidence per criterion.** For each row, pick
+   a verdict and cite the evidence that justifies it:
+   - `PASS` — REQUIRES concrete evidence: a command + its output, a test name +
+     its pass line, or a diff `file:line`. Never `PASS` on "looks right".
+   - `FAIL` — the criterion is not met; say what's wrong (evidence optional).
+   - `UNVERIFIED` — you could not verify it (no fixture, needs a live service,
+     out of review scope); say why. **A criterion you can't verify is
+     `UNVERIFIED`, never `PASS`.**
+3. **Encode it as the EVIDENCE TABLE** in the comment (template below).
+4. **Validate before posting** — run the comment body through
+   `scripts/validate-evidence-table.sh` (reads stdin or `--file`). It exits
+   non-zero if any `PASS` row lacks evidence, a verdict is illegal, or the table
+   is empty. Fix the table until it exits 0, THEN post. (See "Verification"
+   below for the exact invocation.)
+
+> **#197 extension point.** Evidence today is a command+output, a test+pass
+> line, or a diff `file:line`. When #197 (session trace) lands, a fourth kind —
+> `trace:<step-id>` pointing at a recorded session-trace step — becomes an
+> *additional* evidence source. The checker already treats any non-empty
+> Evidence cell as valid regardless of kind, so `trace:` references will work
+> with NO checker change. Do NOT depend on #197 being present — gather evidence
+> from test output / diffs / command output directly until it lands.
+
 ### Review-comment template
 
 ```markdown
 Commander review of PR #<n>
+
+**Acceptance criteria — evidence**
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | <criterion text, from the ticket> | PASS | `<cmd>` -> `<output>` / test `<name>` -> `1 passed` / diff `file:line` |
+| 2 | <criterion text> | FAIL | <what's wrong> |
+| 3 | <criterion text> | UNVERIFIED | <why you couldn't verify it> |
 
 **Blockers** (must fix before merge)
 - <issue> — <file:line> — <which tool flagged it>
@@ -90,7 +148,11 @@ Commander review of PR #<n>
 The body MUST start with the literal `Commander review` — the timeout watchdog
 recognizes a landed review via `(.body) | startswith("Commander review")`
 (`rescue-worker.sh:391`); any other first line makes it dispatch a duplicate.
-Use `(none)` under any empty section. Prefix a blocker with `SECURITY:` only for
+**The evidence table goes AFTER that first line** (between the header and
+`**Blockers**`), so the body-prefix contract is preserved. Verdicts are
+`PASS` / `FAIL` / `UNVERIFIED` (case-insensitive). A literal `|` inside an
+Evidence cell must be escaped as `\|`. Use `(none)` under any empty
+Blockers/Concerns/Nits section. Prefix a blocker with `SECURITY:` only for
 genuine trust-boundary issues — that drives the `commander-stuck` label and
 pages the operator.
 
@@ -140,11 +202,23 @@ lockfile-drift rule in `escalation-faq.md`.
 
 ## Verification
 
-- **Shape:** seven canonical sections in order; `name:` matches the directory;
-  `description:` ends in `(Hydra)`; ~150 lines (`wc -l`).
+- **Shape:** `name:` matches the directory; `description:` ends in `(Hydra)`.
 - **Table completeness:** every category the ticket names (source/tests/specs;
   lockfile/generated/snapshot/dist; `*auth*`/`*crypto*`/migrations) is covered.
 - **Worked examples:** one positive `/cso` case, one negative, one noise case.
+- **Evidence table enforced:** the review comment carries an EVIDENCE TABLE and
+  passes the checker. Validate the body before posting:
+
+  ```bash
+  # body in a file:
+  bash scripts/validate-evidence-table.sh --file /tmp/review-comment.md
+  # or pipe it:
+  printf '%s' "$comment_body" | bash scripts/validate-evidence-table.sh
+  ```
+
+  Exit 0 = every `PASS` carries evidence (post it). Exit 1 = a `PASS` lacks
+  evidence / illegal verdict / zero criteria (fix the table). Exit 2 = no table
+  found (you forgot it). Regression test: `bash scripts/test-validate-evidence-table.sh`.
 - **Non-contradiction:** the canonical security-trigger set, "flag-don't-fix",
   `SECURITY:` → `commander-stuck`, and lockfile/baseline-noise rules all match
   the sources linked below — nothing here overrides them.
@@ -159,4 +233,8 @@ lockfile-drift rule in `escalation-faq.md`.
   trigger); pre-existing baseline lint + lockfile drift (out-of-scope noise).
 - `apply-label-via-rest` — apply `commander-stuck` / `commander-reviewed` via REST.
 - `scripts/rescue-worker.sh` — `--probe-review` matches the `Commander review` body prefix.
+- `scripts/validate-evidence-table.sh` (+ `test-validate-evidence-table.sh`) —
+  the deterministic checker enforcing "no clean PASS without evidence."
+- `docs/specs/2026-05-21-evidence-based-review-gate.md` — the two-gate design
+  (approval + verification) and the #197 extension point.
 - gstack globals `/review`, `/codex`, `/cso` — the engines this orchestrates.

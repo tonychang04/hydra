@@ -36,14 +36,17 @@ prose; the skill is the single source of scoping truth.
 
 1. Read the worktree's `CLAUDE.md`, `AGENTS.md`, `.claude/skills/*` (including `classify-pr-for-review`), and `$COMMANDER_ROOT/memory/learnings-<repo>.md` — you need the SAME repo context the implementer had
 2. `gh pr view <n> --json files,body,title,baseRefName,author` then `gh pr diff <n>` — scope + diff
-3. Bucket the changed files per `classify-pr-for-review` (include / exclude / security-trigger); review `include` files in depth, skip noise
-4. Run `/review` (superpowers:requesting-code-review) against the diff
-5. Run `/codex review` for an adversarial second opinion
-6. If ANY file is a `security-trigger` (per the skill's decision table), additionally run `/cso`
-7. Synthesize into one structured comment using the template in `classify-pr-for-review` (Blockers — `SECURITY:`-prefixed if a security issue / Concerns / Nits / Signed-off by — commander-review + skills invoked)
-8. Post via `gh pr review <n> --comment --body "..."` or `--request-changes` if there are blockers
-9. If any blocker has `SECURITY:` prefix, also `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-stuck"` — commander will page the operator
-10. Otherwise: `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-reviewed"` and return
+3. **Approval gate (a) — extract acceptance criteria.** Pull the PR's acceptance criteria into a list, one row per criterion, from the best available source (in order): (i) a GitHub `Closes #<ticket>` line → `gh issue view <ticket>`; (ii) a Linear `Closes LIN-123` line → the Linear issue via the `linear` MCP server; (iii) **no ticket reference** (a `worker-test-discovery` / `worker-conflict-resolver` PR, or any PR without a closes line) → derive criteria from the PR body + commit messages (`gh pr view <n> --json body,title` + `git -C <wt> log origin/<base>..HEAD --oneline`). No explicit "acceptance criteria" section in the source? Derive criteria from its goals / `Output:` / test-for-real instructions. This list seeds the EVIDENCE TABLE — see `classify-pr-for-review` → "Evidence-bound review: the two gates". The gate NEVER stalls for lack of a GitHub ticket; the PR body is always a valid criterion source.
+4. Bucket the changed files per `classify-pr-for-review` (include / exclude / security-trigger); review `include` files in depth, skip noise
+5. Run `/review` (superpowers:requesting-code-review) against the diff
+6. Run `/codex review` for an adversarial second opinion
+7. If ANY file is a `security-trigger` (per the skill's decision table), additionally run `/cso`
+8. **Verification gate (b) — fill the EVIDENCE TABLE.** For each criterion from step 3, assign a verdict (`PASS` / `FAIL` / `UNVERIFIED`) and cite concrete evidence: a command + its output, a test name + its pass line, or a diff `file:line`. **A `PASS` REQUIRES evidence; a criterion you could not verify is `UNVERIFIED`, never `PASS`.** (The #197 session trace will later add a `trace:<id>` evidence kind — additive, do not depend on it.)
+9. Synthesize into one structured comment using the template in `classify-pr-for-review`: `Commander review` header → EVIDENCE TABLE → Blockers (`SECURITY:`-prefixed if a security issue) / Concerns / Nits / Signed-off by. The table goes AFTER the header line so the `Commander review` body-prefix contract holds.
+10. **Validate before posting.** Run the comment body through `bash scripts/validate-evidence-table.sh --file <body>` (or pipe via stdin). It MUST exit 0 — exit 1 means a `PASS` lacks evidence / illegal verdict / zero criteria; exit 2 means the table is missing. Fix the table and re-run until it exits 0. Only then post. This is the machine-checkable form of the gate (spec `docs/specs/2026-05-21-evidence-based-review-gate.md`).
+11. Post via `gh pr review <n> --comment --body "..."` or `--request-changes` if there are blockers (a `FAIL` row is a blocker)
+12. If any blocker has `SECURITY:` prefix, also `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-stuck"` — commander will page the operator
+13. Otherwise: `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-reviewed"` and return
 
 Note: label application uses the REST API (`/repos/.../issues/<n>/labels`) rather than `gh pr edit --add-label`, because `gh pr edit` hits the GraphQL API and currently fails with a Projects (classic) deprecation error. The REST endpoint accepts a PR number as an issue number (PRs are issues in GitHub's data model) and is unaffected. Keep `gh label create` for lazy label creation — only the `--add-label` step has the deprecation issue.
 
