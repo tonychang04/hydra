@@ -270,4 +270,128 @@ follow-up).
 
 ## Implementation notes
 
-(Fill in after the PR lands.)
+#145 landed `scripts/promote-citations.sh`, the `--dry-run` selection logic,
+the `commander-skill-promotion` label plumbing, the
+`state/autopickup.json:last_promotion_run` schema field, and the test harness
+`scripts/test-promote-citations.sh`. Two ACs were marked done but their
+CLAUDE.md prompt wiring never landed, plus one hardening item — finished in
+#166 (see "Extension 2026-05-21" below).
+
+## Extension 2026-05-21 — finish #145 ACs: autopickup tick hook + greeting + heredoc hardening (#166)
+
+#145 wrote the schema field and the script, but two ACs (the autopickup tick
+hook and the session-greeting surface) were never wired into CLAUDE.md, and
+the script's heredocs were left in a trust-bounded-but-injectable state. #166
+closes all of it. Two new script modes turn the prose hooks into concrete,
+testable commands — the same move daily-digest (`build-daily-digest.sh`) and
+the scheduled retro made.
+
+### 1. Once-per-day autopickup hook (AC #3 from #145)
+
+CLAUDE.md's "Scheduled autopickup" tick line gains a once-per-day promotion
+step, mirroring the existing `step-1.6 daily digest` step. The gate is the
+existing `state/autopickup.json:last_promotion_run` field (ISO date,
+`YYYY-MM-DD`).
+
+To make the gate testable and to keep the tick's decision deterministic (not
+prose-only), `promote-citations.sh` gains a **`--check-due`** mode:
+
+- Reads `last_promotion_run` from `state/autopickup.json` (path resolved
+  from `--state-dir`, default `./state`).
+- Compares to today (`--now` override honored for tests).
+- Exit `0` ("due") when `last_promotion_run` is null/missing/`!= today`.
+- Exit `10` ("not due, already ran today") when `last_promotion_run == today`.
+- Exit `2` on usage/IO error (missing autopickup.json is **due**, not an
+  error — a fresh install has never run promotion).
+
+Mode is mutually exclusive with the promotion run itself: `--check-due` never
+mutates and never opens PRs. The tick procedure runs `--check-due`; on exit 0
+it runs the real `promote-citations.sh` (no flag) and, on success, stamps
+`last_promotion_run = today` on `state/autopickup.json`. Exit 10 → skip
+silently. This mirrors the lexical-ISO idempotency trick used by
+`last_retro_run` / `last_audit_run`, but with date granularity (once per
+calendar day) rather than the Monday-09:00 window.
+
+The stamp write is a tick-procedure responsibility (a one-key `jq` update on
+`state/autopickup.json`), consistent with how the tick stamps
+`last_retro_run` and `last_audit_run`. The script does not mutate
+`autopickup.json` itself — it stays a pure citation-promotion tool whose only
+state input is `--check-due`.
+
+### 2. Session-greeting surface (AC #4 from #145)
+
+CLAUDE.md's "Session greeting" section gains a third health one-liner (after
+Connectors and CLAUDE.md size): when there are unmerged
+`commander-skill-promotion` draft PRs across enabled repos, append
+`Skill promotion: N PR(s) awaiting your review.`. Silent at N=0.
+
+`promote-citations.sh` gains a **`--greeting-count`** mode that prints the
+integer count to stdout (and nothing else) so the greeting path has a single
+command to call instead of inlining the `gh pr list` loop:
+
+- Iterates enabled repos in `--repos-file` (default `<state-dir>/repos.json`).
+- For each, `gh pr list --repo <owner/name> --state open --draft
+  --label commander-skill-promotion --json number` and sums lengths.
+- Prints the integer total (e.g. `2`). Prints `0` when none / when `gh` is
+  unavailable / when repos.json is missing — the greeting is best-effort and
+  must never crash the session greeting.
+- Honors a `HYDRA_PROMOTION_COUNT_CMD` env hook so tests can inject a fake
+  `gh` without network. When set, the value is run per-repo (receiving the
+  repo nwo as `$1`) and is expected to print that repo's count; the mode sums
+  the outputs. This is the seam the test exercises (AC: "greeting prints
+  `Skill promotion: 2 PR(s)` for count 2, silent on 0").
+
+### 3. Heredoc hardening (AC #3 from #166 ticket)
+
+`build_skill_body` and the commit-message builder used unquoted heredocs
+(`cat <<EOF` / `cat <<EOM`), so worker-controlled strings (`$quote`,
+`$description`, `$context`) were interpolated by the shell — a `$(...)` inside
+a citation quote would execute. Trust-bounded today (citations come from
+Commander-parsed worker reports, not arbitrary input), but the autopickup hook
+makes this fire unattended, so we close the surface now:
+
+- `build_skill_body` switches to a quoted heredoc template
+  (`cat <<'TEMPLATE'`) containing literal `@@NAME@@` / `@@DESCRIPTION@@` /
+  `@@QUOTE@@` / `@@SOURCE_FILE@@` / `@@CONTEXT@@` / `@@CITATIONS@@`
+  placeholders, then substitutes each via a Perl/awk-free pure-bash
+  replace that treats the values as literal data (no `eval`, no second
+  expansion). The literal backticks/`$` in the template body (e.g. the
+  ``\`memory/...\``` reference) no longer need escaping.
+- The commit message switches from `cat <<EOM` to `printf '%s\n'` lines that
+  pass `$quote` / `$tickets_csv` as literal arguments — no heredoc expansion
+  at all.
+
+### 4. Minor cleanup flagged by #145 reviewer (AC #4 from #166 ticket)
+
+- Remove the dead `local only_filter='.'` in `select_eligible` (the jq filter
+  is selected inline via `--arg only`; the local was never read).
+- Reconcile the slug cap: the spec ("Skill naming") caps the **quote** slug at
+  60; the code capped the **combined** `file-prefix + quote` slug at 80. Keep
+  the 60-char quote cap from `slugify` and document that the combined slug may
+  be longer because the file prefix is additive; drop the redundant 80-char
+  re-truncation that produced a second, undocumented limit. The combined slug
+  is now `<file-prefix>-<quote-slug>` with the quote half already capped at 60.
+- Add a stderr warning in `extract_context` when the quote is not found in the
+  source memory file (currently a silent empty context).
+- Drop the redundant `gh label list` pre-check in `ensure_label`:
+  `gh label create` already 422s harmlessly on an existing label (the call is
+  already `|| true`), so the pre-check was a wasted round-trip.
+
+### Test additions
+
+`scripts/test-promote-citations.sh` gains:
+
+- **`--check-due` fires when never run / stale:** autopickup.json with
+  `last_promotion_run: null` and with a past date both exit 0.
+- **`--check-due` skips when already run today:** autopickup.json with
+  `last_promotion_run == --now` exits 10.
+- **`--check-due` with missing autopickup.json exits 0** (fresh install = due).
+- **`--greeting-count`** with a mocked `HYDRA_PROMOTION_COUNT_CMD` summing two
+  repos prints `2`; with a mock returning 0 prints `0`.
+
+### Rollback
+
+Revert the #166 commit. The script's new modes are additive (no behavior
+change to the existing `--dry-run` / real-run paths); the CLAUDE.md edits are
+two pointer lines. `state/autopickup.json` already tolerates the
+`last_promotion_run` key (added in #145). Zero-risk revert.
