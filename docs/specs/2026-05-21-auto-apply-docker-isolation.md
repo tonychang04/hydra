@@ -105,11 +105,35 @@ worker thinks about it.
 5. **Allocate + build override:** for each `(service, host, container)`, call
    `alloc-worker-port.sh --worker-slot <slot> --service <service>
    --desired-port <40000 + slot*100 + (host mod 100)>`.
-   - On success, record `service → "<allocated>:<container>"`.
+   - On success, record `service → "<ip-prefix?><allocated>:<container>"`.
    - On allocator failure (non-zero exit), log a warning naming the service and
-     **continue** (graceful fallback). That service is omitted from the override
-     (its base binding stays, which may collide — but the spawn proceeds, per
-     the ticket).
+     **pass the entry through verbatim** (graceful fallback): the original port
+     line is carried into the `!override` block unchanged. If a service ends up
+     with zero *remapped* entries it is omitted from the override (its base
+     bindings stay, which may collide — but the spawn proceeds, per the ticket).
+
+   **Port-parsing rule (concluded simplification).** In a compose port mapping
+   the **container port is always the rightmost segment after the last colon and
+   is literal** — it never contains a `${...}` default. Only the **host** side
+   may contain a `${VAR:-5432}` template (whose inner colon must not be treated
+   as a field separator). So: count separators on a `${...}`-stripped copy of the
+   entry, slice the original by those positions, and take the container port as
+   the literal text after the last colon. The desired host port is derived from
+   the trailing digits of the host token (e.g. `${WEB_PORT:-3001}` → `3001`).
+
+   **Passthrough for exotic / unallocatable host tokens.** An exotic `${VAR...}`
+   host token is remapped *only when the allocator succeeds* for its derived
+   desired port. The allocator's **non-zero exit is treated as a genuine failure,
+   not a retry trigger** — `alloc-worker-port.sh` already probes its whole slot
+   range internally for a busy `--desired-port` and only exits 1 when the range
+   is exhausted (or the probe tool is missing). Re-invoking it with other desired
+   ports would be redundant and, worse, would silently substitute an arbitrary
+   port for a `${VAR}`-templated host we should preserve. So on allocator failure
+   the entry is **passed through verbatim** rather than mangled. The helper's own
+   retry loop walks offsets purely to **de-dup** ports already handed out this
+   run (two services that resolve to the same offset must get distinct worker
+   ports — the stateless allocator can't see ports that exist only in the
+   not-yet-written override).
 6. **Write override:** if at least one port was allocated, write
    `<worktree>/docker-compose.override.yml` with a generated-by header comment,
    then per service a `ports: !override` block with the remapped entries. If
@@ -179,16 +203,43 @@ allocator" stub exercises the fallback path. Cases:
 6. **Long-form ports fall through gracefully.** Compose with only the dict-form
    `- target:/published:` mapping → helper logs an unsupported-shape warning and
    exits 0 without writing a (wrong) override.
+7. **Same mod-100 offset → distinct worker ports.** Two services whose host
+   ports share the same `(host mod 100)` offset must get distinct worker ports
+   (de-dup), using an echo-desired stub that would otherwise hand out a duplicate.
+8. **Loopback host-IP prefix preserved.** `127.0.0.1:5432:5432` (the
+   `ip:host:container` form) remaps to `127.0.0.1:<port>:5432`, keeping the IP so
+   a loopback-only binding stays loopback-only (dropping it would bind on all
+   interfaces — a security regression). The original entry is also the passthrough
+   fallback, so an alloc failure on a loopback binding is preserved verbatim.
+9. **Remapped + passthrough port in one service.** A service with a remappable
+   short-form port *and* a container-only (`"9090"`) entry keeps both in the
+   `!override` block (the block replaces the whole base list).
+10. **Multi-port service, all allocations fail → no partial override.**
+11. **Pre-existing non-Hydra override → not clobbered** (warn, exit 0).
+12. **Pre-existing Hydra-generated override → regenerated fine** (idempotent).
+13. **Mixed long-form + short-form in one service → service skipped entirely.**
+14. **Long-form service skipped, clean sibling still remapped** (per-service skip).
+15. **Stable default project name across re-runs** (slot-derived, not PID).
+16. **`${VAR:-default}:container` passthrough verbatim on alloc failure.** A
+    selective stub fails the var-default entry but succeeds for a sibling port;
+    the failed `${WEB_PORT:-3001}:3000` entry is carried through verbatim (not
+    mangled by splitting on the inner colon), the sibling is remapped.
+17. **`${VAR:-default}:container` remaps using the default's digits.** With a
+    succeeding allocator the `3001` inside `${WEB_PORT:-3001}` drives the desired
+    port and the remapped line keeps the literal container port `3000`.
 
-Run locally: `bash scripts/test-auto-apply-docker-isolation.sh`. No Docker
-required — the allocator is stubbed and no `docker compose` is invoked.
+Run locally: `bash scripts/test-auto-apply-docker-isolation.sh` — 17 tests, 53
+assertions, all green. No Docker required — the allocator is stubbed and no
+`docker compose` is invoked.
 
 ## Risks / rollback
 
-- **Risk: line-scan misreads an exotic `ports:` shape.** Mitigated by the
-  long-form fall-through (case 6): unrecognized shapes warn + skip rather than
-  emit a malformed override. Worst case is the same as today (no Layer 2 for
-  that service), never worse.
+- **Risk: line-scan misreads an exotic `ports:` shape.** Mitigated by two
+  fall-throughs: (a) long-form dict ports warn + skip the whole service (case 6)
+  rather than emit a malformed override; (b) a `${VAR...}` host token whose
+  allocation fails is passed through *verbatim* (cases 8, 16) rather than mangled
+  by splitting on the inner colon. Worst case is the same as today (no Layer 2
+  for that entry), never worse — the literal binding survives unchanged.
 - **Risk: the helper isn't actually wired into the spawn path by this PR.** True
   by design — the spawn-flow edit lives in code another worker owns. This PR
   ships the helper + test + worker-doc hook; the PR body flags the one-line

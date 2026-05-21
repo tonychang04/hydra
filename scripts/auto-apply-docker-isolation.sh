@@ -238,8 +238,18 @@ allocate_for() {
   host_num="$(printf '%s' "$host_tok" | grep -oE '[0-9]+' | tail -1 || true)"
   [[ -n "$host_num" ]] || host_num="$container"
 
-  # Try desired offsets in order, skipping any port already claimed this run so
-  # two services that resolve to the same offset get distinct worker ports.
+  # Walk desired offsets, but ONLY to skip ports we've already handed out this
+  # run (de-dup): two services that resolve to the same offset must get distinct
+  # worker ports, and the stateless allocator can't see ports that exist only in
+  # the not-yet-written override.
+  #
+  # An allocator NON-ZERO exit is a genuine failure, NOT a retry trigger: the
+  # real alloc-worker-port.sh already probes the whole slot range internally for
+  # a busy --desired-port and only exits 1 when the entire range is exhausted
+  # (or the probe tool is missing). Re-invoking it with a different desired port
+  # would be both redundant and wrong — for a "${VAR:-3001}" host token it would
+  # silently substitute an arbitrary port for one we should pass through
+  # verbatim. So on a failed allocation we fall straight through to passthrough.
   local base_offset=$(( host_num % ports_per_slot ))
   local allocated="" rc=1 attempt desired
   for (( attempt = 0; attempt < ports_per_slot; attempt++ )); do
@@ -252,11 +262,19 @@ allocate_for() {
       --desired-port "$desired" --base-port "$base_port" --ports-per-slot "$ports_per_slot" 2>/dev/null)"
     rc=$?
     set -e
-    if [[ "$rc" -eq 0 && -n "$allocated" ]] && ! port_already_claimed "$allocated"; then
+    if [[ "$rc" -ne 0 ]]; then
+      # Genuine allocation failure — stop. Do not scan other offsets (the
+      # allocator already exhausted its range). Falls through to passthrough.
+      allocated=""
       break
     fi
-    # Allocator returned an already-claimed port (it can't know about ports we've
-    # only written to a not-yet-started override) — keep looking.
+    if [[ -n "$allocated" ]] && ! port_already_claimed "$allocated"; then
+      # Got a distinct worker port.
+      break
+    fi
+    # Allocator succeeded but returned a port we already claimed this run (it
+    # can't know about override-only ports) — bump the desired and retry purely
+    # for de-dup.
     allocated=""
     rc=1
   done
@@ -307,11 +325,13 @@ parse_ports_entry() {
       ;;
     2)
       # host-ip:host:container — preserve the IP prefix so a loopback-only
-      # binding stays loopback-only after remapping.
+      # binding stays loopback-only after remapping. Pass the ORIGINAL entry
+      # through as the passthrough fallback (5th arg) so an alloc failure on a
+      # loopback binding is preserved verbatim rather than crashing on $5.
       local ip="${entry%%:*}"
       local rest="${entry#*:}"           # host:container
       local host="${rest%%:*}" container="${rest##*:}"
-      allocate_for "$current_service" "$host" "$container" "${ip}:"
+      allocate_for "$current_service" "$host" "$container" "${ip}:" "$entry"
       ;;
     *)
       warn "unrecognized ports entry '$entry' in service '$current_service' — passing it through unmapped"
