@@ -418,4 +418,247 @@ if ! printf '%s' "$help_out" | grep -qE '^[[:space:]]*5[[:space:]]'; then
   exit 1
 fi
 
+# ===========================================================================
+# Ticket #206: --probe must read the TAIL of the worker's session trace
+# (logs/traces/<ticket>.jsonl, the #197 substrate) to distinguish three states
+# git-state alone conflates:
+#   - worker-mid-tool-call (exit 6): an execute_tool span is open (start, no end)
+#     — worker is ALIVE inside a slow tool; do NOT rescue.
+#   - worker-looping       (exit 7): repeated identical tool spans / recursive
+#     failures — worker is thrashing; rescue + restart.
+#   - idle/inconclusive: falls through to the existing git-state verdicts.
+# Trace is read via --trace-file so the fixture stays offline. The flaky-tool
+# marker (#190) still wins over any trace verdict.
+# Spec: docs/specs/2026-05-21-trace-fed-watchdog-forensics.md
+# ===========================================================================
+
+# A throwaway repo for the trace cases (keep $tmp/$ftmp state undisturbed).
+ttmp="$(mktemp -d)"
+trace_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$mock" "$ftmp" "$ttmp" "$trace_dir"' EXIT
+(
+  cd "$ttmp"
+  git init -q
+  git config user.email trace-fixture@example.com
+  git config user.name "trace fixture"
+  git symbolic-ref HEAD refs/heads/main
+  echo "baseline" > base.txt
+  git add base.txt
+  git commit -q -m "init"
+  git checkout -q -b hydra/commander/206
+)
+
+trace_file="$trace_dir/206.jsonl"
+write_trace() { printf '%s\n' "$@" > "$trace_file"; }
+
+# Convenience: a root start line shared by several traces.
+ROOT_START='{"ts":"2026-05-21T18:00:00.000Z","span_id":"root1","parent_span_id":null,"kind":"invoke_agent","attrs":{"gen_ai.operation.name":"invoke_agent","phase":"start","hydra.ticket":"206"}}'
+
+# ---- 24. worker-mid-tool-call: trailing open execute_tool span → exit 6 ----
+write_trace \
+  "$ROOT_START" \
+  '{"ts":"2026-05-21T18:00:01.000Z","span_id":"t1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Edit"}}' \
+  '{"ts":"2026-05-21T18:00:01.100Z","span_id":"t1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Edit","hydra.tool.exit_code":0}}' \
+  '{"ts":"2026-05-21T18:00:02.000Z","span_id":"t2","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}'
+set +e
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main --trace-file "$trace_file")"
+ec=$?
+set -e
+if [[ "$ec" -ne 6 ]]; then
+  echo "FAIL: mid-tool-call trace expected exit 6, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"worker-mid-tool-call"'; then
+  echo "FAIL: expected worker-mid-tool-call verdict; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"tool":"Bash"'; then
+  echo "FAIL: expected tool:Bash (the open span's tool); got: $out" >&2
+  exit 1
+fi
+
+# ---- 25. worker-looping (tool-repeat): K=3 same-tool closed spans → exit 7 ----
+write_trace \
+  "$ROOT_START" \
+  '{"ts":"2026-05-21T18:00:01.000Z","span_id":"r1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:01.500Z","span_id":"r1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}' \
+  '{"ts":"2026-05-21T18:00:02.000Z","span_id":"r2","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:02.500Z","span_id":"r2","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}' \
+  '{"ts":"2026-05-21T18:00:03.000Z","span_id":"r3","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:03.500Z","span_id":"r3","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}'
+set +e
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main --trace-file "$trace_file")"
+ec=$?
+set -e
+if [[ "$ec" -ne 7 ]]; then
+  echo "FAIL: looping (tool-repeat) trace expected exit 7, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"worker-looping"'; then
+  echo "FAIL: expected worker-looping verdict; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"tool":"Bash"'; then
+  echo "FAIL: expected tool:Bash (the looping tool); got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -qE '"repeat":[3-9]'; then
+  echo "FAIL: expected repeat>=3; got: $out" >&2
+  exit 1
+fi
+
+# ---- 26. worker-looping (recursive-failure): >=3 same error.type → exit 7 ----
+write_trace \
+  "$ROOT_START" \
+  '{"ts":"2026-05-21T18:00:01.000Z","span_id":"e1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","error.type":"tool_error"}}' \
+  '{"ts":"2026-05-21T18:00:02.000Z","span_id":"e2","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Edit","error.type":"tool_error"}}' \
+  '{"ts":"2026-05-21T18:00:03.000Z","span_id":"e3","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Read","error.type":"tool_error"}}'
+set +e
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main --trace-file "$trace_file")"
+ec=$?
+set -e
+if [[ "$ec" -ne 7 ]]; then
+  echo "FAIL: looping (recursive-failure) trace expected exit 7, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"worker-looping"'; then
+  echo "FAIL: expected worker-looping verdict (recursive-failure); got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"error_type":"tool_error"'; then
+  echo "FAIL: expected error_type:tool_error; got: $out" >&2
+  exit 1
+fi
+
+# ---- 27. looping wins over a trailing open span (precedence) → exit 7 ----
+# 3x repeated Bash, then one more open Bash start. Must be worker-looping, NOT
+# worker-mid-tool-call (a thrashing worker often has one in-flight retry).
+write_trace \
+  "$ROOT_START" \
+  '{"ts":"2026-05-21T18:00:01.000Z","span_id":"p1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:01.500Z","span_id":"p1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}' \
+  '{"ts":"2026-05-21T18:00:02.000Z","span_id":"p2","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:02.500Z","span_id":"p2","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}' \
+  '{"ts":"2026-05-21T18:00:03.000Z","span_id":"p3","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:03.500Z","span_id":"p3","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}' \
+  '{"ts":"2026-05-21T18:00:04.000Z","span_id":"p4","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}'
+set +e
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main --trace-file "$trace_file")"
+ec=$?
+set -e
+if [[ "$ec" -ne 7 ]]; then
+  echo "FAIL: looping-with-trailing-open expected exit 7, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"worker-looping"'; then
+  echo "FAIL: trailing-open-after-loop must be worker-looping, not mid-tool-call; got: $out" >&2
+  exit 1
+fi
+
+# ---- 28. clean completed trace → falls through to git-state (nothing-to-rescue) ----
+# All spans closed, no repeats. Clean worktree → nothing-to-rescue (exit 0).
+write_trace \
+  "$ROOT_START" \
+  '{"ts":"2026-05-21T18:00:01.000Z","span_id":"c1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Edit"}}' \
+  '{"ts":"2026-05-21T18:00:01.100Z","span_id":"c1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Edit","hydra.tool.exit_code":0}}' \
+  '{"ts":"2026-05-21T18:00:09.000Z","span_id":"root1","parent_span_id":null,"kind":"invoke_agent","attrs":{"gen_ai.operation.name":"invoke_agent","phase":"end","hydra.ticket":"206"}}'
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main --trace-file "$trace_file")"
+if ! printf '%s' "$out" | grep -q '"verdict":"nothing-to-rescue"'; then
+  echo "FAIL: clean completed trace should fall through to nothing-to-rescue; got: $out" >&2
+  exit 1
+fi
+
+# ---- 29. no trace file → existing verdicts unchanged (regression) ----
+# clean branch, no --trace-file, no trace at default path → nothing-to-rescue.
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main)"
+if ! printf '%s' "$out" | grep -q '"verdict":"nothing-to-rescue"'; then
+  echo "FAIL: no trace on clean branch should still be nothing-to-rescue; got: $out" >&2
+  exit 1
+fi
+# dirty branch, no trace → rescue-uncommitted.
+printf 'dirty no trace\n' > "$ttmp/dirty.txt"
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main)"
+if ! printf '%s' "$out" | grep -q '"verdict":"rescue-uncommitted"'; then
+  echo "FAIL: no trace + dirty should still be rescue-uncommitted; got: $out" >&2
+  exit 1
+fi
+rm -f "$ttmp/dirty.txt"
+
+# ---- 30. malformed trace → falls through, no crash ----
+printf 'this is not json {{{\n{"partial":\n' > "$trace_file"
+set +e
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main --trace-file "$trace_file")"
+ec=$?
+set -e
+if [[ "$ec" -ne 0 ]]; then
+  echo "FAIL: malformed trace should fall through without crashing (exit 0), got $ec; out=$out" >&2
+  exit 1
+fi
+if printf '%s' "$out" | grep -qE '"verdict":"worker-(looping|mid-tool-call)"'; then
+  echo "FAIL: malformed trace must NOT report a trace verdict; got: $out" >&2
+  exit 1
+fi
+
+# ---- 31. single non-repeated closed tool call → falls through (not looping/mid) ----
+write_trace \
+  "$ROOT_START" \
+  '{"ts":"2026-05-21T18:00:01.000Z","span_id":"s1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:01.500Z","span_id":"s1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":0}}'
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main --trace-file "$trace_file")"
+if printf '%s' "$out" | grep -qE '"verdict":"worker-(looping|mid-tool-call)"'; then
+  echo "FAIL: single closed tool span must NOT report a trace verdict; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"nothing-to-rescue"'; then
+  echo "FAIL: single closed tool span on clean branch should be nothing-to-rescue; got: $out" >&2
+  exit 1
+fi
+
+# ---- 32. flaky-tool marker (#190) beats a looping trace (precedence) ----
+# A worktree with BOTH a valid recent flaky-tool marker AND a looping trace must
+# report flaky-tool-retry (exit 5) — the flaky signal is the most specific,
+# carries an actionable fallback, and is checked before trace analysis.
+write_trace \
+  "$ROOT_START" \
+  '{"ts":"2026-05-21T18:00:01.000Z","span_id":"f1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:01.500Z","span_id":"f1","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}' \
+  '{"ts":"2026-05-21T18:00:02.000Z","span_id":"f2","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:02.500Z","span_id":"f2","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}' \
+  '{"ts":"2026-05-21T18:00:03.000Z","span_id":"f3","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"start","gen_ai.tool.name":"Bash"}}' \
+  '{"ts":"2026-05-21T18:00:03.500Z","span_id":"f3","parent_span_id":"root1","kind":"execute_tool","attrs":{"gen_ai.operation.name":"execute_tool","phase":"end","gen_ai.tool.name":"Bash","hydra.tool.exit_code":1}}'
+mkdir -p "$ttmp/.hydra"
+printf '{"tool":"browse-daemon","failures":4,"last_failure_epoch":%s,"fallback":"curl/SDK"}\n' "$(date +%s)" > "$ttmp/.hydra/flaky-tool.json"
+set +e
+out="$("$RESCUE" --probe "$ttmp" hydra/commander/206 206 --base refs/heads/main --trace-file "$trace_file")"
+ec=$?
+set -e
+rm -rf "$ttmp/.hydra"
+if [[ "$ec" -ne 5 ]]; then
+  echo "FAIL: flaky marker + looping trace expected exit 5 (flaky wins), got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"flaky-tool-retry"'; then
+  echo "FAIL: flaky marker must win over trace looping verdict; got: $out" >&2
+  exit 1
+fi
+
+# ---- 33. --help documents the trace verdicts + exit codes 6 and 7 ----
+help_out="$("$RESCUE" --help 2>&1)"
+if ! printf '%s' "$help_out" | grep -q 'worker-mid-tool-call'; then
+  echo "FAIL: --help missing 'worker-mid-tool-call'" >&2
+  exit 1
+fi
+if ! printf '%s' "$help_out" | grep -q 'worker-looping'; then
+  echo "FAIL: --help missing 'worker-looping'" >&2
+  exit 1
+fi
+if ! printf '%s' "$help_out" | grep -qE '^[[:space:]]*6[[:space:]]'; then
+  echo "FAIL: --help missing exit code 6 row" >&2
+  exit 1
+fi
+if ! printf '%s' "$help_out" | grep -qE '^[[:space:]]*7[[:space:]]'; then
+  echo "FAIL: --help missing exit code 7 row" >&2
+  exit 1
+fi
+
 echo "PASS: scripts/rescue-worker.sh probe fixture roundtrip"
