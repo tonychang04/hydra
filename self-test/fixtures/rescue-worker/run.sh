@@ -261,4 +261,161 @@ if [[ "$ec" -ne 2 ]]; then
   exit 1
 fi
 
+# ===========================================================================
+# Ticket #190: --probe must distinguish a worker BLOCKED on a flaky external
+# tool (alive, retrying a daemon that keeps resetting) from an idle ghost.
+# The worker leaves a worktree-local marker at .hydra/flaky-tool.json; --probe
+# reads it and emits verdict "flaky-tool-retry" + exit 5 so commander relays a
+# fallback hint to the live worker instead of rescue-and-restart.
+# Spec: docs/specs/2026-05-21-flaky-tool-probe-verdict.md
+# ===========================================================================
+
+# Build a second throwaway repo dedicated to the flaky-tool cases so we don't
+# disturb the commit/dirty state accumulated in $tmp above.
+ftmp="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$mock" "$ftmp"' EXIT
+(
+  cd "$ftmp"
+  git init -q
+  git config user.email flaky-fixture@example.com
+  git config user.name "flaky fixture"
+  git symbolic-ref HEAD refs/heads/main
+  echo "baseline" > base.txt
+  git add base.txt
+  git commit -q -m "init"
+  git checkout -q -b hydra/commander/190
+)
+
+# Helper: write a flaky-tool marker into $ftmp/.hydra/flaky-tool.json.
+# Args: <failures> <last_failure_epoch> [raw_override]
+write_marker() {
+  mkdir -p "$ftmp/.hydra"
+  if [[ -n "${3:-}" ]]; then
+    printf '%s' "$3" > "$ftmp/.hydra/flaky-tool.json"
+  else
+    printf '{"tool":"browse-daemon","failures":%s,"last_failure_epoch":%s,"fallback":"curl/SDK + single screenshot"}\n' \
+      "$1" "$2" > "$ftmp/.hydra/flaky-tool.json"
+  fi
+}
+clear_marker() { rm -rf "$ftmp/.hydra"; }
+now_epoch() { date +%s; }
+
+# ---- 17. flaky-tool-retry: valid + recent marker on a CLEAN worktree → exit 5 ----
+write_marker 4 "$(now_epoch)"
+set +e
+out="$("$RESCUE" --probe "$ftmp" hydra/commander/190 190 --base refs/heads/main)"
+ec=$?
+set -e
+if [[ "$ec" -ne 5 ]]; then
+  echo "FAIL: flaky-tool marker (clean worktree) expected exit 5, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"flaky-tool-retry"'; then
+  echo "FAIL: expected flaky-tool-retry verdict; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"tool":"browse-daemon"'; then
+  echo "FAIL: expected tool:browse-daemon in verdict; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"fallback":"curl/SDK + single screenshot"'; then
+  echo "FAIL: expected fallback string in verdict; got: $out" >&2
+  exit 1
+fi
+
+# ---- 18. flaky-tool-retry takes precedence over a DIRTY worktree ----
+# A live worker blocked on a flaky tool may also have uncommitted edits. The
+# flaky signal must win over the dirty→rescue-uncommitted path (we do NOT want
+# to rescue-and-restart a live worker).
+printf 'work in progress\n' > "$ftmp/wip.txt"
+set +e
+out="$("$RESCUE" --probe "$ftmp" hydra/commander/190 190 --base refs/heads/main)"
+ec=$?
+set -e
+if [[ "$ec" -ne 5 ]]; then
+  echo "FAIL: flaky-tool marker (dirty worktree) expected exit 5, got $ec; out=$out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"verdict":"flaky-tool-retry"'; then
+  echo "FAIL: dirty worktree should still report flaky-tool-retry; got: $out" >&2
+  exit 1
+fi
+rm -f "$ftmp/wip.txt"
+
+# ---- 19. gating: marker below failure threshold → falls through (NOT flaky) ----
+# A single failure is not yet "flaky"; default threshold is 2.
+write_marker 1 "$(now_epoch)"
+set +e
+out="$("$RESCUE" --probe "$ftmp" hydra/commander/190 190 --base refs/heads/main)"
+ec=$?
+set -e
+if [[ "$ec" -ne 0 ]]; then
+  echo "FAIL: below-threshold marker should fall through to a normal verdict (exit 0), got $ec; out=$out" >&2
+  exit 1
+fi
+if printf '%s' "$out" | grep -q '"verdict":"flaky-tool-retry"'; then
+  echo "FAIL: below-threshold marker must NOT report flaky-tool-retry; got: $out" >&2
+  exit 1
+fi
+
+# ---- 20. gating: stale marker (old last_failure_epoch) → falls through ----
+# Default staleness window is 1800s; an hour-old failure is ignored.
+write_marker 9 "$(( $(now_epoch) - 3600 ))"
+set +e
+out="$("$RESCUE" --probe "$ftmp" hydra/commander/190 190 --base refs/heads/main)"
+ec=$?
+set -e
+if [[ "$ec" -ne 0 ]]; then
+  echo "FAIL: stale marker should fall through to a normal verdict (exit 0), got $ec; out=$out" >&2
+  exit 1
+fi
+if printf '%s' "$out" | grep -q '"verdict":"flaky-tool-retry"'; then
+  echo "FAIL: stale marker must NOT report flaky-tool-retry; got: $out" >&2
+  exit 1
+fi
+
+# ---- 21. gating: malformed marker (invalid JSON) → falls through, no crash ----
+write_marker "" "" 'this is not json {{{'
+set +e
+out="$("$RESCUE" --probe "$ftmp" hydra/commander/190 190 --base refs/heads/main)"
+ec=$?
+set -e
+if [[ "$ec" -ne 0 ]]; then
+  echo "FAIL: malformed marker should fall through without crashing (exit 0), got $ec; out=$out" >&2
+  exit 1
+fi
+if printf '%s' "$out" | grep -q '"verdict":"flaky-tool-retry"'; then
+  echo "FAIL: malformed marker must NOT report flaky-tool-retry; got: $out" >&2
+  exit 1
+fi
+
+# ---- 22. regression: NO marker → existing verdicts unchanged ----
+# nothing-to-rescue on a clean branch with no marker (proves the new branch is
+# fully gated behind the marker file's presence).
+clear_marker
+out="$("$RESCUE" --probe "$ftmp" hydra/commander/190 190 --base refs/heads/main)"
+if ! printf '%s' "$out" | grep -q '"verdict":"nothing-to-rescue"'; then
+  echo "FAIL: no marker on clean branch should still be nothing-to-rescue; got: $out" >&2
+  exit 1
+fi
+# rescue-uncommitted on a dirty branch with no marker.
+printf 'dirty without marker\n' > "$ftmp/dirty.txt"
+out="$("$RESCUE" --probe "$ftmp" hydra/commander/190 190 --base refs/heads/main)"
+if ! printf '%s' "$out" | grep -q '"verdict":"rescue-uncommitted"'; then
+  echo "FAIL: no marker + dirty should still be rescue-uncommitted; got: $out" >&2
+  exit 1
+fi
+rm -f "$ftmp/dirty.txt"
+
+# ---- 23. --help documents the flaky-tool-retry verdict + exit code 5 ----
+help_out="$("$RESCUE" --help 2>&1)"
+if ! printf '%s' "$help_out" | grep -q 'flaky-tool-retry'; then
+  echo "FAIL: --help missing 'flaky-tool-retry'" >&2
+  exit 1
+fi
+if ! printf '%s' "$help_out" | grep -qE '^[[:space:]]*5[[:space:]]'; then
+  echo "FAIL: --help missing exit code 5 row" >&2
+  exit 1
+fi
+
 echo "PASS: scripts/rescue-worker.sh probe fixture roundtrip"

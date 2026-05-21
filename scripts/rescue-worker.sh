@@ -15,6 +15,17 @@
 #                     { "verdict": "rescue-uncommitted", "commits_ahead": N, "dirty": true }
 #                     { "verdict": "push-only",          "commits_ahead": N, "pushed": false }
 #                     { "verdict": "nothing-to-rescue",  "commits_ahead": 0, "dirty": false }
+#                     { "verdict": "flaky-tool-retry",   "tool": "...", "fallback": "...", ... }
+#
+#                   The flaky-tool-retry verdict (exit 5) fires when the worker
+#                   left a recent .hydra/flaky-tool.json marker recording
+#                   repeated failures of a named external tool (e.g. the browse
+#                   daemon resetting between commands). The worker is ALIVE and
+#                   blocked, not idle — commander should relay the marker's
+#                   `fallback` hint to the live worker (SendMessage) rather than
+#                   rescue-and-restart. Checked BEFORE the git-state verdicts so
+#                   a live worker's uncommitted marker is not mistaken for
+#                   rescuable "dirty" work. Spec: ticket #190.
 #
 #   --rescue        Mutating. Commits any uncommitted changes, fetches origin/main,
 #                   rebases (fast-forward only; bails on conflict with exit 3), and
@@ -49,10 +60,21 @@
 #   3   rescue conflict — rebase on main hit a conflict; commander must escalate
 #   4   review-type rescue required; dispatch to commander to run /review inline
 #       (emitted only by --probe-review)
+#   5   blocked on flaky external tool; retry with fallback — worker is ALIVE,
+#       commander should relay the marker's `fallback` hint instead of rescuing
+#       (emitted only by --probe)
+#
+# Flaky-tool tuning (env vars, --probe only):
+#   HYDRA_FLAKY_TOOL_MIN_FAILURES  Minimum `failures` in the marker before the
+#                                  flaky-tool-retry verdict fires. Default 2.
+#   HYDRA_FLAKY_TOOL_MAX_AGE_S     Max age (seconds) of the marker's
+#                                  `last_failure_epoch` before it's treated as
+#                                  stale and ignored. Default 1800 (30 min).
 #
 # Spec: docs/specs/2026-04-16-worker-timeout-watchdog.md (ticket #45)
 # Spec: docs/specs/2026-04-17-rescue-worker-index-lock.md (ticket #81)
 # Spec: docs/specs/2026-04-17-review-worker-rescue.md   (ticket #75)
+# Spec: docs/specs/2026-05-21-flaky-tool-probe-verdict.md (ticket #190)
 
 set -euo pipefail
 
@@ -91,15 +113,30 @@ Options:
                        Also honored via HYDRA_RESCUE_GH_MOCK env var.
   -h, --help           Show this help.
 
+Probe verdicts (--probe, stdout JSON):
+  rescue-commits       local commits ahead of base, not pushed
+  rescue-uncommitted   uncommitted/untracked changes in the worktree
+  push-only            commits exist and already match the remote branch
+  nothing-to-rescue    clean worktree, no commits ahead — idle ghost
+  flaky-tool-retry     worker is ALIVE but blocked on a flaky external tool
+                       (recent .hydra/flaky-tool.json marker); commander relays
+                       the marker's `fallback` hint instead of rescuing (exit 5)
+
 Exit codes:
   0   success
   1   I/O error / branch mismatch / worktree not a git repo / gh unavailable
   2   usage error
   3   rescue conflict — commander must escalate
   4   review-type rescue required; dispatch to commander (--probe-review only)
+  5   blocked on flaky external tool; retry with fallback (--probe only)
+
+Flaky-tool tuning (env vars, --probe only):
+  HYDRA_FLAKY_TOOL_MIN_FAILURES  min marker `failures` to fire (default 2)
+  HYDRA_FLAKY_TOOL_MAX_AGE_S     max marker age in seconds (default 1800)
 
 Spec: docs/specs/2026-04-16-worker-timeout-watchdog.md (ticket #45)
 Spec: docs/specs/2026-04-17-review-worker-rescue.md   (ticket #75)
+Spec: docs/specs/2026-05-21-flaky-tool-probe-verdict.md (ticket #190)
 EOF
 }
 
@@ -113,6 +150,11 @@ pr_number=""
 remote="origin"
 base_override=""
 gh_mock="${HYDRA_RESCUE_GH_MOCK:-}"
+
+# Flaky-tool detection tuning (--probe only). Worker-authored marker lives at
+# <worktree>/.hydra/flaky-tool.json. See ticket #190 spec.
+flaky_min_failures="${HYDRA_FLAKY_TOOL_MIN_FAILURES:-2}"
+flaky_max_age_s="${HYDRA_FLAKY_TOOL_MAX_AGE_S:-1800}"
 
 # Collect unnamed positional args; assignment depends on mode (resolved after parse).
 positionals=()
@@ -236,6 +278,74 @@ remote_branch_exists() {
   git_in rev-parse --verify "$remote/$branch" >/dev/null 2>&1
 }
 
+# Ticket #190: detect a worker that is ALIVE but blocked on a flaky external
+# tool. The worker records repeated failures in a worktree-local marker at
+# <worktree>/.hydra/flaky-tool.json:
+#   {"tool":"...", "failures":N, "last_failure_epoch":EPOCH, "fallback":"..."}
+#
+# This helper prints the flaky-tool-retry verdict JSON on stdout and returns 0
+# IFF a marker exists that is: valid JSON, has failures >= flaky_min_failures,
+# and last_failure_epoch within flaky_max_age_s of now. Otherwise it prints
+# nothing and returns 1 (caller falls through to the git-state verdicts).
+#
+# Fully defensive: a missing/garbled/incomplete/stale/below-threshold marker
+# never errors — it just returns 1 so --probe behaves exactly as before. jq is
+# already a hard dep elsewhere in the script (--probe-review); if jq is somehow
+# absent here we silently fall through rather than crash the watchdog.
+flaky_tool_verdict() {
+  local marker="$worktree/.hydra/flaky-tool.json"
+  [[ -r "$marker" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  # Parse with jq; on any parse error (malformed JSON) jq exits non-zero and we
+  # fall through. Emit a tab-separated tuple we can read field-by-field.
+  local parsed
+  parsed="$(jq -r '
+    [ (.tool // ""),
+      (.failures // 0),
+      (.last_failure_epoch // 0),
+      (.fallback // "") ] | @tsv
+  ' "$marker" 2>/dev/null)" || return 1
+  [[ -n "$parsed" ]] || return 1
+
+  local tool failures last_epoch fallback
+  IFS=$'\t' read -r tool failures last_epoch fallback <<<"$parsed"
+
+  # failures and last_failure_epoch must be plain integers; otherwise ignore.
+  [[ "$failures"   =~ ^[0-9]+$ ]] || return 1
+  [[ "$last_epoch" =~ ^[0-9]+$ ]] || return 1
+
+  # Below the failure threshold → not yet "flaky".
+  [[ "$failures" -ge "$flaky_min_failures" ]] || return 1
+
+  # Stale marker (last failure too long ago) → ignore. Negative skew (epoch in
+  # the future) is treated as fresh (age clamped at 0).
+  local now age
+  now="$(date +%s)"
+  age=$(( now - last_epoch ))
+  [[ "$age" -lt 0 ]] && age=0
+  [[ "$age" -le "$flaky_max_age_s" ]] || return 1
+
+  # A tool name is required to give commander something actionable to relay.
+  [[ -n "$tool" ]] || return 1
+
+  # Report worktree git-state alongside for observability (does NOT change the
+  # verdict — a live worker is flaky-tool-retry whether or not it has WIP).
+  local commits_ahead dirty
+  commits_ahead="$(count_commits_ahead)"
+  dirty="false"; is_dirty && dirty="true"
+
+  # Emit JSON with tool + fallback safely escaped via jq.
+  jq -nc \
+    --arg tool "$tool" \
+    --arg fallback "$fallback" \
+    --argjson failures "$failures" \
+    --argjson commits_ahead "$commits_ahead" \
+    --argjson dirty "$dirty" \
+    '{verdict:"flaky-tool-retry", tool:$tool, fallback:$fallback, failures:$failures, commits_ahead:$commits_ahead, dirty:$dirty}'
+  return 0
+}
+
 # Ticket #81: refuse --rescue if the worker is still writing
 # (`.git/index.lock` present). Best-effort TOCTOU guard — narrows but does
 # not eliminate the race. Probe mode does not call this (probe is read-only).
@@ -256,6 +366,15 @@ ensure_no_stale_lock() {
 # ---- mode: probe -----------------------------------------------------------
 
 if [[ "$mode" == "probe" ]]; then
+  # Ticket #190: a worker blocked on a flaky external tool is ALIVE, not idle.
+  # Check this BEFORE the git-state verdicts so its uncommitted marker isn't
+  # mistaken for rescuable "dirty" work. flaky_tool_verdict prints the JSON and
+  # returns 0 only when a valid, recent, over-threshold marker exists; otherwise
+  # it prints nothing and we fall through to the existing verdicts unchanged.
+  if flaky_tool_verdict; then
+    exit 5
+  fi
+
   commits_ahead="$(count_commits_ahead)"
   dirty="false"; is_dirty && dirty="true"
   pushed="false"; remote_branch_exists && pushed="true"
