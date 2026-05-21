@@ -6,7 +6,9 @@
 # cost-rollup.sh) and the ticket's pr_url, determines which PRs merged, and
 # emits total-cost-over-merged-PRs ÷ merged-PR-count — the number the community
 # settled on for proving an autonomous fleet is worth it (cost per merged PR,
-# not raw spend).
+# not raw spend). merged_prs counts DISTINCT merged pr_urls; if two ticket logs
+# share one merged PR, both their costs count toward that PR's spend (total cost
+# of merged work ÷ PRs that merged).
 #
 # Merged status:
 #   - Default (online): `gh pr view <pr_url> --json mergedAt` per distinct PR;
