@@ -50,20 +50,28 @@ below, set `CIT=state/memory-citations.json` (fall back to the `.example.json`
 on a fresh install).
 
 1. **Preview the promotion-ready cohort (authoritative selector).** Never
-   hand-roll the 3×3 filter — run the script in dry-run; it prints exactly what
-   it *would* file, with no git/gh side effects:
+   hand-roll the 3×3 filter — run the script in dry-run; it resolves which
+   entries are eligible *and* which target repo each maps to, with no git/gh
+   side effects:
 
    ```
    scripts/promote-citations.sh --dry-run
    ```
 
-   Each eligible entry prints an `ELIGIBLE` line (key, target repo, branch,
-   skill path, create/update action) and a `would open PR` line. Empty output =
-   nothing at threshold today.
+   Each filed-able entry prints an `ELIGIBLE` line (key, target repo, branch,
+   skill path, create/update action) and a `would open PR` line. Dry-run is the
+   authoritative *eligibility + target-resolution* preview — it stops before the
+   real run's checkout/context steps, so it does **not** prove the eventual
+   scaffold or its `local_path` checkout are producible. No `ELIGIBLE` lines
+   means either nothing is at the 3×3 threshold or every at-threshold entry is
+   cross-cutting / unresolvable (those log a `skip:` line on stderr, not stdout).
 
 2. **Preview the trending cohort (the new visibility surface).** These are
-   entries with ≥2 cites across ≥2 tickets that have *not yet* hit 3×3 — the
-   ones about to promote. Read-only jq, no side effects:
+   entries with ≥2 cites across ≥2 tickets that have *not yet* hit 3×3. The ones
+   that will *actually* promote on crossing are the `learnings-*.md` keys with a
+   resolvable target repo (the script skips cross-cutting files like
+   `escalation-faq.md` / `memory-lifecycle.md`); confirm with step 1's dry-run
+   once an entry crosses. Read-only jq, no side effects:
 
    ```
    jq -r '.citations // {} | to_entries
@@ -77,9 +85,11 @@ on a fresh install).
 3. **Optionally tighten the source learning before filing.** The script copies
    the cited quote + a small context window from `memory/learnings-<repo>.md`
    into the SKILL.md scaffold (see `build_skill_body`/`extract_context` in the
-   script). Editing the learning entry → a better draft. Edit the entry, keep
-   the cited quote substring intact (so `grep -nF` still finds it), then re-run
-   step 1 to confirm the plan still resolves.
+   script). Editing the learning entry → a better draft. Keep the cited quote
+   substring intact (so `extract_context`'s `grep -nF` still finds it). Note:
+   dry-run does **not** re-read the learning text, so it can't confirm your edit
+   survived — verify the quote is still present yourself
+   (`grep -F "<quote>" memory/learnings-<repo>.md`) before filing.
 
 4. **File.** Run the same script *without* `--dry-run` (or wait for the daily
    tick). It authors the SKILL.md, opens a draft PR, and labels it
@@ -109,22 +119,20 @@ $ scripts/promote-citations.sh   # looks right → file it
 promote-citations: opened https://github.com/org/hydra/pull/512
 ```
 
-The trending one-liner does the same for *next*: an entry at 2 cites / 2 tickets
-shows up so the operator can sharpen its quote before it promotes — visibility
-without commitment, no PR yet.
+The trending one-liner does the same for *next*: a `learnings-*.md` entry at 2
+cites / 2 tickets shows up so the operator can sharpen its quote ahead of the
+crossing — visibility without commitment, no PR yet. (Confirm it will actually
+file by re-running step 1's dry-run once it crosses 3×3.)
 
-### Common failure — reimplementing the 3×3 filter by hand
+### Common failures
 
-Hand-rolled "count >= 3" jq for the eligibility verdict duplicates the script's
-selector and *will* drift (it also dedupes tickets, skips `_`-prefixed meta keys,
-and skips cross-cutting files). Use `--dry-run` for eligibility; reserve raw jq
-for the read-only *trending* cohort only.
-
-### Common failure — editing the cited quote out from under the script
-
-`extract_context` does `grep -nF` for the cited quote in the learning file. Drop
-that substring while editing and the scaffold loses its context block. Keep the
-cited quote text intact.
+- **Hand-rolling the 3×3 verdict in jq** duplicates the script's selector and
+  *will* drift (it dedupes tickets, skips `_` meta keys, skips cross-cutting
+  files, resolves the target repo). Use `--dry-run` for eligibility; reserve raw
+  jq for the read-only *trending* cohort only.
+- **Editing the cited quote out from under the script:** `extract_context` does
+  `grep -nF` for the quote, and dry-run won't catch a broken edit (step 3) — the
+  scaffold silently loses its context block. Keep the quote substring intact.
 
 ## Verification
 
@@ -145,10 +153,14 @@ ELIGIBLE  key=learnings-CLI.md#npm install strips peer markers  repo=acme/CLI  b
 would open PR  title=skill promotion: npm install strips peer markers  label=commander-skill-promotion
 ```
 
-Expected (trending one-liner against the same fixture): `(none trending)` — the
-only sub-threshold entry (`pnpm lockfile conflicts with npm i`) is at 1 cite / 1
-ticket, below the ≥2/≥2 trending bar. This confirms the one-liner runs and that
-trending and promotion-ready are disjoint cohorts.
+Now run the step-2 trending one-liner against the same fixture — set `CIT` first
+(it is unbound otherwise): `CIT=state/memory-citations.example.json`, then the
+step-2 jq with `"$CIT"`.
+
+Expected: `(none trending)` — the only sub-threshold entry
+(`pnpm lockfile conflicts with npm i`) is at 1 cite / 1 ticket, below the ≥2/≥2
+trending bar. This confirms the one-liner runs and that trending and
+promotion-ready are disjoint cohorts.
 
 Empty-`repos.json` run logs `skip: no single target repo for 'learnings-CLI.md'`
 and exits 0 — a *skip*, not a failure (cross-cutting / unmatched entries are a

@@ -112,11 +112,11 @@ is pinned in the Verification section:
    `state/memory-citations.example.json` (via a temp `--state-dir`) emits
    exactly one `ELIGIBLE` line for `learnings-CLI.md#npm install strips peer
    markers` (count 4, tickets #50/#61/#63/#64). Verified during authoring.
-2. **Trending preview** — the documented jq one-liner against the same fixture
-   yields zero trending entries (the only sub-threshold entry,
-   `pnpm lockfile conflicts with npm i`, has count 1 / 1 ticket, below the ≥2/≥2
-   trending bar). The skill states this expected result so a reader can confirm
-   the one-liner runs.
+2. **Trending preview** — the documented jq one-liner (with `CIT` bound to the
+   fixture) against the same fixture yields zero trending entries (the only
+   sub-threshold entry, `pnpm lockfile conflicts with npm i`, has count 1 / 1
+   ticket, below the ≥2/≥2 trending bar). The skill's Verification block sets
+   `CIT` explicitly so the command is reproducible in a fresh shell.
 3. **No-match safety** — with an empty `repos.json`, the script logs a skip
    ("no single target repo … cross-cutting or unmatched") and exits 0 without
    side effects. Documented so operators don't mistake the skip for a failure.
