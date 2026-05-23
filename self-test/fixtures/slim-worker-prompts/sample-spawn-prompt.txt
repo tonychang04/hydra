@@ -6,4 +6,5 @@ Tier: T2
 
 Fetch full body via `gh issue view 146 --repo tonychang04/hydra`.
 Worker type: worker-implementation. Coordinate-with: none.
+First milestone: skeleton commit → push → DRAFT PR (so a stall is recoverable). THEN iterate.
 Done = draft PR with "Closes #146" + tests passing. Report: branch, PR #, test output, any QUESTION blocks.
