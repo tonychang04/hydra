@@ -2988,6 +2988,41 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "pr-shepherd-script",
+      "_description": "Script-only self-test for scripts/pr-shepherd.sh (spec: docs/specs/2026-05-23-pr-shepherd.md, ticket #198). PR Shepherd v1 — classifies Commander-authored open PRs into actionable states (needs-fix / ci-pending / needs-review-gate / ready-to-surface / merge-ready) and flags orphans (open PR with no matching worker in state/active.json — the #215/#216/#217 reconcile case). Exercises --help / --bogus / bash -n, then runs the offline smoke harness self-test/fixtures/pr-shepherd/run-smoke.sh which drives the script against a --gh-mock fixture (one PR per classification branch + an orphan + a green-but-unresolved-thread PR) and asserts both human-mode substrings and --json shape (per-PR state/reason/orphaned + summary counts), the empty-active.json all-orphan path, and the exit-1/exit-2 error paths. No network, no gh, no Claude auth — runs anywhere bash + jq is installed.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "pr-shepherd.sh bash -n clean",
+          "cmd": "bash -n scripts/pr-shepherd.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "pr-shepherd.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/pr-shepherd.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: pr-shepherd.sh"
+        },
+        {
+          "name": "pr-shepherd.sh rejects an unknown flag (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/pr-shepherd.sh --bogus 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BADFLAG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADFLAG_OK"
+        },
+        {
+          "name": "pr-shepherd smoke harness (human + --json + orphan + error paths)",
+          "cmd": "self-test/fixtures/pr-shepherd/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

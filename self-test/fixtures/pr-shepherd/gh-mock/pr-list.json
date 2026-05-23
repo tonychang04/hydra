@@ -1,0 +1,72 @@
+[
+  {
+    "number": 101,
+    "title": "CI red PR",
+    "url": "https://github.com/tonychang04/hydra/pull/101",
+    "headRefName": "hydra/commander/101",
+    "isDraft": true,
+    "labels": [],
+    "statusCheckRollup": [{"conclusion": "FAILURE"}],
+    "reviewDecision": ""
+  },
+  {
+    "number": 102,
+    "title": "CI pending PR",
+    "url": "https://github.com/tonychang04/hydra/pull/102",
+    "headRefName": "hydra/commander/102",
+    "isDraft": true,
+    "labels": [],
+    "statusCheckRollup": [{"status": "IN_PROGRESS"}],
+    "reviewDecision": ""
+  },
+  {
+    "number": 103,
+    "title": "green no-label PR",
+    "url": "https://github.com/tonychang04/hydra/pull/103",
+    "headRefName": "hydra/commander/103",
+    "isDraft": true,
+    "labels": [],
+    "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+    "reviewDecision": ""
+  },
+  {
+    "number": 104,
+    "title": "green reviewed draft PR",
+    "url": "https://github.com/tonychang04/hydra/pull/104",
+    "headRefName": "hydra/commander/104",
+    "isDraft": true,
+    "labels": [{"name": "commander-reviewed"}],
+    "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+    "reviewDecision": "APPROVED"
+  },
+  {
+    "number": 105,
+    "title": "green reviewed undrafted PR",
+    "url": "https://github.com/tonychang04/hydra/pull/105",
+    "headRefName": "hydra/commander/105",
+    "isDraft": false,
+    "labels": [{"name": "commander-reviewed"}],
+    "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+    "reviewDecision": "APPROVED"
+  },
+  {
+    "number": 106,
+    "title": "orphaned PR no worker",
+    "url": "https://github.com/tonychang04/hydra/pull/106",
+    "headRefName": "hydra/commander/106",
+    "isDraft": true,
+    "labels": [],
+    "statusCheckRollup": [],
+    "reviewDecision": ""
+  },
+  {
+    "number": 107,
+    "title": "green unresolved-thread PR",
+    "url": "https://github.com/tonychang04/hydra/pull/107",
+    "headRefName": "hydra/commander/107",
+    "isDraft": true,
+    "labels": [{"name": "commander-reviewed"}],
+    "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+    "reviewDecision": "CHANGES_REQUESTED"
+  }
+]

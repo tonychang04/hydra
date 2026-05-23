@@ -1,0 +1,11 @@
+{
+  "workers": [
+    {"id": "w-101", "ticket": "tonychang04/hydra#101", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-23T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "branch": "hydra/commander/101"},
+    {"id": "w-102", "ticket": "tonychang04/hydra#102", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-23T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "branch": "hydra/commander/102"},
+    {"id": "w-103", "ticket": "tonychang04/hydra#103", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-23T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "branch": "hydra/commander/103"},
+    {"id": "w-104", "ticket": "tonychang04/hydra#104", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-23T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "branch": "hydra/commander/104"},
+    {"id": "w-105", "ticket": "tonychang04/hydra#105", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-23T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "branch": "hydra/commander/105"},
+    {"id": "w-107", "ticket": "tonychang04/hydra#107", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-23T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "branch": "hydra/commander/107"}
+  ],
+  "last_updated": "2026-05-23T10:00:00Z"
+}
