@@ -61,12 +61,22 @@
   },
   {
     "number": 107,
-    "title": "green unresolved-thread PR",
+    "title": "green changes-requested PR",
     "url": "https://github.com/tonychang04/hydra/pull/107",
     "headRefName": "hydra/commander/107",
     "isDraft": true,
     "labels": [{"name": "commander-reviewed"}],
     "statusCheckRollup": [{"conclusion": "SUCCESS"}],
     "reviewDecision": "CHANGES_REQUESTED"
+  },
+  {
+    "number": 108,
+    "title": "green approved but unresolved-thread PR",
+    "url": "https://github.com/tonychang04/hydra/pull/108",
+    "headRefName": "hydra/commander/108",
+    "isDraft": true,
+    "labels": [{"name": "commander-reviewed"}],
+    "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+    "reviewDecision": "APPROVED"
   }
 ]

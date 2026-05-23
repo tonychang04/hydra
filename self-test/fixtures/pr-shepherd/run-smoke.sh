@@ -64,7 +64,10 @@ assert_state 103 "needs-review-gate"
 assert_state 104 "ready-to-surface"  "reviewed-still-draft"
 assert_state 105 "merge-ready"       "reviewed-undrafted"
 assert_state 106 "needs-review-gate"
-assert_state 107 "needs-fix"         "unresolved-threads"
+assert_state 107 "needs-fix"         "changes-requested"
+# #108: green + reviewed + APPROVED (no CHANGES_REQUESTED) but an unresolved
+# review thread → needs-fix via the secondary thread-count signal.
+assert_state 108 "needs-fix"         "changes-requested"
 
 # Orphan boolean: only #106 is orphaned (its branch is absent from active.json).
 echo "$json_out" | jq -e '.prs[] | select(.number == 106) | .orphaned == true' >/dev/null \
@@ -79,10 +82,10 @@ echo "$json_out" | jq -e 'all(.prs[]; (.recommended_action | type == "string") a
   || { echo "FAIL: every PR must carry a non-empty recommended_action"; echo "$json_out"; exit 1; }
 
 # Summary counts.
-echo "$json_out" | jq -e '.summary.total == 7' >/dev/null \
-  || { echo "FAIL: summary.total != 7"; echo "$json_out"; exit 1; }
-echo "$json_out" | jq -e '.summary.needs_fix == 2' >/dev/null \
-  || { echo "FAIL: summary.needs_fix != 2 (#101 ci-red + #107 unresolved-threads)"; echo "$json_out"; exit 1; }
+echo "$json_out" | jq -e '.summary.total == 8' >/dev/null \
+  || { echo "FAIL: summary.total != 8"; echo "$json_out"; exit 1; }
+echo "$json_out" | jq -e '.summary.needs_fix == 3' >/dev/null \
+  || { echo "FAIL: summary.needs_fix != 3 (#101 ci-red + #107 changes-requested + #108 unresolved-thread)"; echo "$json_out"; exit 1; }
 echo "$json_out" | jq -e '.summary.ci_pending == 1' >/dev/null \
   || { echo "FAIL: summary.ci_pending != 1"; echo "$json_out"; exit 1; }
 echo "$json_out" | jq -e '.summary.needs_review_gate == 2' >/dev/null \
@@ -115,8 +118,30 @@ grep -q "orphaned" <<<"$human_out" \
 EMPTY_STATE="$(mktemp -d)"
 trap 'rm -rf "$EMPTY_STATE"' EXIT
 empty_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$GH_MOCK" --state-dir "$EMPTY_STATE" --json)"
-echo "$empty_out" | jq -e '.summary.orphaned == 7' >/dev/null \
-  || { echo "FAIL: with empty state-dir, all 7 PRs should be orphaned"; echo "$empty_out"; exit 1; }
+echo "$empty_out" | jq -e '.summary.orphaned == 8' >/dev/null \
+  || { echo "FAIL: with empty state-dir, all 8 PRs should be orphaned"; echo "$empty_out"; exit 1; }
+
+# -----------------------------------------------------------------------------
+# Linear-ticket worker (LIN-123, no branch) must NOT break ticket extraction.
+# The default state fixture includes a w-lin worker with ticket "LIN-123" and no
+# branch. A throwing jq capture would drop the whole ticket set and falsely
+# orphan branchless workers (Codex review finding). Verify the run still
+# classifies all 8 PRs and only the true orphan (#106) is flagged.
+echo "$json_out" | jq -e '[.prs[] | select(.orphaned == true)] | length == 1' >/dev/null \
+  || { echo "FAIL: LIN-123 worker broke ticket extraction (orphan count != 1)"; echo "$json_out"; exit 1; }
+
+# -----------------------------------------------------------------------------
+# Repo scoping: a worker for a DIFFERENT repo must not claim this repo's PR.
+# active.json is global; with --repo set, only same-repo workers count for orphan
+# detection (Codex review finding). Build a state where the only worker tracking
+# branch hydra/commander/103 belongs to other/repo — with --repo tonychang04/hydra,
+# #103 must become orphaned.
+SCOPE_STATE="$(mktemp -d)"
+printf '{"workers":[{"id":"w-other","ticket":"other/repo#103","repo":"other/repo","tier":"T2","started_at":"2026-05-23T10:00:00Z","subagent_type":"worker-implementation","status":"running","branch":"hydra/commander/103"}],"last_updated":"2026-05-23T10:00:00Z"}' > "$SCOPE_STATE/active.json"
+scope_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$GH_MOCK" --state-dir "$SCOPE_STATE" --repo tonychang04/hydra --json)"
+rm -rf "$SCOPE_STATE"
+echo "$scope_out" | jq -e '.prs[] | select(.number == 103) | .orphaned == true' >/dev/null \
+  || { echo "FAIL: cross-repo worker falsely claimed PR #103 (repo scoping broken)"; echo "$scope_out"; exit 1; }
 
 # -----------------------------------------------------------------------------
 # Error paths.
@@ -134,5 +159,22 @@ NO_COLOR=1 "$SCRIPT" --gh-mock "$MISSING_MOCK" >/dev/null 2>&1; ec=$?
 set -e
 rm -rf "$MISSING_MOCK"
 [[ "$ec" -eq 1 ]] || { echo "FAIL: missing pr-list.json mock should exit 1, got $ec"; exit 1; }
+
+# -----------------------------------------------------------------------------
+# Adversarial title: a PR title containing a literal tab + newline must NOT
+# inject a phantom PR row (json) or shift columns (human). Title is flattened.
+# -----------------------------------------------------------------------------
+ADV_MOCK="$(mktemp -d)"
+ADV_STATE="$(mktemp -d)"
+printf '{"workers":[{"id":"w-adv","ticket":"tonychang04/hydra#501","repo":"tonychang04/hydra","tier":"T2","started_at":"2026-05-23T10:00:00Z","subagent_type":"worker-implementation","status":"running","branch":"hydra/commander/501"}],"last_updated":"2026-05-23T10:00:00Z"}' > "$ADV_STATE/active.json"
+jq -n '[{number:501,title:"evil\ttitle\nwith newline",url:"https://x/501",headRefName:"hydra/commander/501",isDraft:true,labels:[],statusCheckRollup:[{conclusion:"SUCCESS"}],reviewDecision:""}]' > "$ADV_MOCK/pr-list.json"
+adv_json="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$ADV_MOCK" --state-dir "$ADV_STATE" --json)"
+echo "$adv_json" | jq -e '.prs | length == 1' >/dev/null \
+  || { echo "FAIL: adversarial tab/newline title injected a phantom PR row"; echo "$adv_json"; rm -rf "$ADV_MOCK" "$ADV_STATE"; exit 1; }
+echo "$adv_json" | jq -e '.prs[0].title | (contains("\t") or contains("\n")) | not' >/dev/null \
+  || { echo "FAIL: adversarial title not flattened in JSON output"; echo "$adv_json"; rm -rf "$ADV_MOCK" "$ADV_STATE"; exit 1; }
+adv_rows="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$ADV_MOCK" --state-dir "$ADV_STATE" | grep -cE '^[[:space:]]+#501' || true)"
+rm -rf "$ADV_MOCK" "$ADV_STATE"
+[[ "$adv_rows" -eq 1 ]] || { echo "FAIL: adversarial title produced $adv_rows '#501' rows in human report (want 1)"; exit 1; }
 
 echo "SMOKE_OK"

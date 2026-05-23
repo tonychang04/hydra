@@ -79,14 +79,25 @@ all JSON handling, exit codes `0` success / `2` usage error / `1` I/O error).
   — the Commander-authored open PRs and everything needed to classify them.
   `--author` defaults to `@me` (the `gh auth`'d user that authors Commander PRs);
   overridable with `--author <login>`.
-- For unresolved-thread detection, `gh pr view <n> --repo <repo> --json
-  reviewThreads` per PR (review threads aren't available on `gh pr list`). Only
-  fetched for PRs that are otherwise green, to bound the number of calls.
-- `state/active.json` — the in-flight worker list. A PR is **matched** to a
-  worker when the PR's `headRefName` equals a worker's `branch` (primary join
-  key — branch is exact and already recorded per the active.json schema), OR the
-  issue number the PR closes equals the worker's ticket number (fallback for
-  pre-2026-04-17 entries without `branch`). No match → `orphaned`.
+- For the "review wants changes" signal, the **primary** source is
+  `reviewDecision` (carried on `gh pr list`, no extra call): `CHANGES_REQUESTED`
+  → needs-fix. A **secondary** granular signal is the count of unresolved review
+  threads. `reviewThreads` is NOT a field on `gh pr view --json` (only
+  `reviews`/`latestReviews`/`reviewDecision`/`reviewRequests` are), so the live
+  thread count is fetched via `gh api graphql` (`repository.pullRequest.reviewThreads`);
+  any failure falls back to "no threads" and `reviewDecision` still classifies
+  the PR. Threads are only checked for otherwise-green PRs to bound calls. The
+  offline self-test drives the thread path through the `--gh-mock` seam.
+  (`gh pr list --limit 1000` so a low default cap can't silently truncate orphans.)
+- `state/active.json` — the in-flight worker list (GLOBAL across all repos). A PR
+  is **matched** to a worker when the PR's `headRefName` equals a worker's
+  `branch` (primary join key — branch is exact and already recorded per the
+  active.json schema), OR the issue number the PR closes equals the worker's
+  ticket number (fallback for pre-2026-04-17 entries without `branch`; a
+  non-`#N` ticket like a Linear `LIN-123` is simply skipped, not an error). When
+  `--repo` is set, only workers for that repo are considered (matched on the
+  `repo` slug or a `local_path` basename) so a same-named branch in another repo
+  cannot falsely claim this PR. No match → `orphaned`.
 
 ### Classification contract (precedence order)
 
@@ -97,7 +108,7 @@ boolean field alongside.
 1. CI rollup is `FAILURE` / `ERROR` / `TIMED_OUT`  → `needs-fix` (reason: `ci-red`)
 2. CI rollup is `PENDING` (still running)          → `ci-pending` (reason: `ci-pending`; no action, re-check next tick)
 3. Otherwise CI is green (`SUCCESS` or no checks configured):
-   a. unresolved review thread present              → `needs-fix` (reason: `unresolved-threads`)
+   a. `reviewDecision == CHANGES_REQUESTED` **or** an unresolved review thread → `needs-fix` (reason: `changes-requested`)
    b. no `commander-reviewed` label                 → `needs-review-gate`
    c. `commander-reviewed` present **and** isDraft  → `ready-to-surface`
    d. `commander-reviewed` present **and** not draft → `merge-ready`

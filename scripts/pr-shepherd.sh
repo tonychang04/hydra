@@ -148,8 +148,11 @@ gh_pr_list_json() {
   fi
   local repo_args=()
   [[ -n "$repo" ]] && repo_args=(--repo "$repo")
+  # --limit 1000: gh defaults to 30 and a low cap silently truncates open PRs, so
+  # anything past the cap would be invisible to orphan detection (Codex review
+  # finding). 1000 is well above any realistic Commander-authored open-PR count.
   if ! gh pr list "${repo_args[@]}" \
-        --author "$author" --state open --limit 100 \
+        --author "$author" --state open --limit 1000 \
         --json number,title,headRefName,isDraft,labels,statusCheckRollup,reviewDecision,url \
         2>/dev/null; then
     echo "pr-shepherd: gh pr list failed (auth? network? repo?)" >&2
@@ -158,6 +161,15 @@ gh_pr_list_json() {
 }
 
 # Print the reviewThreads JSON object ({reviewThreads:[...]}) for one PR.
+#
+# NOTE: `reviewThreads` is NOT a field on `gh pr view --json` (the supported
+# review fields there are reviews / latestReviews / reviewDecision / reviewRequests).
+# Thread resolution lives only in GraphQL, so the live path queries it via
+# `gh api graphql`. The primary live "review wants changes" signal is the cheaper
+# `reviewDecision` (carried on `gh pr list`); this granular thread count is a
+# secondary refinement and the seam the offline self-test fixture drives via
+# <gh-mock>/threads-<n>.json. On any live failure we fall back to "no threads"
+# (the reviewDecision signal still classifies the PR). (Codex review finding.)
 gh_pr_threads_json() {
   local n="$1"
   if [[ -n "$gh_mock" ]]; then
@@ -175,11 +187,27 @@ gh_pr_threads_json() {
     echo "pr-shepherd: gh not found on PATH; cannot read review threads" >&2
     exit 1
   fi
-  local repo_args=()
-  [[ -n "$repo" ]] && repo_args=(--repo "$repo")
-  if ! gh pr view "$n" "${repo_args[@]}" --json reviewThreads 2>/dev/null; then
-    # A view failure for one PR shouldn't kill the whole run — treat as
-    # "threads unknown / none" so the PR still classifies on CI + labels.
+  # Resolve owner/name for the GraphQL query (required by the API). Fall back to
+  # the current repo when --repo wasn't passed.
+  local owner_name="$repo"
+  if [[ -z "$owner_name" ]]; then
+    owner_name="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")"
+  fi
+  if [[ -z "$owner_name" || "$owner_name" != */* ]]; then
+    echo '{"reviewThreads":[]}'
+    return 0
+  fi
+  local owner="${owner_name%%/*}" name="${owner_name##*/}"
+  # GraphQL: isResolved per review thread. Failure → empty (reviewDecision covers it).
+  if ! gh api graphql -f query='
+      query($owner:String!, $name:String!, $number:Int!) {
+        repository(owner:$owner, name:$name) {
+          pullRequest(number:$number) {
+            reviewThreads(first:100) { nodes { isResolved } }
+          }
+        }
+      }' -F owner="$owner" -F name="$name" -F number="$n" \
+      --jq '{reviewThreads: .data.repository.pullRequest.reviewThreads.nodes}' 2>/dev/null; then
     echo '{"reviewThreads":[]}'
     return 0
   fi
@@ -219,19 +247,41 @@ def ci_state(rollup):
 # -----------------------------------------------------------------------------
 # load active.json worker branches + ticket numbers for orphan detection
 # -----------------------------------------------------------------------------
-worker_branches=""   # newline-separated branch names
-worker_tickets=""    # newline-separated trailing #N ticket numbers
+# active.json is GLOBAL (all repos), so when --repo is set we restrict to workers
+# for that repo — otherwise a worker on repoB with branch hydra/commander/101
+# would falsely "claim" repoA's PR #101 (Codex review finding). The worker.repo
+# field may be the owner/name slug OR a local_path; we match either the exact
+# slug or a path whose basename equals the repo name.
+worker_branches=""   # newline-separated branch names (repo-scoped)
+worker_tickets=""    # newline-separated trailing #N ticket numbers (repo-scoped)
 if [[ -f "$ACTIVE_FILE" ]]; then
-  if ! worker_branches="$(jq -r '
-        (.workers // []) | map(.branch // empty) | .[]
-      ' "$ACTIVE_FILE" 2>/dev/null)"; then
+  # jq filter that selects the relevant workers. When $repo is "" (current repo
+  # unknown), keep all workers (best-effort, single-repo assumption).
+  repo_name="${repo##*/}"   # bare name for local_path basename match
+  worker_filter='
+    (.workers // [])
+    | map(select(
+        ($repo == "")
+        or (.repo == $repo)
+        or ((.repo // "" | split("/") | last) == $repo_name)
+      ))
+  '
+  if ! worker_branches="$(jq -r \
+        --arg repo "$repo" --arg repo_name "$repo_name" \
+        "$worker_filter"' | map(.branch // empty) | .[]' \
+        "$ACTIVE_FILE" 2>/dev/null)"; then
     echo "pr-shepherd: warning: $ACTIVE_FILE present but unparseable — treating fleet as empty" >&2
     worker_branches=""
   fi
-  worker_tickets="$(jq -r '
-        (.workers // [])
+  # Non-throwing trailing-#N extraction. `capture` raises when there's no match
+  # (e.g. a Linear ticket "LIN-123" has no trailing #N), and the `|| true` would
+  # then drop the ENTIRE ticket set, falsely orphaning branchless workers. Use a
+  # match-or-empty form so non-#N tickets are simply skipped (Codex review finding).
+  worker_tickets="$(jq -r \
+        --arg repo "$repo" --arg repo_name "$repo_name" \
+        "$worker_filter"'
         | map(.ticket // "")
-        | map(capture("#(?<n>[0-9]+)$") | .n)
+        | map((match("#([0-9]+)$") // null) | if . == null then empty else .captures[0].string end)
         | .[]
       ' "$ACTIVE_FILE" 2>/dev/null || true)"
 fi
@@ -270,7 +320,7 @@ core_lines="$(printf '%s' "$pr_list" | jq -r "
   (. // [])
   | .[]
   | [ (.number|tostring),
-      (.title // \"\"),
+      ((.title // \"\") | gsub(\"[\\\\r\\\\n\\\\t]+\"; \" \")),
       (.url // \"\"),
       (.headRefName // \"\"),
       (.isDraft // false | tostring),
@@ -285,14 +335,21 @@ results_jsonl=""
 while IFS="$US" read -r number title url branch is_draft has_label ci review_decision; do
   [[ -n "$number" ]] || continue
 
-  # unresolved threads: only fetch for otherwise-green PRs (bounds gh calls).
+  # Review "wants changes" signal — two sources, only checked for green PRs
+  # (bounds gh calls). reviewDecision (from `gh pr list`, no extra call) is the
+  # robust primary signal; the granular unresolved-thread count is a secondary
+  # refinement (and the offline-fixture seam). Either firing → needs-fix.
   unresolved="false"
   if [[ "$ci" == "green" ]]; then
-    threads_json="$(gh_pr_threads_json "$number")"
-    cnt="$(printf '%s' "$threads_json" | jq -r '
-      (.reviewThreads // []) | map(select((.isResolved // false) == false)) | length
-    ' 2>/dev/null || echo 0)"
-    [[ "$cnt" =~ ^[0-9]+$ ]] && [[ "$cnt" -gt 0 ]] && unresolved="true"
+    if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+      unresolved="true"
+    else
+      threads_json="$(gh_pr_threads_json "$number")"
+      cnt="$(printf '%s' "$threads_json" | jq -r '
+        (.reviewThreads // []) | map(select((.isResolved // false) == false)) | length
+      ' 2>/dev/null || echo 0)"
+      [[ "$cnt" =~ ^[0-9]+$ ]] && [[ "$cnt" -gt 0 ]] && unresolved="true"
+    fi
   fi
 
   # orphan?
@@ -305,7 +362,7 @@ while IFS="$US" read -r number title url branch is_draft has_label ci review_dec
   elif [[ "$ci" == "pending" ]]; then
     state="ci-pending"; reason="ci-pending"; action="wait (CI running); re-check next tick"
   elif [[ "$unresolved" == "true" ]]; then
-    state="needs-fix"; reason="unresolved-threads"; action="address review comments"
+    state="needs-fix"; reason="changes-requested"; action="address review comments"
   elif [[ "$has_label" != "true" ]]; then
     state="needs-review-gate"; reason="no-commander-reviewed-label"; action="spawn worker-review"
   elif [[ "$is_draft" == "true" ]]; then
@@ -377,10 +434,20 @@ if [[ "$total" -eq 0 ]]; then
   exit 0
 fi
 
-printf '%s' "$prs_array" | jq -r '
+# Render one row per PR. Fields are joined by US (0x1f), not TAB, and the title
+# is flattened to a single line — a PR title containing a literal tab or newline
+# would otherwise shift columns or inject phantom rows (same hazard build-board.sh
+# fixes with US). gsub squashes any CR/LF/TAB in the title to a single space.
+printf '%s' "$prs_array" | jq -r --arg us "$US" '
   .[]
-  | "#\(.number)\t\(.state)\t\(if .orphaned then "[orphaned] " else "" end)\(.title)\t→ \(.recommended_action)"
-' | while IFS=$'\t' read -r col_num col_state col_title col_action; do
+  | (.title | gsub("[\r\n\t]+"; " ")) as $t
+  | [ "#\(.number)",
+      .state,
+      "\(if .orphaned then "[orphaned] " else "" end)\($t)",
+      "→ \(.recommended_action)"
+    ] | join($us)
+' | while IFS="$US" read -r col_num col_state col_title col_action; do
+  [[ -n "$col_num" ]] || continue
   printf '  %-6s %-18s %s\n' "$col_num" "$col_state" "$col_title"
   printf '         %s\n' "$col_action"
 done
