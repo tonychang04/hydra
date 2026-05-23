@@ -376,6 +376,213 @@ else
   sed 's/^/    /' "$tmpdir/t8.out"
 fi
 
+# --- Test 9: --check-due once/day guard ----------------------------------
+# Helper: run --check-due against a state dir, return the exit code.
+run_check_due() {
+  local state_dir="$1" now="$2"
+  set +e
+  NO_COLOR=1 "$PROMOTE" --check-due --state-dir "$state_dir" --now "$now" \
+    > /dev/null 2>&1
+  local ec=$?
+  set -e
+  echo "$ec"
+}
+
+# Helper: write a minimal autopickup.json with a given last_promotion_run.
+# Pass the literal word "null" to emit a JSON null, or "absent" to omit the key.
+write_autopickup() {
+  local path="$1" last_run="$2"
+  if [[ "$last_run" == "absent" ]]; then
+    cat > "$path" <<'EOF'
+{"enabled": false, "interval_min": 30, "last_run": null, "last_picked_count": 0, "consecutive_rate_limit_hits": 0}
+EOF
+  elif [[ "$last_run" == "null" ]]; then
+    cat > "$path" <<'EOF'
+{"enabled": false, "interval_min": 30, "last_run": null, "last_picked_count": 0, "consecutive_rate_limit_hits": 0, "last_promotion_run": null}
+EOF
+  else
+    jq -n --arg lr "$last_run" '{enabled: false, interval_min: 30, last_run: null, last_picked_count: 0, consecutive_rate_limit_hits: 0, last_promotion_run: $lr}' > "$path"
+  fi
+}
+
+say "Test 9: --check-due is DUE (exit 0) when last_promotion_run is null"
+root9="$tmpdir/t9"
+mkdir -p "$root9/state"
+write_autopickup "$root9/state/autopickup.json" null
+ec=$(run_check_due "$root9/state" "2026-05-21")
+if [[ "$ec" -eq 0 ]]; then
+  ok "exit 0 (due) when last_promotion_run is null"
+else
+  bad "expected exit 0 (due), got $ec"
+fi
+
+say "Test 10: --check-due is DUE (exit 0) when last_promotion_run is a past date"
+root10="$tmpdir/t10"
+mkdir -p "$root10/state"
+write_autopickup "$root10/state/autopickup.json" "2026-05-20"
+ec=$(run_check_due "$root10/state" "2026-05-21")
+if [[ "$ec" -eq 0 ]]; then
+  ok "exit 0 (due) when last_promotion_run is yesterday"
+else
+  bad "expected exit 0 (due), got $ec"
+fi
+
+say "Test 11: --check-due is NOT DUE (exit 10) when last_promotion_run == today"
+root11="$tmpdir/t11"
+mkdir -p "$root11/state"
+write_autopickup "$root11/state/autopickup.json" "2026-05-21"
+ec=$(run_check_due "$root11/state" "2026-05-21")
+if [[ "$ec" -eq 10 ]]; then
+  ok "exit 10 (not due) when already promoted today"
+else
+  bad "expected exit 10 (not due), got $ec"
+fi
+
+say "Test 12: --check-due is DUE (exit 0) when autopickup.json is missing"
+root12="$tmpdir/t12"
+mkdir -p "$root12/state"
+# No autopickup.json — fresh install has never run promotion.
+ec=$(run_check_due "$root12/state" "2026-05-21")
+if [[ "$ec" -eq 0 ]]; then
+  ok "exit 0 (due) when autopickup.json is absent (fresh install)"
+else
+  bad "expected exit 0 (due), got $ec"
+fi
+
+say "Test 13: --check-due is DUE (exit 0) when last_promotion_run key absent"
+root13="$tmpdir/t13"
+mkdir -p "$root13/state"
+write_autopickup "$root13/state/autopickup.json" absent
+ec=$(run_check_due "$root13/state" "2026-05-21")
+if [[ "$ec" -eq 0 ]]; then
+  ok "exit 0 (due) when last_promotion_run key is absent"
+else
+  bad "expected exit 0 (due), got $ec"
+fi
+
+# --- Test 14: --greeting-count sums per-repo PR counts -------------------
+say "Test 14: --greeting-count sums two repos via HYDRA_PROMOTION_COUNT_CMD"
+root14="$tmpdir/t14"
+mkdir -p "$root14/state"
+cat > "$root14/state/repos.json" <<'EOF'
+{
+  "repos": [
+    {"owner": "o", "name": "alpha", "local_path": "/tmp/a", "enabled": true},
+    {"owner": "o", "name": "beta",  "local_path": "/tmp/b", "enabled": true}
+  ]
+}
+EOF
+set +e
+out=$(HYDRA_PROMOTION_COUNT_CMD='echo 1' NO_COLOR=1 "$PROMOTE" \
+  --greeting-count --repos-file "$root14/state/repos.json" 2>/dev/null)
+ec=$?
+set -e
+if [[ "$ec" -eq 0 ]]; then
+  ok "exit 0 as expected"
+else
+  bad "expected exit 0, got $ec"
+fi
+if [[ "$out" == "2" ]]; then
+  ok "summed two repos × 1 PR each → 2"
+else
+  bad "expected '2', got '$out'"
+fi
+
+say "Test 15: --greeting-count prints 0 when no promotion PRs"
+set +e
+out=$(HYDRA_PROMOTION_COUNT_CMD='echo 0' NO_COLOR=1 "$PROMOTE" \
+  --greeting-count --repos-file "$root14/state/repos.json" 2>/dev/null)
+ec=$?
+set -e
+if [[ "$ec" -eq 0 && "$out" == "0" ]]; then
+  ok "prints 0 when no promotion PRs (greeting stays silent)"
+else
+  bad "expected exit 0 and '0', got exit $ec out '$out'"
+fi
+
+say "Test 16: --greeting-count prints 0 when repos.json missing (best-effort)"
+set +e
+out=$(NO_COLOR=1 "$PROMOTE" --greeting-count \
+  --repos-file "$tmpdir/does-not-exist.json" 2>/dev/null)
+ec=$?
+set -e
+if [[ "$ec" -eq 0 && "$out" == "0" ]]; then
+  ok "prints 0 when repos.json missing (never crashes the greeting)"
+else
+  bad "expected exit 0 and '0', got exit $ec out '$out'"
+fi
+
+say "Test 17: --greeting-count skips disabled repos"
+root17="$tmpdir/t17"
+mkdir -p "$root17/state"
+cat > "$root17/state/repos.json" <<'EOF'
+{
+  "repos": [
+    {"owner": "o", "name": "alpha", "local_path": "/tmp/a", "enabled": true},
+    {"owner": "o", "name": "beta",  "local_path": "/tmp/b", "enabled": false}
+  ]
+}
+EOF
+set +e
+out=$(HYDRA_PROMOTION_COUNT_CMD='echo 3' NO_COLOR=1 "$PROMOTE" \
+  --greeting-count --repos-file "$root17/state/repos.json" 2>/dev/null)
+ec=$?
+set -e
+if [[ "$ec" -eq 0 && "$out" == "3" ]]; then
+  ok "counted only the 1 enabled repo (3), skipped the disabled one"
+else
+  bad "expected exit 0 and '3', got exit $ec out '$out'"
+fi
+
+# --- Test 18: heredoc hardening — inputs are literal data, never code -----
+# Invariant under test (#166): build_skill_body treats $quote / $description /
+# $context as literal data — command substitution and backticks pass through
+# verbatim and are never executed. (Note: bash heredoc expansion is already
+# single-pass so the pre-#166 unquoted heredocs weren't exploitable via data
+# values; this test locks down the invariant for the quoted-template rewrite
+# and guards against a future regression that puts a literal $(...) in the
+# template body.) We write the harness to a temp file rather than inlining a
+# backtick-containing $() here, which would trip the bash parser.
+say "Test 18: build_skill_body renders \$(...) / backticks as literal (no execution)"
+pwned="$tmpdir/PWNED_marker"
+rm -f "$pwned"
+harness="$tmpdir/inject-harness.sh"
+inject_out="$tmpdir/inject.out"
+cat > "$harness" <<'HARNESS'
+set -euo pipefail
+PROMOTE="$1"
+PWNED="$2"
+CITATIONS_START="<!-- hydra:citations-start -->"
+CITATIONS_END="<!-- hydra:citations-end -->"
+# Pull build_skill_body's definition out of the script under test.
+eval "$(awk '/^build_skill_body\(\) \{/{p=1} p{print} p&&/^\}$/{exit}' "$PROMOTE")"
+# Malicious inputs: command substitution + backticks. Built without inlining
+# raw backticks into a $() context.
+bt='`'
+evil="boom \$(touch $PWNED) and ${bt}touch $PWNED${bt}"
+build_skill_body "s" "d \$(touch $PWNED)" "$evil" "learnings-hydra.md" "c" "cites"
+HARNESS
+set +e
+bash "$harness" "$PROMOTE" "$pwned" > "$inject_out" 2>/dev/null
+set -e
+if [[ -e "$pwned" ]]; then
+  bad "injection EXECUTED — marker file was created (hardening regressed)"
+  rm -f "$pwned"
+else
+  ok "no command executed (marker file absent)"
+fi
+if grep -qF 'boom $(touch' "$inject_out"; then
+  ok "command substitution rendered as literal text"
+else
+  bad "evil quote not rendered literally; output:"
+  sed 's/^/    /' "$inject_out"
+fi
+if grep -qF '`touch' "$inject_out"; then
+  ok "backticks rendered as literal text"
+else
+  bad "backticks not rendered literally"
+fi
+
 # --- Summary -------------------------------------------------------------
 
 echo ""
