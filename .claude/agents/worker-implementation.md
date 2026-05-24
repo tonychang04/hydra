@@ -66,6 +66,42 @@ The milestone, in order, as your FIRST concrete actions after Step 0:
 
 Because the draft PR already exists from this milestone, the Flow's PR step (step 6) is a **finalize**, not a create: do NOT call `gh pr create` again (it errors "a pull request for branch X already exists" — see `memory/learnings-hydra.md` 2026-04-17 #84). Push the final commits (they append to the existing PR) and update the body with `gh api --method PATCH /repos/.../pulls/<n> -f body=…` to the full summary + test plan.
 
+## Anti-stall discipline (no foreground-blocking commands, MANDATORY)
+
+**The harness runs a ~600s no-progress stall watchdog: a worker that emits NO stream output for ~600 seconds is assumed dead and KILLED — losing any uncommitted work.** On 2026-05-23 this killed four-plus workers in one session, every time because the worker ran a command that produced no stream output for a long stretch. Stop emitting those commands. Spec: `docs/specs/2026-05-24-worker-anti-stall-discipline.md`.
+
+1. **NEVER foreground a long-lived / quiet command.** Dev servers (`vite`, `npm run dev`, `next dev`), anything with `--watch`, and anything that does not RETURN will block the stream until the watchdog kills you. Use **build-only verification that EXITS** instead: `npm run build`, `npm test` / `vitest run` (the one-shot forms — NOT `vitest` interactive, NOT `vitest --watch`). A command that exits is safe; a command that serves or watches is not.
+
+2. **To run a server for a runtime check: background it, poll with `curl`, then KILL it — never foreground.**
+
+   ```bash
+   # Background the server; capture its PID; ALWAYS kill it on exit.
+   npm run preview >/tmp/srv.log 2>&1 &  # or `node server.js &`, etc.
+   srv_pid=$!
+   trap 'kill "$srv_pid" 2>/dev/null || true' EXIT INT TERM
+   # Poll until healthy (bounded — emits output each loop, keeps the stream alive).
+   for i in $(seq 1 30); do
+     curl -fsS http://localhost:3000/health && break
+     sleep 1
+   done
+   # ...do the runtime check via curl, then the trap kills the server.
+   ```
+
+3. **Do NOT assume `timeout` exists.** macOS ships neither `timeout` nor `gtimeout` — invoking it returns exit **127** ("command not found"), so "wrap it in `timeout`" silently does nothing. To bound a command portably, run it in the background and arm a `sleep N && kill` watchdog:
+
+   ```bash
+   slow_cmd &                 # the command you want to bound
+   cmd_pid=$!
+   ( sleep 120 && kill "$cmd_pid" 2>/dev/null ) &   # watchdog: kill after 120s
+   watch_pid=$!
+   wait "$cmd_pid"; rc=$?
+   kill "$watch_pid" 2>/dev/null || true            # cancel the watchdog if cmd finished
+   ```
+
+   If you detect a real `timeout`/`gtimeout` on PATH you may use it, but never *assume* it.
+
+4. **Commit + push frequently so a stall is always recoverable.** This reinforces the Early-PR doctrine above (#188): each increment on the remote means a stall leaves a recoverable draft PR, not lost work. Prevention (this section) and recoverability (early-PR) are two halves of the same rule.
+
 ## Flow
 
 1. Decide the skill chain based on the ticket. Minimum: (spec if non-trivial) → **open the draft PR early** (see "Early-PR discipline" above — skeleton commit → push → draft PR is your FIRST milestone) → implement → run repo-documented tests → `/review` → `/codex review` → finalize the draft PR (step 6). The draft PR opens *before* implementation, not after `/codex review`.
