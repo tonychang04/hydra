@@ -1,0 +1,4 @@
+{"branch":"hydra/commander/305","verdict":"rescue-commits","commits_ahead":2}
+{"branch":"hydra/commander/306","verdict":"nothing-to-rescue","commits_ahead":0,"dirty":false}
+{"branch":"hydra/commander/302","verdict":"rescue-uncommitted","commits_ahead":1,"dirty":true}
+{"branch":"hydra/commander/303","verdict":"worker-mid-tool-call","tool":"Bash"}

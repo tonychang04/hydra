@@ -3107,6 +3107,41 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "autopickup-tick-script",
+      "_description": "Script-only self-test for scripts/autopickup-tick.sh (spec: docs/specs/2026-05-24-self-driving-autopickup-tick.md, ticket #228). The P1/autonomy capstone: chains preflight + pr-shepherd reconcile + completion-rescue scan + policy-aware merge surfacing into ONE deterministic, report-only tick (REPORTS; never spawns/reviews/merges). Exercises --help / --bogus / bash -n, then runs the offline smoke harness self-test/fixtures/autopickup-tick/run-smoke.sh which drives the tick against a --gh-mock PR fixture (one PR per shepherd state + an orphan + a fail-closed no-file PR), a fixture state/active.json, a --rescue-mock JSONL (standing in for rescue-worker --probe verdicts), and a fixture repos.json with mixed merge policies. Asserts the integrated --json shape AND the auto-merge SAFETY RAILS: T3 is never auto-merge-eligible; only review-CLEAN, non-safety-rail PRs on an auto* policy are eligible; rail-touching (policy.md) + fail-closed (no file data) PRs surface for human merge; the PAUSE path blocks spawn but still runs the read-only scans. No network, no gh, no Claude auth.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "autopickup-tick.sh bash -n clean",
+          "cmd": "bash -n scripts/autopickup-tick.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "autopickup-tick.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/autopickup-tick.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: autopickup-tick.sh"
+        },
+        {
+          "name": "autopickup-tick.sh rejects an unknown flag (exit 2)",
+          "cmd": "NO_COLOR=1 scripts/autopickup-tick.sh --bogus 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo BADFLAG_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BADFLAG_OK"
+        },
+        {
+          "name": "autopickup-tick smoke harness (preflight + shepherd + rescue + merge surfacing + T3-never + safety-rail)",
+          "cmd": "self-test/fixtures/autopickup-tick/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
