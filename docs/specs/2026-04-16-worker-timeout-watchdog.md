@@ -94,6 +94,23 @@ The live `--rescue` path is exercised on real worktrees by commander itself; the
 
 **Rollback:** delete the new "Worker timeout watchdog" section from `CLAUDE.md`, delete `scripts/rescue-worker.sh`, and remove the two golden-case entries. Commander falls back to the legacy path (operator notices dead worker in `state/active.json`, runs rescue by hand). Single revert commit.
 
+## Probe on completion (#219)
+
+**Added 2026-05-23 (ticket #219).** The original watchdog above fires only on the *timeout* path — a worker silent >12 min with no completion log. But a worker that finishes **cleanly** can still leave verified work behind: it writes its `logs/<ticket>.json`, reports done, and yet stops one commit (or one push) short. Dogfooding caught this on #198 — the worker opened draft PR #218 (the #216 early-PR doctrine), then on completion left 6 files of verified codex-review fixes uncommitted; Commander had to rescue-commit by hand (`ced2b494`). The early-PR doctrine covers stalls, not a clean completion that stops short of its final commit/push.
+
+**New procedure:** run the rescue probe on **every worker completion notification**, not just on timeouts. When a `worker-implementation` reports done (or its `logs/<ticket>.json` lands), Commander runs `scripts/rescue-worker.sh --probe <worktree> <branch> <ticket>` **before** treating the ticket as finished and handing it to the review gate. Branch on the verdict:
+
+- `nothing-to-rescue` / `push-only` → completion is clean. Proceed to the Commander review gate as normal.
+- `rescue-uncommitted` / `rescue-commits` / `rescue-unpushed` → verified work was left behind. Run `scripts/rescue-worker.sh --rescue <worktree> <branch> <ticket>` (commits any dirty work with a `rescue:` marker, rebases onto main, pushes), label the ticket `commander-rescued`, then continue to the review gate against the now-pushed branch. No human inspection needed — this is the auto-rescue the ticket asks for.
+- `rescue-conflict` (exit 3) → surface to the operator (semantic conflict; not Commander's to resolve).
+- The liveness verdicts (`flaky-tool-retry` exit 5, `worker-mid-tool-call` exit 6, `worker-looping` exit 7) describe a *running* worker and should not appear on a *completed* one. If one does fire on the completion path, treat its marker/trace as stale and re-probe; if it persists, fall back to the timeout-watchdog handling for that verdict.
+
+**New `rescue-unpushed` verdict.** The committed-but-unpushed case (#198: draft PR pushed early via #216, then newer commits never pushed) gets its own probe verdict, distinct from `rescue-commits` ("committed locally, branch never pushed"). It is detected DIRECTLY via `<remote>/<branch>..HEAD` (orthogonal to the base-ref used for commits-ahead/rebase) and carries `unpushed: N`. Both `rescue-commits` and `rescue-unpushed` are rescued identically by `--rescue` (which now pushes unpushed commits, not just commits dirty work). The split keeps Commander's reasoning honest: `rescue-unpushed` touches already-shared history (the remote branch exists), so the push updates an existing PR branch rather than creating one. `--rescue` never force-pushes — a divergent remote makes the push fail loudly (exit 1) and Commander surfaces, rather than clobbering.
+
+**Secrets safety.** `--rescue` commits dirty work via `git add -A`, which honors `.gitignore` — so gitignored secrets (`.env`, `secrets/`, etc., all gitignored repo-wide) are never committed by a rescue. The self-test fixture asserts this explicitly (`self-test/fixtures/rescue-worker/run.sh` drops an untracked gitignored `.env` and verifies the rescue commit excludes it).
+
+Spec: `docs/specs/2026-05-23-auto-rescue-on-completion.md` (ticket #219).
+
 ## Implementation notes
 
 (Filled in after the PR lands.)

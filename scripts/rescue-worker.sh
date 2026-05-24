@@ -13,11 +13,23 @@
 #                   Verdicts:
 #                     { "verdict": "rescue-commits",     "commits_ahead": N }
 #                     { "verdict": "rescue-uncommitted", "commits_ahead": N, "dirty": true }
+#                     { "verdict": "rescue-unpushed",    "commits_ahead": N, "unpushed": N, "pushed": true }
 #                     { "verdict": "push-only",          "commits_ahead": N, "pushed": false }
 #                     { "verdict": "nothing-to-rescue",  "commits_ahead": 0, "dirty": false }
 #                     { "verdict": "flaky-tool-retry",   "tool": "...", "fallback": "...", ... }
 #                     { "verdict": "worker-looping",       "tool": "...", "error_type": "...", "repeat": N, ... }
 #                     { "verdict": "worker-mid-tool-call", "tool": "...", ... }
+#
+#                   The rescue-unpushed verdict (ticket #219) is the
+#                   "completed-but-dirty" case where the worker already pushed a
+#                   draft PR (so <remote>/<branch> exists) and then left newer
+#                   verified commits unpushed. It is distinct from rescue-commits
+#                   ("committed locally, branch NEVER pushed"). Both are rescued
+#                   the same way (--rescue commits any dirty work + pushes), but
+#                   the distinct verdict lets commander reason about already-shared
+#                   history. Detected DIRECTLY via <remote>/<branch>..HEAD so it
+#                   is orthogonal to the base-ref used for commits-ahead/rebase.
+#                   Spec: docs/specs/2026-05-23-auto-rescue-on-completion.md.
 #
 #                   The flaky-tool-retry verdict (exit 5) fires when the worker
 #                   left a recent .hydra/flaky-tool.json marker recording
@@ -46,9 +58,14 @@
 #                   Spec: docs/specs/2026-05-21-trace-fed-watchdog-forensics.md
 #                   (ticket #206).
 #
-#   --rescue        Mutating. Commits any uncommitted changes, fetches origin/main,
-#                   rebases (fast-forward only; bails on conflict with exit 3), and
-#                   pushes the branch. Prints the branch name on stdout on success.
+#   --rescue        Mutating. Commits any uncommitted changes (with a clear
+#                   "rescue:" marker; git add -A never stages gitignored secrets
+#                   like .env), fetches origin/main, rebases (fast-forward only;
+#                   bails on conflict with exit 3), and pushes the branch — this
+#                   one push covers both the never-pushed (rescue-commits) and the
+#                   committed-but-unpushed (rescue-unpushed, ticket #219) cases.
+#                   Prints the branch name on stdout on success. Never force-pushes:
+#                   a divergent remote branch makes the push fail loudly (exit 1).
 #
 #   --probe-review  Non-mutating. Checks a PR on GitHub for a landed review
 #                   artifact after a worker-review stream-idle timeout. Two
@@ -114,6 +131,7 @@
 # Spec: docs/specs/2026-04-17-review-worker-rescue.md   (ticket #75)
 # Spec: docs/specs/2026-05-21-flaky-tool-probe-verdict.md (ticket #190)
 # Spec: docs/specs/2026-05-21-trace-fed-watchdog-forensics.md (ticket #206)
+# Spec: docs/specs/2026-05-23-auto-rescue-on-completion.md (ticket #219)
 
 set -euo pipefail
 
@@ -156,8 +174,11 @@ Options:
   -h, --help           Show this help.
 
 Probe verdicts (--probe, stdout JSON):
-  rescue-commits       local commits ahead of base, not pushed
+  rescue-commits       local commits ahead of base, remote branch NOT pushed yet
   rescue-uncommitted   uncommitted/untracked changes in the worktree
+  rescue-unpushed      remote PR branch exists but local HEAD is ahead of it —
+                       committed-but-unpushed verified work (ticket #219); the
+                       completed-but-dirty case from #198. --rescue pushes it.
   push-only            commits exist and already match the remote branch
   nothing-to-rescue    clean worktree, no commits ahead — idle ghost
   flaky-tool-retry     worker is ALIVE but blocked on a flaky external tool
@@ -194,6 +215,7 @@ Spec: docs/specs/2026-04-16-worker-timeout-watchdog.md (ticket #45)
 Spec: docs/specs/2026-04-17-review-worker-rescue.md   (ticket #75)
 Spec: docs/specs/2026-05-21-flaky-tool-probe-verdict.md (ticket #190)
 Spec: docs/specs/2026-05-21-trace-fed-watchdog-forensics.md (ticket #206)
+Spec: docs/specs/2026-05-23-auto-rescue-on-completion.md (ticket #219)
 EOF
 }
 
@@ -342,6 +364,21 @@ is_dirty() {
 
 remote_branch_exists() {
   git_in rev-parse --verify "$remote/$branch" >/dev/null 2>&1
+}
+
+# Ticket #219: count local commits NOT yet on the remote PR branch
+# (<remote>/<branch>..HEAD). This is computed DIRECTLY against the remote branch,
+# independent of resolve_base_ref (which may resolve the base to the remote
+# branch itself, the remote main, or local main for fixtures). It answers the
+# precise "committed-but-unpushed" question that drives the rescue-unpushed
+# verdict. Prints 0 when the remote branch doesn't exist (use commits_ahead /
+# the rescue-commits path for the never-pushed case).
+count_unpushed() {
+  if ! remote_branch_exists; then
+    echo 0
+    return 0
+  fi
+  git_in rev-list --count "$remote/$branch..HEAD" 2>/dev/null || echo 0
 }
 
 # Ticket #190: detect a worker that is ALIVE but blocked on a flaky external
@@ -619,22 +656,29 @@ if [[ "$mode" == "probe" ]]; then
     exit 0
   fi
 
+  # Ticket #219: a worker may finish CLEANLY but leave commits unpushed to its
+  # PR branch (the #198 case: draft PR pushed early via #216, then newer verified
+  # commits never pushed). Detect this DIRECTLY against the remote branch — it is
+  # orthogonal to commits_ahead (counted vs the resolved base), so we check it
+  # before the commits_ahead branch. unpushed > 0 implies the remote branch
+  # exists (count_unpushed returns 0 otherwise).
+  unpushed="$(count_unpushed)"
+  if [[ "$unpushed" =~ ^[0-9]+$ ]] && [[ "$unpushed" -gt 0 ]]; then
+    printf '{"verdict":"rescue-unpushed","commits_ahead":%s,"unpushed":%s,"dirty":false,"pushed":true}\n' \
+      "$commits_ahead" "$unpushed"
+    exit 0
+  fi
+
   if [[ "$commits_ahead" -gt 0 ]]; then
     if [[ "$pushed" == "false" ]]; then
       printf '{"verdict":"rescue-commits","commits_ahead":%s,"dirty":false,"pushed":false}\n' \
         "$commits_ahead"
     else
-      # local commits exist AND remote is up to date with them? → push-only
-      # (we're ahead of origin/main but not of origin/<branch>)
-      local_head="$(git_in rev-parse HEAD)"
-      remote_head="$(git_in rev-parse "$remote/$branch" 2>/dev/null || echo "")"
-      if [[ "$local_head" == "$remote_head" ]]; then
-        printf '{"verdict":"push-only","commits_ahead":%s,"dirty":false,"pushed":true}\n' \
-          "$commits_ahead"
-      else
-        printf '{"verdict":"rescue-commits","commits_ahead":%s,"dirty":false,"pushed":true}\n' \
-          "$commits_ahead"
-      fi
+      # Commits exist AND the remote branch is fully up to date with local HEAD
+      # (unpushed == 0, checked above) → push-only. We're ahead of the base
+      # (e.g. origin/main) but the PR branch already has everything.
+      printf '{"verdict":"push-only","commits_ahead":%s,"dirty":false,"pushed":true}\n' \
+        "$commits_ahead"
     fi
     exit 0
   fi

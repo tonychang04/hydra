@@ -661,4 +661,168 @@ if ! printf '%s' "$help_out" | grep -qE '^[[:space:]]*7[[:space:]]'; then
   exit 1
 fi
 
+# ===========================================================================
+# Ticket #219: auto-rescue on completion. A worker that finishes CLEANLY but
+# leaves verified work committed-but-unpushed (the #198 case: draft PR pushed
+# early via #216, then newer commits never pushed) must be detectable distinctly
+# from "never pushed at all". --probe gains a "rescue-unpushed" verdict; --rescue
+# pushes the unpushed commits; and --rescue must NEVER commit gitignored secrets.
+# These cases need a real remote, so they build a local bare repo as `origin`.
+# Spec: docs/specs/2026-05-23-auto-rescue-on-completion.md
+# ===========================================================================
+
+# A dedicated repo pair with a real (local bare) remote so push paths work
+# offline. Keeps $tmp/$ftmp/$ttmp state undisturbed.
+rtmp_root="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$mock" "$ftmp" "$ttmp" "$trace_dir" "$rtmp_root"' EXIT
+rremote="$rtmp_root/remote.git"
+rwork="$rtmp_root/work"
+git init -q --bare "$rremote"
+(
+  cd "$rtmp_root"
+  git clone -q "$rremote" work
+  cd work
+  git config user.email rescue-unpushed@example.com
+  git config user.name "rescue-unpushed fixture"
+  git symbolic-ref HEAD refs/heads/main
+  echo "baseline" > base.txt
+  git add base.txt
+  git commit -q -m "init"
+  git push -q origin main
+  git checkout -q -b hydra/commander/219
+)
+
+# ---- 34. rescue-commits regression: committed, NO remote branch → pushed:false
+# Before the early-PR push, the branch only exists locally. This is the classic
+# timeout-rescue path and must stay rescue-commits with pushed:false.
+( cd "$rwork" && echo c1 > c1.txt && git add c1.txt && git commit -q -m "wip 1" )
+out="$("$RESCUE" --probe "$rwork" hydra/commander/219 219)"
+if ! printf '%s' "$out" | grep -q '"verdict":"rescue-commits"'; then
+  echo "FAIL: committed + no remote branch should be rescue-commits; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"pushed":false'; then
+  echo "FAIL: rescue-commits (no remote branch) should report pushed:false; got: $out" >&2
+  exit 1
+fi
+
+# ---- 35. nothing-left regression: after the early draft-PR push, local==remote
+# so there is nothing unpushed. The probe must NOT report rescue-unpushed (the
+# truthful verdict is push-only or nothing-to-rescue depending on base ref).
+( cd "$rwork" && git push -q -u origin hydra/commander/219 )
+out="$("$RESCUE" --probe "$rwork" hydra/commander/219 219)"
+if printf '%s' "$out" | grep -q '"verdict":"rescue-unpushed"'; then
+  echo "FAIL: local==remote must NOT be rescue-unpushed; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -qE '"verdict":"(push-only|nothing-to-rescue)"'; then
+  echo "FAIL: after draft-PR push (local==remote) should be push-only/nothing-to-rescue; got: $out" >&2
+  exit 1
+fi
+
+# ---- 36. rescue-unpushed: remote branch exists but local HEAD is ahead → NEW.
+# This is the #198 bug: draft PR pushed, then a 2nd verified commit never pushed.
+( cd "$rwork" && echo c2 > c2.txt && git add c2.txt && git commit -q -m "verified fixes, never pushed" )
+out="$("$RESCUE" --probe "$rwork" hydra/commander/219 219)"
+if ! printf '%s' "$out" | grep -q '"verdict":"rescue-unpushed"'; then
+  echo "FAIL: committed-but-unpushed (remote branch behind) should be rescue-unpushed; got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"pushed":true'; then
+  echo "FAIL: rescue-unpushed should report pushed:true (the branch exists); got: $out" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q '"unpushed":1'; then
+  echo "FAIL: rescue-unpushed should report unpushed:1; got: $out" >&2
+  exit 1
+fi
+# Must NOT regress to the old contradictory rescue-commits+pushed:true.
+if printf '%s' "$out" | grep -q '"verdict":"rescue-commits"'; then
+  echo "FAIL: committed-but-unpushed must be rescue-unpushed, not rescue-commits; got: $out" >&2
+  exit 1
+fi
+
+# ---- 37. --rescue pushes the unpushed commit to the PR branch ----
+# Use the real local remote (no --base override) so the script fetches+rebases+
+# pushes for real. After rescue, origin/<branch> must equal local HEAD.
+out="$("$RESCUE" --rescue "$rwork" hydra/commander/219 219)"
+ec=$?
+if [[ "$ec" -ne 0 ]]; then
+  echo "FAIL: --rescue on committed-but-unpushed expected exit 0, got $ec; out=$out" >&2
+  exit 1
+fi
+# --rescue prints git fetch/rebase/push progress on stdout, then the branch name
+# as the LAST line (the documented contract Commander reads). Check the tail.
+last_line="$(printf '%s\n' "$out" | tail -n1)"
+if [[ "$last_line" != "hydra/commander/219" ]]; then
+  echo "FAIL: --rescue should print the branch name as its last stdout line; got last: '$last_line' (full: $out)" >&2
+  exit 1
+fi
+local_head="$(cd "$rwork" && git rev-parse HEAD)"
+remote_head="$(cd "$rwork" && git rev-parse origin/hydra/commander/219)"
+if [[ "$local_head" != "$remote_head" ]]; then
+  echo "FAIL: after --rescue, origin branch ($remote_head) should equal local HEAD ($local_head)" >&2
+  exit 1
+fi
+# A fresh probe now sees nothing left to rescue.
+out="$("$RESCUE" --probe "$rwork" hydra/commander/219 219)"
+if ! printf '%s' "$out" | grep -qE '"verdict":"(push-only|nothing-to-rescue)"'; then
+  echo "FAIL: after --rescue push, probe should be push-only/nothing-to-rescue; got: $out" >&2
+  exit 1
+fi
+
+# ---- 38. --rescue NEVER commits gitignored secrets ----
+# Build a separate clean worktree with a .gitignore that excludes .env, drop an
+# untracked .env (secret) plus a real work.txt, then --rescue. The rescue commit
+# must contain work.txt but NOT .env. Uses --base refs/heads/main (no remote
+# needed — we only assert what got committed, not the push).
+stmp="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$mock" "$ftmp" "$ttmp" "$trace_dir" "$rtmp_root" "$stmp"' EXIT
+(
+  cd "$stmp"
+  git init -q
+  git config user.email secret-fixture@example.com
+  git config user.name "secret fixture"
+  git symbolic-ref HEAD refs/heads/main
+  printf '.env\n' > .gitignore
+  git add .gitignore
+  git commit -q -m "init with gitignore"
+  git checkout -q -b hydra/commander/219
+)
+printf 'SECRET_TOKEN=should-never-be-committed\n' > "$stmp/.env"
+printf 'verified worker output\n' > "$stmp/work.txt"
+# Sanity: git agrees .env is ignored.
+if ! ( cd "$stmp" && git check-ignore .env >/dev/null 2>&1 ); then
+  echo "FAIL: fixture .gitignore did not ignore .env" >&2
+  exit 1
+fi
+out="$("$RESCUE" --rescue "$stmp" hydra/commander/219 219 --base refs/heads/main)"
+ec=$?
+if [[ "$ec" -ne 0 ]]; then
+  echo "FAIL: --rescue (secrets fixture) expected exit 0, got $ec; out=$out" >&2
+  exit 1
+fi
+# The rescue commit must include work.txt.
+committed="$(cd "$stmp" && git show --stat --name-only --format= HEAD)"
+if ! printf '%s' "$committed" | grep -qx 'work.txt'; then
+  echo "FAIL: rescue commit should include work.txt; committed: $committed" >&2
+  exit 1
+fi
+# The rescue commit must NOT include .env, and .env must not be tracked at all.
+if printf '%s' "$committed" | grep -qx '.env'; then
+  echo "FAIL: rescue commit committed gitignored .env (secret leak!); committed: $committed" >&2
+  exit 1
+fi
+if ( cd "$stmp" && git ls-files --error-unmatch .env >/dev/null 2>&1 ); then
+  echo "FAIL: .env is tracked after rescue (secret leak!)" >&2
+  exit 1
+fi
+
+# ---- 39. --help documents the rescue-unpushed verdict ----
+help_out="$("$RESCUE" --help 2>&1)"
+if ! printf '%s' "$help_out" | grep -q 'rescue-unpushed'; then
+  echo "FAIL: --help missing 'rescue-unpushed'" >&2
+  exit 1
+fi
+
 echo "PASS: scripts/rescue-worker.sh probe fixture roundtrip"
