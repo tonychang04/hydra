@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://hydra/state/schemas/setup-complete.schema.json",
   "title": "Hydra setup-complete fingerprint",
-  "description": "Marker written by scripts/hydra-setup.sh after the first-time setup wizard completes. Future session-greeting logic can check for this file to decide whether to nag a fresh operator. See docs/specs/2026-04-17-setup-wizard.md (ticket #168).",
+  "description": "Marker written by scripts/hydra-setup.sh after the first-time setup wizard completes. Future session-greeting logic can check for this file to decide whether to nag a fresh operator. See docs/specs/2026-04-17-setup-wizard.md (ticket #168) and docs/specs/2026-05-23-setup-wizard-polish.md (ticket #172, adds repos_registered).",
   "type": "object",
   "required": ["version", "completed_at", "mode"],
   "properties": {
@@ -18,6 +18,11 @@
     "mode": {
       "enum": ["interactive", "non-interactive"],
       "description": "How the wizard was invoked. 'non-interactive' means CI / scripted install via flags."
+    },
+    "repos_registered": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many repos the wizard successfully registered in state/repos.json on its last run. Lets a consumer distinguish 'setup completed, no repos yet' (0) from 'setup completed with repos' without re-parsing state/repos.json. Optional — fingerprints written before ticket #172 omit it. See docs/specs/2026-05-23-setup-wizard-polish.md."
     }
   },
   "additionalProperties": false

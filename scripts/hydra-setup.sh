@@ -2,16 +2,18 @@
 #
 # hydra-setup.sh — first-time setup wizard.
 #
-# Usage: ./hydra setup [--non-interactive --repos=A,B --autopickup-interval=N]
+# Usage: ./hydra setup [--non-interactive --strict --repos=A,B --autopickup-interval=N]
 #
 # Linear flow:
 #   1. env check    — delegates to `./hydra doctor --category environment`
 #   2. repos loop   — prompt for <owner>/<name> slugs, append via hydra-add-repo.sh
 #   3. autopickup   — prompt for interval in [5,120]; write state/autopickup.json
 #   4. connector hint (no sub-wizards — just prints pointers)
-#   5. fingerprint  — write state/setup-complete.json
+#   5. fingerprint  — write state/setup-complete.json (incl. repos_registered)
 #
 # Spec: docs/specs/2026-04-17-setup-wizard.md (ticket #168)
+# Spec: docs/specs/2026-05-23-setup-wizard-polish.md (ticket #172 — --strict,
+#       repos_registered, defensive env source)
 #
 # Hard rules:
 #   - set -euo pipefail
@@ -25,10 +27,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-
-# Source .hydra.env if present so downstream helpers see HYDRA_ROOT etc.
-# shellcheck disable=SC1091
-[[ -f "$ROOT_DIR/.hydra.env" ]] && source "$ROOT_DIR/.hydra.env"
 
 # ---------------------------------------------------------------------------
 # color / output helpers
@@ -49,6 +47,40 @@ ok()   { printf "%s✓%s %s\n" "$C_GREEN"  "$C_RESET" "$*"; }
 warn() { printf "%s⚠%s %s\n" "$C_YELLOW" "$C_RESET" "$*" >&2; }
 step() { printf "\n%s▸ %s%s\n" "$C_BOLD" "$*" "$C_RESET"; }
 
+# ---------------------------------------------------------------------------
+# defensive .hydra.env source
+# ---------------------------------------------------------------------------
+# Source .hydra.env (if present) so downstream helpers see HYDRA_ROOT etc.
+# A missing file is fine — a fresh install legitimately has no .hydra.env yet.
+# A *malformed* file (syntax error, partial write) must NOT abort the wizard
+# with a raw `set -e` bash trace; catch it and report through the uniform
+# err() path with a clean non-zero return.
+#
+# Subtlety: a *parse-time* syntax error in a sourced file (e.g. an unterminated
+# quote) aborts the sourcing shell outright — an `if ! source …` guard does NOT
+# catch it, because the failure happens before the guard's exit code is even
+# evaluated. So we first parse-check the file with `bash -n` in a subshell
+# (parse-only, no execution, cannot abort us); only if it parses do we source
+# it, where the `if !` guard still catches any runtime error.
+source_hydra_env() {
+  local env_file="$ROOT_DIR/.hydra.env"
+  [[ -f "$env_file" ]] || return 0
+  if ! bash -n "$env_file" 2>/dev/null; then
+    err "$env_file is malformed (syntax error) — refusing to source it."
+    err "Fix or remove it (a fresh install can regenerate it), then re-run. See: ./hydra doctor."
+    return 1
+  fi
+  # shellcheck disable=SC1090
+  if ! source "$env_file" 2>/dev/null; then
+    err "failed to source $env_file — the file is unreadable or errored at runtime."
+    err "Fix or remove it (a fresh install can regenerate it), then re-run. See: ./hydra doctor."
+    return 1
+  fi
+  return 0
+}
+
+source_hydra_env || exit 1
+
 usage() {
   cat <<'EOF'
 Usage: ./hydra setup [options]
@@ -59,6 +91,11 @@ interval, and a fingerprint file at state/setup-complete.json.
 
 Options:
   --non-interactive             Skip all prompts. Accept defaults or flag values.
+  --strict                      Fail (exit 2) if ANY repo slug fails validation
+                                or registration, instead of warning and
+                                continuing. For CI / scripted installs where a
+                                partially-applied config must not exit green.
+                                Default is permissive (warn + continue).
   --repos=<slugs>               Comma-separated owner/name slugs to register.
                                 Only valid with --non-interactive.
   --autopickup-interval=<N>     Integer in [5,120]. Default: 30.
@@ -68,17 +105,23 @@ Examples:
   # Interactive:
   ./hydra setup
 
-  # CI / scripted:
+  # CI / scripted (permissive — bad slugs warn, wizard exits 0):
   ./hydra setup --non-interactive \
     --repos=tonychang04/hydra,myorg/myapp \
     --autopickup-interval=30
 
+  # CI / scripted (strict — any bad slug fails the whole run):
+  ./hydra setup --non-interactive --strict \
+    --repos=tonychang04/hydra,myorg/myapp
+
 Spec: docs/specs/2026-04-17-setup-wizard.md (ticket #168)
+Spec: docs/specs/2026-05-23-setup-wizard-polish.md (ticket #172)
 
 Exit codes:
   0   wizard completed
   1   env check failed, I/O error, or unrecoverable validation failure
-  2   usage error (bad flags, bad interval, malformed slug in --repos)
+  2   usage error (bad flags, bad interval, malformed slug in --repos), or
+      a repo that failed to register while --strict is set
 EOF
 }
 
@@ -86,6 +129,7 @@ EOF
 # args
 # ---------------------------------------------------------------------------
 non_interactive=0
+strict=0
 repos_csv=""
 autopickup_interval=""
 
@@ -93,6 +137,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --non-interactive) non_interactive=1; shift ;;
+    --strict) strict=1; shift ;;
     --repos) [[ $# -ge 2 ]] || { err "--repos needs a value"; usage >&2; exit 2; }; repos_csv="$2"; shift 2 ;;
     --repos=*) repos_csv="${1#--repos=}"; shift ;;
     --autopickup-interval)
@@ -162,8 +207,9 @@ validate_slug() {
 }
 
 # Append one slug via hydra-add-repo.sh, non-interactive. Prints inner errors
-# to stderr and returns the inner exit code — we NEVER abort the wizard on a
-# single bad entry; we surface and continue.
+# to stderr and returns the inner exit code. The return code is interpreted by
+# register_repo below — this helper itself never decides whether to abort.
+#   0 = added, 1 = inner-script failure (e.g. no local clone), 2 = bad slug
 add_one_repo() {
   local slug="$1"
   if ! validate_slug "$slug"; then
@@ -177,9 +223,34 @@ add_one_repo() {
     ok "added $slug"
     return 0
   else
-    warn "could not add $slug (see error above — continuing)"
     return 1
   fi
+}
+
+# Count of repos that actually landed in state/repos.json. Written into the
+# fingerprint (step 5) so a consumer can tell "completed, empty" from
+# "completed with repos" without re-parsing state/repos.json.
+repos_registered=0
+
+# register_repo — single choke point for adding a slug. Increments the counter
+# on success; honors --strict on any failure. In permissive mode (default) a
+# failed entry warns and the wizard continues. In strict mode the first failure
+# aborts the whole wizard with exit 2 — for CI / scripted installs that must
+# not exit green on a partially-applied config.
+register_repo() {
+  local slug="$1"
+  local rc=0
+  add_one_repo "$slug" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    repos_registered=$((repos_registered + 1))
+    return 0
+  fi
+  if [[ "$strict" -eq 1 ]]; then
+    err "--strict: could not register '$slug' (exit $rc) — aborting."
+    exit 2
+  fi
+  warn "could not add '$slug' (see error above — continuing)"
+  return 1
 }
 
 if [[ "$non_interactive" -eq 1 ]]; then
@@ -189,7 +260,7 @@ if [[ "$non_interactive" -eq 1 ]]; then
     for slug in "${slugs[@]}"; do
       slug="$(printf '%s' "$slug" | tr -d '[:space:]')"
       [[ -z "$slug" ]] && continue
-      add_one_repo "$slug" || true
+      register_repo "$slug" || true
     done
   else
     warn "--non-interactive with no --repos — skipping repo registration (you can add later with ./hydra add-repo)"
@@ -201,7 +272,7 @@ else
     IFS= read -r line || break
     slug="$(printf '%s' "$line" | tr -d '[:space:]')"
     [[ -z "$slug" ]] && break
-    add_one_repo "$slug" || true
+    register_repo "$slug" || true
   done
 fi
 
@@ -284,10 +355,11 @@ mode_label="interactive"
 jq -n \
   --arg completed_at "$completed_at" \
   --arg mode "$mode_label" \
-  '{version: 1, completed_at: $completed_at, mode: $mode}' > "$tmp"
+  --argjson repos_registered "$repos_registered" \
+  '{version: 1, completed_at: $completed_at, mode: $mode, repos_registered: $repos_registered}' > "$tmp"
 mv "$tmp" "$fingerprint_file"
 trap - EXIT
-ok "wrote $fingerprint_file"
+ok "wrote $fingerprint_file ($repos_registered repo(s) registered)"
 
 printf "\n%sSetup complete.%s\n" "$C_GREEN$C_BOLD" "$C_RESET"
 printf "  Run %s./hydra status%s to see Commander state, or %s./hydra%s to launch a Commander session.\n" \

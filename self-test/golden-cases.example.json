@@ -3023,6 +3023,90 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "setup-wizard-polish-172",
+      "_description": "Script-only self-test for the setup wizard polish (spec: docs/specs/2026-05-23-setup-wizard-polish.md, ticket #172). Covers three ACs on scripts/hydra-setup.sh: (1) opt-in --strict that exits 2 when any repo slug fails validation/registration while default mode stays permissive (warn + exit 0); (2) a repos_registered counter in state/setup-complete.json so a consumer can tell 'completed, empty' from 'completed with repos', plus a backwards-compatible schema that accepts fingerprints with and without the field; (3) a defensive .hydra.env source that reports a malformed env file through the wizard's clean err() path (exit 1) instead of a raw set -e bash trace. Each step stages a throwaway ROOT_DIR with stub hydra-doctor.sh (passes the env check) and stub hydra-add-repo.sh (succeeds for normal slugs, fails for slugs containing 'bad') so the case is fully local — no network, no clone, no gh, no claude. The live worktree is never touched. Runs on plain CI with no requires_* gates.",
+      "kind": "script",
+      "requires": [],
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "bash -n passes on scripts/hydra-setup.sh",
+          "cmd": "bash -n scripts/hydra-setup.sh && echo SYNTAX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SYNTAX_OK"
+        },
+        {
+          "name": "--help advertises --strict and exits 0",
+          "cmd": "NO_COLOR=1 bash scripts/hydra-setup.sh --help | grep -q -- '--strict' && echo STRICT_DOCUMENTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STRICT_DOCUMENTED"
+        },
+        {
+          "name": "AC1 strict: a bad slug (no slash) aborts with exit 2",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\ncase \"$1\" in *bad*) exit 1;; *) exit 0;; esac\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --non-interactive --strict --repos=noslash >/dev/null 2>\"$TMP/e\"; rc=$?; [ \"$rc\" = \"2\" ] && grep -q 'strict' \"$TMP/e\" && echo STRICT_ABORT_OK || { echo \"FAIL rc=$rc\" >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STRICT_ABORT_OK"
+        },
+        {
+          "name": "AC1 strict: a valid slug that fails to register aborts with exit 2",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\ncase \"$1\" in *bad*) exit 1;; *) exit 0;; esac\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --non-interactive --strict --repos=owner/bad-repo >/dev/null 2>\"$TMP/e\"; rc=$?; [ \"$rc\" = \"2\" ] && echo STRICT_REGFAIL_OK || { echo \"FAIL rc=$rc\" >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STRICT_REGFAIL_OK"
+        },
+        {
+          "name": "AC1 default (permissive): a bad slug warns, wizard still exits 0",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\ncase \"$1\" in *bad*) exit 1;; *) exit 0;; esac\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --non-interactive --repos=noslash >/dev/null 2>\"$TMP/e\"; rc=$?; [ \"$rc\" = \"0\" ] && echo PERMISSIVE_OK || { echo \"FAIL rc=$rc\" >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PERMISSIVE_OK"
+        },
+        {
+          "name": "AC2 repos_registered counts only successes (2 good slugs -> 2)",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\ncase \"$1\" in *bad*) exit 1;; *) exit 0;; esac\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --non-interactive --repos=ow/one,ow/two >/dev/null 2>\"$TMP/e\"; n=$(jq -r .repos_registered \"$TMP/state/setup-complete.json\"); [ \"$n\" = \"2\" ] && echo REPOS_REGISTERED_2 || { echo \"FAIL n=$n\" >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REPOS_REGISTERED_2"
+        },
+        {
+          "name": "AC2 repos_registered is 0 on the empty case (non-interactive, no --repos)",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --non-interactive >/dev/null 2>\"$TMP/e\"; rc=$?; n=$(jq -r .repos_registered \"$TMP/state/setup-complete.json\"); [ \"$rc\" = \"0\" ] && [ \"$n\" = \"0\" ] && echo REPOS_REGISTERED_0 || { echo \"FAIL rc=$rc n=$n\" >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REPOS_REGISTERED_0"
+        },
+        {
+          "name": "AC2 written fingerprint with repos_registered validates against the schema",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --non-interactive --repos=ow/one >/dev/null 2>&1; bash scripts/validate-state-all.sh --state-dir \"$TMP/state\" --schema-dir state/schemas >/dev/null 2>\"$TMP/e\" && echo FINGERPRINT_VALIDATES || { echo FAIL >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FINGERPRINT_VALIDATES"
+        },
+        {
+          "name": "AC2 backwards compat: a pre-#172 fingerprint without repos_registered still validates",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/state\"; printf '{\"version\":1,\"completed_at\":\"2026-05-23T00:00:00Z\",\"mode\":\"interactive\"}\\n' > \"$TMP/state/setup-complete.json\"; bash scripts/validate-state-all.sh --state-dir \"$TMP/state\" --schema-dir state/schemas >/dev/null 2>\"$TMP/e\" && echo OLD_FINGERPRINT_VALIDATES || { echo FAIL >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OLD_FINGERPRINT_VALIDATES"
+        },
+        {
+          "name": "AC3 defensive env source: a malformed .hydra.env exits 1 with a clean message, no raw bash trace",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; printf 'export FOO=\\\"unterminated\\n' > \"$TMP/.hydra.env\"; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --help >/dev/null 2>\"$TMP/e\"; rc=$?; [ \"$rc\" = \"1\" ] && grep -q 'is malformed' \"$TMP/e\" && ! grep -qE 'hydra-setup\\.sh: line [0-9]+:' \"$TMP/e\" && echo ENV_MALFORMED_CLEAN || { echo \"FAIL rc=$rc\" >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ENV_MALFORMED_CLEAN"
+        },
+        {
+          "name": "AC3 defensive env source: an absent .hydra.env is a no-op (--help exits 0, no stderr)",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --help >/dev/null 2>\"$TMP/e\"; rc=$?; [ \"$rc\" = \"0\" ] && [ ! -s \"$TMP/e\" ] && echo ENV_ABSENT_NOOP || { echo \"FAIL rc=$rc\" >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ENV_ABSENT_NOOP"
+        },
+        {
+          "name": "AC3 defensive env source: a well-formed .hydra.env is sourced cleanly (--help exits 0)",
+          "cmd": "TMP=$(mktemp -d); trap \"rm -rf $TMP\" EXIT; mkdir -p \"$TMP/scripts\" \"$TMP/state\"; cp scripts/hydra-setup.sh \"$TMP/scripts/\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-doctor.sh\"; printf '#!/usr/bin/env bash\\nexit 0\\n' > \"$TMP/scripts/hydra-add-repo.sh\"; chmod +x \"$TMP/scripts/\"*.sh; printf 'export HYDRA_TEST_MARKER=present\\n' > \"$TMP/.hydra.env\"; NO_COLOR=1 bash \"$TMP/scripts/hydra-setup.sh\" --help >/dev/null 2>\"$TMP/e\"; rc=$?; [ \"$rc\" = \"0\" ] && [ ! -s \"$TMP/e\" ] && echo ENV_WELLFORMED_OK || { echo \"FAIL rc=$rc\" >&2; cat \"$TMP/e\" >&2; exit 1; }",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ENV_WELLFORMED_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
