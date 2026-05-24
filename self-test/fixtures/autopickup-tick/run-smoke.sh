@@ -172,6 +172,23 @@ echo "$pause_out" | jq -e '.rescue | length >= 1' >/dev/null \
   || fail "rescue scan must still run under PAUSE" "$pause_out"
 
 # -----------------------------------------------------------------------------
+# UNKNOWN-REPO PATH: a merge-ready PR on a repo NOT in repos.json must fail
+# closed to surface-for-human (merge-policy-lookup exits 1 → empty policy →
+# fail-closed). This guards the real-world case of a tracked-but-unconfigured
+# repo never silently auto-merging.
+# -----------------------------------------------------------------------------
+UNK_MOCK="$(mktemp -d)"
+UNK_STATE="$(mktemp -d)"
+jq -n '[{number:901,title:"merge-ready on unknown repo",url:"https://github.com/unknown-org/unknown-repo/pull/901",headRefName:"hydra/commander/901",isDraft:false,labels:[{name:"commander-reviewed"}],statusCheckRollup:[{conclusion:"SUCCESS"}],reviewDecision:"APPROVED"}]' > "$UNK_MOCK/pr-list.json"
+jq -n '{files:[{path:"src/safe.ts"}]}' > "$UNK_MOCK/files-901.json"
+printf '{"workers":[{"id":"w-901","ticket":"unknown-org/unknown-repo#901","repo":"unknown-org/unknown-repo","tier":"T2","started_at":"2026-05-24T10:00:00Z","subagent_type":"worker-implementation","status":"running","worktree":"/fixture/wt-901","branch":"hydra/commander/901"}],"last_updated":"2026-05-24T10:00:00Z"}' > "$UNK_STATE/active.json"
+unk_out="$(NO_COLOR=1 "$SCRIPT" --repo unknown-org/unknown-repo --gh-mock "$UNK_MOCK" \
+  --state-dir "$UNK_STATE" --repos-file "$REPOS" --json)"
+rm -rf "$UNK_MOCK" "$UNK_STATE"
+echo "$unk_out" | jq -e '.merge_surface[] | select(.number == 901) | .classification == "surface-for-human"' >/dev/null \
+  || fail "merge-ready PR on a repo absent from repos.json must surface-for-human (fail-closed)" "$unk_out"
+
+# -----------------------------------------------------------------------------
 # HEADROOM-OK PATH: with active workers < max_concurrent_workers, preflight is
 # clean and spawn is NOT blocked (PAUSE absent, state valid, headroom > 0).
 # -----------------------------------------------------------------------------

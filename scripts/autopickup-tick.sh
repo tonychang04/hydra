@@ -333,10 +333,12 @@ is_safety_rail_path() {
 }
 
 # Fetch a PR's changed-file paths. Test seam: <gh-mock>/files-<n>.json
-# ({files:[{path:...}]}). Live: gh pr view <n> --json files. Returns the paths,
-# one per line; empty output (no data) → caller fails closed.
+# ({files:[{path:...}]}). Live: gh pr view <n> --repo <slug> --json files.
+# Returns the paths, one per line; empty output (no data) → caller fails closed.
+# The slug (url-derived, may differ from --repo when shepherd returns cross-repo
+# PRs) targets the gh call at the PR's actual repo.
 pr_changed_files() {
-  local n="$1"
+  local n="$1" slug="${2:-$repo}"
   if [[ -n "$gh_mock" ]]; then
     local f="$gh_mock/files-${n}.json"
     [[ -r "$f" ]] || return 0   # no file mock → no data → fail-closed upstream
@@ -345,7 +347,7 @@ pr_changed_files() {
   fi
   command -v gh >/dev/null 2>&1 || return 0
   local repo_args=()
-  [[ -n "$repo" ]] && repo_args=(--repo "$repo")
+  [[ -n "$slug" ]] && repo_args=(--repo "$slug")
   gh pr view "$n" "${repo_args[@]}" --json files \
     --jq '(.files // [])[].path' 2>/dev/null || true
 }
@@ -413,7 +415,7 @@ if [[ "$do_merge_surface" -eq 1 ]]; then
           classification="surface-for-human"; reason="policy-human" ;;
         auto|auto_if_review_clean)
           # --- Rail #2: changed-file safety-rail check (fail-closed).
-          files="$(pr_changed_files "$number")"
+          files="$(pr_changed_files "$number" "$slug")"
           if [[ -z "${files//[$'\n']/}" ]]; then
             # No file data at all → fail closed → surface.
             classification="surface-for-human"; reason="safety-rail"
