@@ -126,6 +126,21 @@ STATE_DIR="${state_dir_override:-$ROOT_DIR/state}"
 ACTIVE_FILE="$STATE_DIR/active.json"
 
 # -----------------------------------------------------------------------------
+# resolve the target repo to a concrete owner/name (strict one-repo-per-invocation)
+# -----------------------------------------------------------------------------
+# Orphan matching is GLOBAL across active.json, so it MUST be scoped to a single
+# concrete repo or a cross-repo worker can falsely "claim" this repo's PR — a
+# false-negative that defeats the shepherd (ticket #221). When --repo is omitted
+# in live mode we resolve the current repo via `gh repo view` (the same call the
+# thread path uses). In mock mode (no live gh) the self-test fixture passes --repo
+# explicitly. If the repo cannot be resolved, orphan matching admits NO workers
+# (every PR surfaces as an orphan — the safe false-positive direction), never a
+# silent false-negative.
+if [[ -z "$repo" && -z "$gh_mock" ]] && command -v gh >/dev/null 2>&1; then
+  repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")"
+fi
+
+# -----------------------------------------------------------------------------
 # gh shims — read mocked JSON from $gh_mock when set, else shell out to gh.
 # Mirrors rescue-worker.sh's --gh-mock seam so the self-test runs offline.
 # -----------------------------------------------------------------------------
@@ -247,27 +262,35 @@ def ci_state(rollup):
 # -----------------------------------------------------------------------------
 # load active.json worker branches + ticket numbers for orphan detection
 # -----------------------------------------------------------------------------
-# active.json is GLOBAL (all repos), so when --repo is set we restrict to workers
-# for that repo — otherwise a worker on repoB with branch hydra/commander/101
-# would falsely "claim" repoA's PR #101 (Codex review finding). The worker.repo
-# field may be the owner/name slug OR a local_path; we match either the exact
-# slug or a path whose basename equals the repo name.
+# active.json is GLOBAL (all repos), so orphan matching MUST be scoped to the
+# single resolved repo — otherwise a worker on repoB with branch
+# hydra/commander/101 would falsely "claim" repoA's PR #101, silently missing a
+# genuine orphan (ticket #221). v1.0 admitted matches too loosely via two paths:
+#   - `$repo == ""` kept ALL workers (cross-repo collision when --repo omitted), and
+#   - a bare-basename match ((.repo | split("/") | last) == name) collided across
+#     same-named, different-owner repos (otherowner/hydra vs tonychang04/hydra).
+# v1.1 requires strict correspondence: the resolved $repo must be non-empty AND a
+# worker matches ONLY when its .repo is the exact owner/name slug, OR a local_path
+# whose tail is exactly "/owner/name". A bare-basename path is intentionally NOT
+# matched (we cannot prove which owner it belongs to; a false-positive orphan is
+# safe, a false-negative is the bug). When $repo is unresolved (empty), NO worker
+# matches → every PR surfaces as an orphan (the safe direction).
 worker_branches=""   # newline-separated branch names (repo-scoped)
 worker_tickets=""    # newline-separated trailing #N ticket numbers (repo-scoped)
-if [[ -f "$ACTIVE_FILE" ]]; then
-  # jq filter that selects the relevant workers. When $repo is "" (current repo
-  # unknown), keep all workers (best-effort, single-repo assumption).
-  repo_name="${repo##*/}"   # bare name for local_path basename match
+if [[ -z "$repo" && -f "$ACTIVE_FILE" ]]; then
+  echo "pr-shepherd: warning: target repo unresolved (pass --repo); orphan matching skipped — all PRs reported as orphaned" >&2
+fi
+if [[ -n "$repo" && -f "$ACTIVE_FILE" ]]; then
+  # Strict per-repo selector. $repo is guaranteed non-empty here.
   worker_filter='
     (.workers // [])
     | map(select(
-        ($repo == "")
-        or (.repo == $repo)
-        or ((.repo // "" | split("/") | last) == $repo_name)
+        (.repo == $repo)
+        or ((.repo // "") | endswith("/" + $repo))
       ))
   '
   if ! worker_branches="$(jq -r \
-        --arg repo "$repo" --arg repo_name "$repo_name" \
+        --arg repo "$repo" \
         "$worker_filter"' | map(.branch // empty) | .[]' \
         "$ACTIVE_FILE" 2>/dev/null)"; then
     echo "pr-shepherd: warning: $ACTIVE_FILE present but unparseable — treating fleet as empty" >&2
@@ -278,7 +301,7 @@ if [[ -f "$ACTIVE_FILE" ]]; then
   # then drop the ENTIRE ticket set, falsely orphaning branchless workers. Use a
   # match-or-empty form so non-#N tickets are simply skipped (Codex review finding).
   worker_tickets="$(jq -r \
-        --arg repo "$repo" --arg repo_name "$repo_name" \
+        --arg repo "$repo" \
         "$worker_filter"'
         | map(.ticket // "")
         | map((match("#([0-9]+)$") // null) | if . == null then empty else .captures[0].string end)
@@ -286,16 +309,24 @@ if [[ -f "$ACTIVE_FILE" ]]; then
       ' "$ACTIVE_FILE" 2>/dev/null || true)"
 fi
 
-# is_orphan <branch> <pr_number> → echoes "true"/"false"
+# is_orphan <branch> → echoes "true"/"false"
 is_orphan() {
-  local branch="$1" num="$2"
-  # primary join: branch matches a worker branch
+  local branch="$1"
+  # primary join: the PR's headRefName matches a tracked worker branch exactly.
   if [[ -n "$branch" ]] && printf '%s\n' "$worker_branches" | grep -Fxq -- "$branch"; then
     echo "false"; return
   fi
-  # fallback join: trailing #N ticket number matches (pre-2026-04-17 entries
-  # without a branch). The PR's headRefName for Hydra PRs ends in /<ticket>.
-  if [[ -n "$num" ]] && printf '%s\n' "$worker_tickets" | grep -Fxq -- "$num"; then
+  # fallback join (pre-2026-04-17 branchless workers): match the PR's ISSUE number
+  # against worker ticket numbers. The issue number is the trailing /<N> of the
+  # PR's headRefName (Hydra branches are hydra/commander/<ticket>), NOT the PR
+  # number — PR# ≠ issue# for real Hydra PRs, so joining on the PR number both
+  # missed genuine matches and falsely "claimed" PRs whose number coincided with
+  # an unrelated tracked issue (ticket #221).
+  local issue_from_branch=""
+  if [[ "$branch" =~ /([0-9]+)$ ]]; then
+    issue_from_branch="${BASH_REMATCH[1]}"
+  fi
+  if [[ -n "$issue_from_branch" ]] && printf '%s\n' "$worker_tickets" | grep -Fxq -- "$issue_from_branch"; then
     echo "false"; return
   fi
   echo "true"
@@ -352,8 +383,9 @@ while IFS="$US" read -r number title url branch is_draft has_label ci review_dec
     fi
   fi
 
-  # orphan?
-  orphaned="$(is_orphan "$branch" "$number")"
+  # orphan? (matched by branch, or by the issue number in the branch — never the
+  # PR number; see is_orphan and ticket #221).
+  orphaned="$(is_orphan "$branch")"
 
   # classification (precedence; first match wins)
   state=""; reason=""; action=""
