@@ -1,0 +1,12 @@
+{
+  "workers": [
+    {"id": "w-301", "ticket": "tonychang04/hydra#301", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-24T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "worktree": "/fixture/wt-301", "branch": "hydra/commander/301"},
+    {"id": "w-302", "ticket": "tonychang04/hydra#302", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-24T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "worktree": "/fixture/wt-302", "branch": "hydra/commander/302"},
+    {"id": "w-303", "ticket": "tonychang04/hydra#303", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-24T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "worktree": "/fixture/wt-303", "branch": "hydra/commander/303"},
+    {"id": "w-304", "ticket": "tonychang04/hydra#304", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-24T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "worktree": "/fixture/wt-304", "branch": "hydra/commander/304"},
+    {"id": "w-305", "ticket": "tonychang04/hydra#305", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-24T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "worktree": "/fixture/wt-305", "branch": "hydra/commander/305"},
+    {"id": "w-306", "ticket": "tonychang04/hydra#306", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-24T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "worktree": "/fixture/wt-306", "branch": "hydra/commander/306"},
+    {"id": "w-308", "ticket": "tonychang04/hydra#308", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-05-24T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "worktree": "/fixture/wt-308", "branch": "hydra/commander/308"}
+  ],
+  "last_updated": "2026-05-24T10:00:00Z"
+}
