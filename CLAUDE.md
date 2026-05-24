@@ -35,14 +35,14 @@ Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", 
 1. **Parse intent** (see commands table).
 2. **Preflight — ALL must pass before any spawn:**
    - `commander/PAUSE` absent.
-   - `scripts/validate-state-all.sh` exits 0 (schema drift + CLAUDE.md size gate; specs `docs/specs/2026-04-16-state-schemas.md` + `docs/specs/2026-04-17-claudemd-size-guard.md`).
+   - `scripts/validate-state-all.sh` exits 0 (schema drift + CLAUDE.md size gate).
    - `active.json` worker count < `budget.json:phase1_subscription_caps.max_concurrent_workers`.
    - Today's ticket count < `daily_ticket_cap`.
    - No recent rate-limit error in `state/quota-health.json` (auto-pause 1 hr if flagged).
-3. **Pick tickets** per `state/repos.json:ticket_trigger`: `assignee` (default `@me` or `assignee_override` — `docs/specs/2026-04-17-assignee-override.md`), `label` (`commander-ready`), or `linear` (MCP server, `state/linear.json:teams[].trigger`; pickup helper `scripts/linear-pickup-dispatch.sh`, spec `docs/specs/2026-04-17-linear-ticket-trigger.md`). Skip tickets labeled `commander-working` / `commander-pause` / `commander-stuck`.
+3. **Pick tickets** per `state/repos.json:ticket_trigger` — `assignee` (`@me` / `assignee_override`), `label` (`commander-ready`), or `linear` (`scripts/linear-pickup-dispatch.sh`). Skip `commander-working` / `commander-pause` / `commander-stuck`. Triggers: `docs/specs/2026-04-17-assignee-override.md`, `docs/specs/2026-04-17-linear-ticket-trigger.md`.
 4. **Classify tier** per `policy.md`. T3 → skip. Unclear → ask.
-5. **Spawn** worker with the slim spawn template — ticket URL (not inlined body), repo+path, tier, Memory Brief (#141), `Fetch full body via gh issue view`, worker type, coordinate-with. Exact format: `docs/specs/2026-04-17-slim-worker-prompts.md`.
-6. **Track** in `state/active.json` (schema allows pre-migration entries without `worktree`/`branch` per `docs/specs/2026-04-17-active-schema-drift.md`).
+5. **Spawn** worker with the slim spawn template — ticket URL (not inlined body), repo+path, tier, Memory Brief, `Fetch full body via gh issue view`, worker type, coordinate-with. Exact format: `docs/specs/2026-04-17-slim-worker-prompts.md`.
+6. **Track** in `state/active.json` (schema tolerates pre-migration entries: `docs/specs/2026-04-17-active-schema-drift.md`).
 7. **Report** one-line status.
 
 ## Auto-dispatch: worker-test-discovery on repeat "test procedure unclear"
@@ -51,7 +51,7 @@ Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", 
 
 ## Escalate to supervisor agent (when memory can't resolve)
 
-Agent-only mode escalates to a supervisor agent one hop upstream; legacy direct-drive makes the operator the supervisor. **Don't escalate:** baseline lint/type failures, lock drift, missing runner, clean T1 PRs, or anything in `escalation-faq.md`. **Do escalate:** T2/T3 merge-ready PRs, unmatched `QUESTION:`, `SECURITY:` blockers, self-test regressions, 2×-stuck workers, rate-limit exhaustion. On `QUESTION:`: scan `escalation-faq.md` + `learnings-<repo>.md`; if matched `SendMessage`, else pipe the envelope to `scripts/hydra-supervisor-escalate.py`. Main Agent files tickets via MCP `hydra.file_ticket` (scope `spawn`, 10/hr/agent).
+Agent-only mode escalates to a supervisor agent one hop upstream; legacy direct-drive makes the operator the supervisor. **Don't escalate:** baseline lint/type failures, lock drift, missing runner, clean T1 PRs, or anything in `escalation-faq.md`. **Do escalate:** T2/T3 merge-ready PRs, unmatched `QUESTION:`, `SECURITY:` blockers, self-test regressions, 2×-stuck workers, rate-limit exhaustion. On `QUESTION:`: scan `escalation-faq.md` + `learnings-<repo>.md`; if matched `SendMessage`, else pipe the envelope to `scripts/hydra-supervisor-escalate.py`. Main Agent files tickets via MCP `hydra.file_ticket`.
 
 Specs: `docs/specs/2026-04-16-mcp-agent-interface.md`, `docs/specs/2026-04-17-supervisor-escalate-client.md`, `docs/mcp-tool-contract.md`, `docs/specs/2026-04-17-main-agent-filing.md`.
 
@@ -59,11 +59,11 @@ Specs: `docs/specs/2026-04-16-mcp-agent-interface.md`, `docs/specs/2026-04-17-su
 
 After `worker-implementation` opens a PR: spawn `worker-review` → if blockers, re-spawn implementation with feedback (max 2 cycles) → if clean, surface "PR #N passed commander review. Ready for your merge." Review is separate from implementation so the reviewer isn't biased by implementer context.
 
-**PR Shepherd** (read-only): `scripts/pr-shepherd.sh [--repo R] [--json]` classifies Commander-authored open PRs (`needs-fix`/`ci-pending`/`needs-review-gate`/`ready-to-surface`/`merge-ready`) and flags orphans (open PR, no `active.json` worker) — run at session start to re-attach orphans and on the autopickup tick to route in-flight PRs. Spec: `docs/specs/2026-05-23-pr-shepherd.md`.
+**PR Shepherd** (read-only): `scripts/pr-shepherd.sh [--repo R] [--json]` classifies Commander-authored open PRs and flags orphans (open PR, no `active.json` worker) — run at session start to re-attach orphans and on the autopickup tick to route in-flight PRs. Spec: `docs/specs/2026-05-23-pr-shepherd.md`.
 
 ## Worker timeout watchdog
 
-Workers can hit stream-idle timeouts ~18 min with partial work unpushed. On every tick touching `state/active.json` (the autopickup tick's completion-rescue scan does this), scan for workers >12 min with no completion log and run `scripts/rescue-worker.sh --probe`: `rescue-commits`/`rescue-uncommitted`/`rescue-unpushed` → `--rescue` (commit + rebase + push), label `commander-rescued`, respawn with a "resume from rescue" hint; `nothing-to-rescue`/`push-only` → `commander-stuck` (timeout path); rebase-conflict (exit 3) → surface. **Also probe on every worker COMPLETION** (not just timeouts): a clean finish can leave verified work committed-but-dirty (#219); same verdict→rescue branch, then proceed to the review gate. Review variant: `--probe-review <pr>`; exit 4 → dispatch `/review` inline. Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md`, `docs/specs/2026-04-17-review-worker-rescue.md`, `docs/specs/2026-04-17-rescue-worker-index-lock.md`, `docs/specs/2026-05-23-auto-rescue-on-completion.md`. Workers prevent the 600s stall in the first place (no foreground-blocking commands; `/codex review` off by default): `docs/specs/2026-05-24-worker-anti-stall-discipline.md`.
+Workers can hit stream-idle timeouts (~18 min) with partial work unpushed. On every tick touching `state/active.json` AND on every worker COMPLETION (a clean finish can leave verified work committed-but-dirty, #219), run `scripts/rescue-worker.sh --probe`: a rescuable verdict → `--rescue` (commit + rebase + push) + label `commander-rescued` + respawn with a "resume from rescue" hint; non-rescuable → `commander-stuck`; rebase-conflict (exit 3) → surface. Review variant `--probe-review <pr>`; exit 4 → dispatch `/review` inline. Workers also prevent the 600s stall up front (no foreground-blocking commands; `/codex review` off by default). Verdict→action table + anti-stall rules in specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md`, `docs/specs/2026-04-17-review-worker-rescue.md`, `docs/specs/2026-04-17-rescue-worker-index-lock.md`, `docs/specs/2026-05-23-auto-rescue-on-completion.md`, `docs/specs/2026-05-24-worker-anti-stall-discipline.md`.
 
 ## Commands you understand
 
@@ -126,23 +126,23 @@ Do **not** use `gh pr edit --add-label` — GraphQL path fails with a Projects-c
 - `memory/memory-lifecycle.md` — compaction + promotion rules
 - `logs/<ticket>.json` — completed work audit
 
-**Validate before you trust.** Every `state/*.json` has a `state/schemas/*.schema.json`. Run `scripts/validate-state-all.sh` (bulk; also enforces the CLAUDE.md size guard) or `scripts/validate-state.sh <file>` (single) before reading + as the first preflight item. `ajv-cli --strict` for full Draft-07, else bash+jq. See `scripts/README.md`, `docs/specs/2026-04-16-state-schemas.md`.
+**Validate before you trust.** Every `state/*.json` has a `state/schemas/*.schema.json`. Run `scripts/validate-state-all.sh` (bulk; also the CLAUDE.md size guard) or `scripts/validate-state.sh <file>` before reading + as the first preflight item. See `scripts/README.md`, `docs/specs/2026-04-16-state-schemas.md`.
 
 ## Scheduled autopickup (runs silently)
 
-`autopickup every N min` runs a cron-like loop via `/loop` (no daemon; state `state/autopickup.json`). Default-on (`auto_enable_on_session_start`); opt out with `./hydra --no-autopickup` or `HYDRA_NO_AUTOPICKUP=1`. Each tick: run `scripts/autopickup-tick.sh --json` (deterministic, report-only: preflight + pr-shepherd reconcile + completion-rescue scan + policy-aware merge surfacing) → Monday retro check → step-1.6 daily digest (`scripts/build-daily-digest.sh` if due) → step-1.8 skill promotion (`scripts/promote-citations.sh --check-due` exit 0 ⇒ run it, then stamp `last_promotion_run=today`; once/calendar-day) → then ACT on the report: pick + spawn to `concurrency_headroom`, dispatch review/rescue, and merge per `merge_surface` (`auto-merge-eligible` may auto-merge after re-verifying CI green; `surface-for-human` goes to the operator). The tick NEVER spawns/merges itself; NEVER auto-merge a T3 or safety-rail PR (the report classifies these `surface-for-human`). Quiet except on state changes; two consecutive rate-limit hits auto-disable (one notification). `autopickup off` exits; in-flight workers finish.
+`autopickup every N min` runs a cron-like `/loop` (no daemon; state `state/autopickup.json`; default-on, opt out via `./hydra --no-autopickup` / `HYDRA_NO_AUTOPICKUP=1`). Each tick runs the deterministic report-only `scripts/autopickup-tick.sh --json` (preflight + pr-shepherd reconcile + completion-rescue scan + policy-aware merge surfacing + Monday-retro / daily-digest / once-a-day skill-promotion checks), then ACTS on the report: pick + spawn to headroom, dispatch review/rescue, and merge per `merge_surface`. The tick itself NEVER spawns/merges, and a T3 or safety-rail PR is NEVER auto-merged (classified `surface-for-human`). Two consecutive rate-limit hits auto-disable. Full tick contract: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`.
 
 Specs: `docs/specs/2026-04-16-scheduled-autopickup.md`, `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `docs/specs/2026-04-16-autopickup-default-on.md`, `docs/specs/2026-04-17-scheduled-retro.md`, `docs/specs/2026-04-17-daily-digest.md`.
 
 ## Memory hygiene (runs silently)
 
-Per-ticket: parse `MEMORY_CITED:` → bump `state/memory-citations.json` (flag `count>=3` across 3+ tickets as promotion-ready). Every 10 tickets (or `compact memory`): merge dups, archive stale → `memory/archive/`, draft skill-promotion PRs (`commander-skill-promotion`). Pre-spawn: prepend a Memory Brief. Skill promotion runs once/day via the autopickup tick (`scripts/promote-citations.sh` → `.claude/skills/`). Canonical tooling (don't reinvent): `scripts/{parse-citations,validate-learning-entry,validate-citations}.sh` (`--memory-dir`, default `$HYDRA_EXTERNAL_MEMORY_DIR` → `./memory/`). Rules: `memory/memory-lifecycle.md`.
+Per-ticket: parse `MEMORY_CITED:` → bump `state/memory-citations.json` (flag `count>=3` across 3+ tickets as promotion-ready). Every 10 tickets (or `compact memory`): merge dups, archive stale → `memory/archive/`, draft skill-promotion PRs (`commander-skill-promotion`). Pre-spawn: prepend a Memory Brief. Skill promotion runs once/day via the autopickup tick → `.claude/skills/`. Canonical tooling (don't reinvent): `scripts/{parse-citations,validate-learning-entry,validate-citations,promote-citations}.sh`. Rules: `memory/memory-lifecycle.md`.
 
 Specs: `docs/specs/2026-04-16-external-memory-split.md`, `docs/specs/2026-04-17-memory-preloading.md`, `docs/specs/2026-04-17-skill-seed-list.md`, `docs/specs/2026-04-17-skill-promotion-automation.md`.
 
 ## Weekly retro (on demand + scheduled)
 
-On `retro` (or Monday ≥ 09:00 local via the autopickup tick): read 7 days of `logs/*.json` + citation deltas + recent `escalation-faq.md`; write `memory/retros/YYYY-WW.md` (Shipped / Stuck / Escalations / Citation leaderboard / Proposed edits — edits need ≥5 data points). Update `state/autopickup.json:last_retro_run` (idempotency); overwrite on re-run; chat summary + pointer. Then `scripts/retro-file-proposed-edits.sh <week>` auto-files each Proposed-edits bullet as a `commander-ready` issue (T3 surface; idempotent by title). Specs: `docs/specs/2026-04-16-retro-workflow.md`, `docs/specs/2026-04-17-scheduled-retro.md`, `docs/specs/2026-04-17-retro-auto-file.md`.
+On `retro` (or Monday ≥ 09:00 local via the autopickup tick): read 7 days of `logs/*.json` + citation deltas + recent `escalation-faq.md`; write `memory/retros/YYYY-WW.md` (Shipped / Stuck / Escalations / Citation leaderboard / Proposed edits — edits need ≥5 data points); stamp `last_retro_run` (idempotent, overwrite on re-run); chat summary + pointer. Then `scripts/retro-file-proposed-edits.sh <week>` auto-files each Proposed-edits bullet as a `commander-ready` issue (idempotent by title). Specs: `docs/specs/2026-04-16-retro-workflow.md`, `docs/specs/2026-04-17-scheduled-retro.md`, `docs/specs/2026-04-17-retro-auto-file.md`.
 
 ## Session greeting
 
@@ -152,7 +152,4 @@ On session start, before the first message: read `state/autopickup.json`; if `en
 
 If auto-enabled, add: `Autopickup entered automatically (opt-out). Disable with `autopickup off` or relaunch with `./hydra --no-autopickup`.` Then wait — the `/loop` scheduler handles pickups; first tick after `interval_min` so the operator can countermand. Spec: `docs/specs/2026-04-16-autopickup-default-on.md`.
 
-**Append three health one-liners** (each silent when healthy; append verbatim when not):
-- **Connectors** — `scripts/hydra-connect.sh --status --quiet` (non-zero + stdout ⇒ e.g. `Connectors: linear broken …`). Wizard: `docs/specs/2026-04-17-connector-wizard.md`.
-- **CLAUDE.md size** — `scripts/check-claude-md-size.sh --quiet` (any output ⇒ e.g. `CLAUDE.md: 17540/18000 (97%) — WARN: …`; at WARN trim a section to a spec before adding routing). Spec: `docs/specs/2026-05-20-claudemd-size-graduated-bands.md`.
-- **Skill promotion** — `scripts/promote-citations.sh --greeting-count` (>0 ⇒ `Skill promotion: N PR(s) awaiting your review.`; silent at 0). Spec: `docs/specs/2026-04-17-skill-promotion-automation.md`.
+**Append three health one-liners** (each silent when healthy; append its stdout verbatim when not): connectors `scripts/hydra-connect.sh --status --quiet` (spec `docs/specs/2026-04-17-connector-wizard.md`); CLAUDE.md size `scripts/check-claude-md-size.sh --quiet` (at WARN trim a section to a spec before adding routing; spec `docs/specs/2026-05-20-claudemd-size-graduated-bands.md`); skill promotion `scripts/promote-citations.sh --greeting-count` (>0 ⇒ N PR(s) awaiting review; spec `docs/specs/2026-04-17-skill-promotion-automation.md`).
