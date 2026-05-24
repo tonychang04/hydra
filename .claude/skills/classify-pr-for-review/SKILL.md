@@ -41,7 +41,9 @@ review rubric).
    noise row (lockfile / generated / snapshot). Anything else (config YAML,
    `Dockerfile`, `state/*.json`, schemas, infra) is `include`.
 3. **If ANY file is `security-trigger`**, the PR is security-adjacent: run `/cso`
-   in addition to `/review` + `/codex review`.
+   in addition to `/review`. (`/codex review` is OFF by default — it may still run
+   as the opt-in step-8 cross-family security critic, but is not part of the
+   default gate. See `.claude/agents/worker-review.md` Flow step 6.)
 4. **Review every `include` file in depth.** Mention `exclude` files only if their
    *presence* is the problem (a committed `.env`, a lockfile change in a docs-only
    PR — a scope smell worth a Concern).
@@ -49,9 +51,11 @@ review rubric).
    below): extract the ticket's acceptance criteria (approval gate), then attach
    a verdict + concrete evidence per criterion (verification gate). No `PASS`
    without evidence.
-6. **Synthesize** `/review` + `/codex review` (+ `/cso` if run) into ONE comment
-   using the template below; deduplicate findings the tools both raise. The
-   evidence table sits between the `Commander review` header and `**Blockers**`.
+6. **Synthesize** `/review` (+ `/codex review` only if opted in — it is OFF by
+   default; see `.claude/agents/worker-review.md` Flow step 6) (+ `/cso` if run)
+   into ONE comment using the template below; deduplicate findings the tools both
+   raise. The evidence table sits between the `Commander review` header and
+   `**Blockers**`.
 7. **Validate the comment body** through `scripts/validate-evidence-table.sh`
    before posting (exit 0 required — see "Verification").
 8. **Post** per `.claude/agents/worker-review.md` flow (post + label steps):
@@ -205,7 +209,7 @@ Commander review of PR #<n>
 **Nits** (optional polish)
 - <issue> — <file:line>
 
-**Signed-off by** commander-review · skills run: /review, /codex review[, /cso]
+**Signed-off by** commander-review · skills run: /review[, /codex review][, /cso]
 ```
 
 The body MUST start with the literal `Commander review` — the timeout watchdog
