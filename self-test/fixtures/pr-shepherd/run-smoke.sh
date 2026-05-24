@@ -29,9 +29,15 @@ STATE_DIR="$FIX_DIR/state"
 
 [[ -x "$SCRIPT" ]] || { echo "FAIL: $SCRIPT not executable"; exit 1; }
 
+# --repo is passed explicitly: v1.1 requires strict one-repo-per-invocation for
+# orphan matching (no global "$repo == "" admits all workers" path, no loose
+# basename match — ticket #221). The default fixture workers are all on the
+# tonychang04/hydra slug, so matching resolves the same as before but now via the
+# strict exact-slug rule.
 common_args=(
   --gh-mock "$GH_MOCK"
   --state-dir "$STATE_DIR"
+  --repo tonychang04/hydra
 )
 
 # -----------------------------------------------------------------------------
@@ -117,7 +123,7 @@ grep -q "orphaned" <<<"$human_out" \
 # -----------------------------------------------------------------------------
 EMPTY_STATE="$(mktemp -d)"
 trap 'rm -rf "$EMPTY_STATE"' EXIT
-empty_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$GH_MOCK" --state-dir "$EMPTY_STATE" --json)"
+empty_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$GH_MOCK" --state-dir "$EMPTY_STATE" --repo tonychang04/hydra --json)"
 echo "$empty_out" | jq -e '.summary.orphaned == 8' >/dev/null \
   || { echo "FAIL: with empty state-dir, all 8 PRs should be orphaned"; echo "$empty_out"; exit 1; }
 
@@ -142,6 +148,74 @@ scope_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$GH_MOCK" --state-dir "$SCOPE_STATE
 rm -rf "$SCOPE_STATE"
 echo "$scope_out" | jq -e '.prs[] | select(.number == 103) | .orphaned == true' >/dev/null \
   || { echo "FAIL: cross-repo worker falsely claimed PR #103 (repo scoping broken)"; echo "$scope_out"; exit 1; }
+
+# -----------------------------------------------------------------------------
+# v1.1 #221 — Bug 1: cross-repo orphan FALSE-NEGATIVE.
+# -----------------------------------------------------------------------------
+# Bug 1b: SAME-NAME, DIFFERENT-OWNER repo (basename collision). active.json is
+# global; the v1 loose basename match ((.repo|split("/")|last) == repo_name)
+# admitted a worker on otherowner/hydra to claim tonychang04/hydra's PR because
+# both basenames are "hydra". A genuinely orphaned PR was thus silently missed.
+# Strict matching (exact slug or local_path tail == owner/name) must reject it.
+COLL_STATE="$(mktemp -d)"
+printf '{"workers":[{"id":"w-coll","ticket":"otherowner/hydra#103","repo":"otherowner/hydra","tier":"T2","started_at":"2026-05-23T10:00:00Z","subagent_type":"worker-implementation","status":"running","branch":"hydra/commander/103"}],"last_updated":"2026-05-23T10:00:00Z"}' > "$COLL_STATE/active.json"
+coll_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$GH_MOCK" --state-dir "$COLL_STATE" --repo tonychang04/hydra --json)"
+rm -rf "$COLL_STATE"
+echo "$coll_out" | jq -e '.prs[] | select(.number == 103) | .orphaned == true' >/dev/null \
+  || { echo "FAIL: same-name/diff-owner worker (otherowner/hydra) falsely claimed PR #103 via basename collision"; echo "$coll_out"; exit 1; }
+
+# Bug 1a: --repo UNSET must NOT admit all workers globally. Build a state whose
+# ONLY worker is on a DIFFERENT repo but tracks branch hydra/commander/106. The
+# v1 `$repo == ""` admission kept all workers, so #106 was falsely non-orphan.
+# With v1.1, an unresolvable repo (mock mode, no --repo) matches NO workers →
+# every PR is an orphan (safe false-positive direction, never a false-negative).
+NOREPO_STATE="$(mktemp -d)"
+printf '{"workers":[{"id":"w-x","ticket":"otherowner/hydra#106","repo":"otherowner/hydra","tier":"T2","started_at":"2026-05-23T10:00:00Z","subagent_type":"worker-implementation","status":"running","branch":"hydra/commander/106"}],"last_updated":"2026-05-23T10:00:00Z"}' > "$NOREPO_STATE/active.json"
+norepo_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$GH_MOCK" --state-dir "$NOREPO_STATE" --json 2>/dev/null)"
+rm -rf "$NOREPO_STATE"
+echo "$norepo_out" | jq -e '.prs[] | select(.number == 106) | .orphaned == true' >/dev/null \
+  || { echo "FAIL: --repo unset admitted a cross-repo worker globally (PR #106 false-negative)"; echo "$norepo_out"; exit 1; }
+echo "$norepo_out" | jq -e '.summary.orphaned == 8' >/dev/null \
+  || { echo "FAIL: --repo unset must not match any worker (expected all 8 orphaned)"; echo "$norepo_out"; exit 1; }
+
+# Local_path tail still matches (no regression): a worker whose repo is a local
+# checkout path ending in the exact owner/name slug must still claim its PR.
+LP_STATE="$(mktemp -d)"
+printf '{"workers":[{"id":"w-lp","ticket":"tonychang04/hydra#103","repo":"/Users/x/repos/tonychang04/hydra","tier":"T2","started_at":"2026-05-23T10:00:00Z","subagent_type":"worker-implementation","status":"running","branch":"hydra/commander/103"}],"last_updated":"2026-05-23T10:00:00Z"}' > "$LP_STATE/active.json"
+lp_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$GH_MOCK" --state-dir "$LP_STATE" --repo tonychang04/hydra --json)"
+rm -rf "$LP_STATE"
+echo "$lp_out" | jq -e '.prs[] | select(.number == 103) | .orphaned == false' >/dev/null \
+  || { echo "FAIL: local_path tail (.../tonychang04/hydra) should match its PR #103"; echo "$lp_out"; exit 1; }
+
+# -----------------------------------------------------------------------------
+# v1.1 #221 — Bug 2: fallback ticket-join must use the branch→issue mapping, NOT
+# the PR number (PR# ≠ issue# for real Hydra PRs). Branchless workers only.
+# -----------------------------------------------------------------------------
+# Bug 2 false-positive: a branchless worker tracks ISSUE #999. A PR numbered 999
+# whose branch is hydra/commander/42 (i.e. it closes issue 42, NOT 999) must be
+# orphaned. The v1 join compared the PR number (999) to worker tickets (999) and
+# falsely "claimed" it.
+B2FP_MOCK="$(mktemp -d)"
+B2FP_STATE="$(mktemp -d)"
+jq -n '[{number:999,title:"PR number 999 but branch closes issue 42",url:"https://x/999",headRefName:"hydra/commander/42",isDraft:true,labels:[],statusCheckRollup:[{conclusion:"SUCCESS"}],reviewDecision:""}]' > "$B2FP_MOCK/pr-list.json"
+printf '{"workers":[{"id":"w-bl","ticket":"tonychang04/hydra#999","repo":"tonychang04/hydra","tier":"T2","started_at":"2026-05-23T10:00:00Z","subagent_type":"worker-implementation","status":"running"}],"last_updated":"2026-05-23T10:00:00Z"}' > "$B2FP_STATE/active.json"
+b2fp_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$B2FP_MOCK" --state-dir "$B2FP_STATE" --repo tonychang04/hydra --json)"
+rm -rf "$B2FP_MOCK" "$B2FP_STATE"
+echo "$b2fp_out" | jq -e '.prs[] | select(.number == 999) | .orphaned == true' >/dev/null \
+  || { echo "FAIL: fallback join matched PR# 999 against worker ISSUE# 999 (Bug 2 false-positive)"; echo "$b2fp_out"; exit 1; }
+
+# Bug 2 true-positive: a branchless worker tracks ISSUE #42. A PR numbered 777
+# whose branch is hydra/commander/42 (closes issue 42) must be NON-orphan —
+# matched via the branch→issue mapping. The v1 join used PR# 777 (≠ 42) and
+# falsely orphaned it.
+B2TP_MOCK="$(mktemp -d)"
+B2TP_STATE="$(mktemp -d)"
+jq -n '[{number:777,title:"PR 777 closes issue 42",url:"https://x/777",headRefName:"hydra/commander/42",isDraft:true,labels:[],statusCheckRollup:[{conclusion:"SUCCESS"}],reviewDecision:""}]' > "$B2TP_MOCK/pr-list.json"
+printf '{"workers":[{"id":"w-bl","ticket":"tonychang04/hydra#42","repo":"tonychang04/hydra","tier":"T2","started_at":"2026-05-23T10:00:00Z","subagent_type":"worker-implementation","status":"running"}],"last_updated":"2026-05-23T10:00:00Z"}' > "$B2TP_STATE/active.json"
+b2tp_out="$(NO_COLOR=1 "$SCRIPT" --gh-mock "$B2TP_MOCK" --state-dir "$B2TP_STATE" --repo tonychang04/hydra --json)"
+rm -rf "$B2TP_MOCK" "$B2TP_STATE"
+echo "$b2tp_out" | jq -e '.prs[] | select(.number == 777) | .orphaned == false' >/dev/null \
+  || { echo "FAIL: branchless worker (issue 42) did not match PR #777 via branch→issue mapping (Bug 2 true-positive)"; echo "$b2tp_out"; exit 1; }
 
 # -----------------------------------------------------------------------------
 # Error paths.
