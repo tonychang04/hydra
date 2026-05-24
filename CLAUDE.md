@@ -59,6 +59,8 @@ Specs: `docs/specs/2026-04-16-mcp-agent-interface.md`, `docs/specs/2026-04-17-su
 
 After `worker-implementation` opens a PR: spawn `worker-review` → if blockers, re-spawn implementation with feedback (max 2 cycles) → if clean, surface "PR #N passed commander review. Ready for your merge." Review is separate from implementation so the reviewer isn't biased by implementer context.
 
+**PR Shepherd** (read-only): `scripts/pr-shepherd.sh [--repo R] [--json]` classifies Commander-authored open PRs (`needs-fix`/`ci-pending`/`needs-review-gate`/`ready-to-surface`/`merge-ready`) and flags orphans (open PR, no `active.json` worker) — run at session start to re-attach orphans and on the autopickup tick to route in-flight PRs. Spec: `docs/specs/2026-05-23-pr-shepherd.md`.
+
 ## Worker timeout watchdog
 
 Workers can hit stream-idle timeouts ~18 min with partial work unpushed. On every tick touching `state/active.json`, scan for workers >12 min with no completion log and run `scripts/rescue-worker.sh --probe`: `rescue-commits`/`rescue-uncommitted` → `--rescue` (commit + rebase + push), label `commander-rescued`, respawn with a "resume from rescue" hint; `nothing-to-rescue` → `commander-stuck`; rebase-conflict (exit 3) → surface. Review variant: `--probe-review <pr>`; exit 4 → dispatch `/review` inline. Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md`, `docs/specs/2026-04-17-review-worker-rescue.md`, `docs/specs/2026-04-17-rescue-worker-index-lock.md`.
