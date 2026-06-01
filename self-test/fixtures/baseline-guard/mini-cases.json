@@ -1,0 +1,20 @@
+{
+  "_comment": "Tiny fixed cases file for the self-test-baseline-guard golden case (ticket #118). The guard case runs run.sh --json against THIS file, not the real golden set, to avoid re-running (and recursively re-entering) the full script suite. Two trivial script cases → 3 executable assertions (1 + 2 steps).",
+  "cases": [
+    {
+      "id": "mini-true",
+      "kind": "script",
+      "steps": [
+        { "name": "true exits 0", "cmd": "true", "expected_exit": 0 }
+      ]
+    },
+    {
+      "id": "mini-echo",
+      "kind": "script",
+      "steps": [
+        { "name": "echo exits 0", "cmd": "echo hi >/dev/null", "expected_exit": 0 },
+        { "name": "test exits 0", "cmd": "[ 1 -eq 1 ]", "expected_exit": 0 }
+      ]
+    }
+  ]
+}

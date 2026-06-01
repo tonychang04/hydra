@@ -3142,6 +3142,41 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "self-test-baseline-guard",
+      "_description": "Script-only self-test for the assertion-count baseline guard (ticket #118, spec docs/specs/2026-06-01-self-test-baseline-guard.md). To avoid recursively re-running the full script suite, every step exercises run.sh / check-self-test-baseline.sh against the tiny fixed fixture self-test/fixtures/baseline-guard/mini-cases.json and TEMP baseline copies — never the real golden set or the committed baseline.json. Asserts (a) run.sh --kind=script --json emits valid JSON with executable_assertions > 0; (b) the guard PASSes (exit 0) when current >= a low floor; (c) the guard FAILs (exit 1) on a synthetic 0-assertion summary — reproduces the #118 regression as an automated assertion; (d) --update rewrites a temp baseline. Steps assert on exit code only (the runner ignores expected_stdout_contains); each step's final command exit code IS the assertion.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "run.sh --kind=script --json over mini fixture → executable_assertions > 0, no fail",
+          "cmd": "self-test/run.sh --kind=script --json --cases-file self-test/fixtures/baseline-guard/mini-cases.json 2>/dev/null | jq -e '.executable_assertions > 0 and .failed == 0'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "true"
+        },
+        {
+          "name": "guard PASSes when current count meets a low temp floor",
+          "cmd": "bl=$(mktemp); printf '%s' '{\"executable_assertions\":2,\"tolerance\":0}' > \"$bl\"; sum=$(mktemp); self-test/run.sh --kind=script --json --cases-file self-test/fixtures/baseline-guard/mini-cases.json 2>/dev/null > \"$sum\"; scripts/check-self-test-baseline.sh --baseline \"$bl\" --from-json \"$sum\" --quiet; ec=$?; rm -f \"$bl\" \"$sum\"; [ \"$ec\" -eq 0 ]",
+          "expected_exit": 0,
+          "expected_stdout_contains": ""
+        },
+        {
+          "name": "guard FAILs (exit 1) on synthetic 0-assertion summary (the #118 regression)",
+          "cmd": "bl=$(mktemp); printf '%s' '{\"executable_assertions\":300,\"tolerance\":0}' > \"$bl\"; zero=$(mktemp); printf '%s' '{\"executable_assertions\":0,\"kind\":\"script\"}' > \"$zero\"; scripts/check-self-test-baseline.sh --baseline \"$bl\" --from-json \"$zero\" --json >/dev/null 2>&1; ec=$?; rm -f \"$bl\" \"$zero\"; [ \"$ec\" -eq 1 ]",
+          "expected_exit": 0,
+          "expected_stdout_contains": ""
+        },
+        {
+          "name": "guard --update rewrites a temp baseline to the current count",
+          "cmd": "bl=$(mktemp); printf '%s' '{\"executable_assertions\":1,\"tolerance\":0}' > \"$bl\"; hi=$(mktemp); printf '%s' '{\"executable_assertions\":999,\"kind\":\"script\"}' > \"$hi\"; scripts/check-self-test-baseline.sh --baseline \"$bl\" --from-json \"$hi\" --update --quiet; val=$(jq -r '.executable_assertions' \"$bl\"); rm -f \"$bl\" \"$hi\"; [ \"$val\" = \"999\" ]",
+          "expected_exit": 0,
+          "expected_stdout_contains": ""
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

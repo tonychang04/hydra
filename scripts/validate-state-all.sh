@@ -226,6 +226,46 @@ else
   esac
 fi
 
+# -----------------------------------------------------------------------------
+# self-test assertion-count baseline guard — ticket #118.
+# Spec: docs/specs/2026-06-01-self-test-baseline-guard.md.
+#
+# Refuses a PR that drops net executable self-test assertions below the
+# committed floor (self-test/baseline.json) — the regression detector that
+# would have caught #118's silent "0 cases executing".
+#
+# GATED behind HYDRA_SELFTEST_BASELINE_GATE=1 because the guard runs the
+# ~90s script-kind harness. Every `pick up` preflight should stay fast, so the
+# default path SKIPs this; the merge/review gate and CI set the flag to enforce
+# it where merges are actually decided. Exit-code semantics mirror the size
+# guard: 0 = OK, 1 = regression (collected as a failure), other = abort.
+# -----------------------------------------------------------------------------
+baseline_check="$SCRIPT_DIR/check-self-test-baseline.sh"
+baseline_json="$ROOT_DIR/self-test/baseline.json"
+if [[ "${HYDRA_SELFTEST_BASELINE_GATE:-0}" != "1" ]]; then
+  echo "∅ check-self-test-baseline.sh (skip — set HYDRA_SELFTEST_BASELINE_GATE=1 to enforce; ~90s harness run)"
+  skipped=$((skipped + 1))
+elif [[ ! -f "$baseline_json" ]]; then
+  echo "∅ $baseline_json (skip — self-test baseline not present)"
+  skipped=$((skipped + 1))
+elif [[ ! -f "$baseline_check" ]]; then
+  echo "∅ check-self-test-baseline.sh (skip — helper script not found at $baseline_check)"
+  skipped=$((skipped + 1))
+else
+  set +e
+  bash "$baseline_check"
+  ec=$?
+  set -e
+  case "$ec" in
+    0)  passed=$((passed + 1)) ;;
+    1)  failed_files+=("self-test coverage (below baseline)") ;;
+    *)
+        echo "✗ check-self-test-baseline.sh exited $ec — aborting bulk run" >&2
+        exit "$ec"
+        ;;
+  esac
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 if [[ ${#failed_files[@]} -eq 0 ]]; then

@@ -1,0 +1,7 @@
+{
+  "executable_assertions": 300,
+  "tolerance": 0,
+  "note": "Floor for net executable self-test assertions (kind=script). The guard scripts/check-self-test-baseline.sh FAILs if the current count drops below (executable_assertions - tolerance). Set conservatively below the observed count (~333 on 2026-06-01) so host-dependent SKIPs (docker/hadolint) never trip a false alarm; the guard's job is catching a coverage *collapse* (ticket #118: count -> 0), not policing small drift. A PR that legitimately reduces coverage must lower this number via `scripts/check-self-test-baseline.sh --update`, making the drop explicit in the diff.",
+  "updated": "2026-06-01",
+  "updated_by_ticket": 118
+}
