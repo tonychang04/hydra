@@ -200,6 +200,69 @@ is_placeholder_evidence() {
 }
 
 # -----------------------------------------------------------------------------
+# is_screenshot_only_evidence — true (0) if the evidence cell is NOTHING BUT a
+# screenshot reference: a picture with no asserted state. (#191 amendment,
+# docs/specs/2026-05-21-evidence-based-review-gate.md.)
+#
+# The #191 policy is "behavioral assertion + ONE screenshot": the behavioral
+# assertion (exit code / DOM / SDK / REST body / HTTP status / command output /
+# file:line / trace:<id>) is the load-bearing evidence; a screenshot only
+# corroborates. A screenshot proves a render happened, not that the state is
+# correct — so a PASS backed by a screenshot ALONE is rejected exactly like an
+# empty cell. Any real assertion anywhere in the cell keeps the PASS valid.
+#
+# Method: remove the screenshot references (the token `screenshot`/`screencap`/
+# `screen-grab`, an image link `![alt](path)`, and bare image paths `*.png`/
+# `.jpg`/`.jpeg`/`.gif`/`.webp`), plus connective filler ("see", "of", "the",
+# "a", "an", "and", punctuation). If anything substantive remains -> NOT
+# screenshot-only (there's an assertion). If nothing remains -> screenshot-only.
+# -----------------------------------------------------------------------------
+is_screenshot_only_evidence() {
+  local cell residue lower
+  cell="$(trim "$1")"
+  cell="${cell//\`/}"              # drop backticks for content inspection
+  lower="$(printf '%s' "$cell" | tr '[:upper:]' '[:lower:]')"
+  # Fast path: a cell with no screenshot/image hint at all is never
+  # screenshot-only — leave it to the assertion checks.
+  case "$lower" in
+    *screenshot*|*screencap*|*screen-grab*|*screen\ grab*|\
+    *.png*|*.jpg*|*.jpeg*|*.gif*|*.webp*|*"!["*) : ;;
+    *) return 1 ;;
+  esac
+  residue="$lower"
+  # Strip markdown image links: ![alt](path)
+  while [[ "$residue" == *"!["*"]("*")"* ]]; do
+    residue="${residue%%"!["*}${residue#*"!["*")"}"
+  done
+  # Strip bare image-file paths (a run of path chars ending in an image ext).
+  # sed is POSIX-standard (unlike `timeout`, it's always present); but BSD sed
+  # (macOS) does NOT support `\b`, so we tokenize for whole-word filtering below
+  # rather than relying on word boundaries.
+  residue="$(printf '%s' "$residue" \
+    | sed -E 's/[A-Za-z0-9._/~-]+\.(png|jpg|jpeg|gif|webp)//g')"
+  # Strip the screenshot keywords (substring match — no word boundary needed).
+  residue="${residue//screenshot/ }"
+  residue="${residue//screencap/ }"
+  residue="${residue//screen-grab/ }"
+  residue="${residue//screen grab/ }"
+  # Whole-word filler removal, tokenized (portable: no `\b`). Anything left that
+  # is NOT pure filler/punctuation is a real assertion -> not screenshot-only.
+  local tok out=""
+  for tok in $residue; do
+    # strip surrounding punctuation from the token
+    tok="$(printf '%s' "$tok" | tr -d '[:punct:]')"
+    [[ -z "$tok" ]] && continue
+    case "$tok" in
+      see|of|the|a|an|and|in|attached|below|above|here|this|that|\
+      representative|one|single|page|result|view|is|its|shows|showing|show|\
+      rendered|render|renders|displayed|displays|display|captured|capture) ;;
+      *) out+="$tok" ;;
+    esac
+  done
+  [[ -z "$out" ]]
+}
+
+# -----------------------------------------------------------------------------
 # locate the evidence table.
 #   1. Find the header row whose 4 columns are #, Criterion, Verdict, Evidence.
 #   2. The next line must be a separator (|---|---|...).
@@ -338,6 +401,12 @@ for ((ln = data_start; ln <= ${#LINES[@]}; ln++)); do
         echo "${C_RED}x${C_RESET} validate-evidence-table: row $row_count (criterion $(trim "$num")) is PASS with NO evidence." >&2
         echo "${C_DIM}    criterion: $(trim "$crit")${C_RESET}" >&2
         echo "${C_DIM}    -> a clean PASS requires concrete evidence; mark it UNVERIFIED if you could not verify it.${C_RESET}" >&2
+        violations=$((violations + 1))
+      elif is_screenshot_only_evidence "$evidence"; then
+        # #191: a screenshot corroborates a behavioral assertion; it is not one.
+        echo "${C_RED}x${C_RESET} validate-evidence-table: row $row_count (criterion $(trim "$num")) is PASS with a SCREENSHOT ONLY — that is not a behavioral assertion." >&2
+        echo "${C_DIM}    criterion: $(trim "$crit")${C_RESET}" >&2
+        echo "${C_DIM}    -> add a behavioral assertion (exit code / DOM / SDK / REST body / HTTP status / command output / file:line); a screenshot corroborates but cannot be the sole PASS evidence. See docs/specs/2026-05-21-evidence-based-review-gate.md (#191).${C_RESET}" >&2
         violations=$((violations + 1))
       fi
       ;;

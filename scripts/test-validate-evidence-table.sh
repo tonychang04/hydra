@@ -312,6 +312,87 @@ else
   bad "expected exit 1 (empty evidence), got $EC; out: $(cat "$tmpdir/out")"
 fi
 
+# ---------- Test 16: screenshot-ONLY PASS -> exit 1 (#191 meaningful-bar rule) ----------
+# A screenshot is corroboration, not an assertion. A PASS whose ONLY evidence is
+# a screenshot reference (a picture with no asserted state) is rejected exactly
+# like an empty cell — this keeps the #191 flexibility from re-opening the
+# "tests claimed not run" hole (#118). The behavioral assertion is load-bearing.
+say "Test 16: a PASS whose ONLY evidence is a screenshot -> exit 1 (screenshot is not an assertion)"
+for shot in \
+  "screenshot" \
+  "screenshot dashboard.png" \
+  "see screenshot" \
+  "screencap of the page" \
+  "![dashboard](./shots/dash.png)" \
+  "shots/login.png" \
+  "evidence.jpg"; do
+  cat > "$tmpdir/t16.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t16.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "screenshot-only evidence '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+# stderr should explain a screenshot is not a behavioral assertion.
+cat > "$tmpdir/t16b.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | screenshot dashboard.png |
+EOF
+run_stdin "$tmpdir/t16b.md"
+if grep -qiE "screenshot|assertion|behaviou?ral" "$tmpdir/out"; then
+  ok "stderr explains a screenshot alone is not an assertion"
+else
+  bad "expected screenshot/assertion guidance; got: $(cat "$tmpdir/out")"
+fi
+
+# ---------- Test 17: behavioral assertion + ONE screenshot -> exit 0 (#191 happy path) ----------
+# The #191 policy: behavioral assertion (REST/DOM/SDK/exit-code/HTTP state) is the
+# evidence; a single representative screenshot rides along. This PASSES.
+say "Test 17: behavioral assertion + one screenshot -> exit 0 (assertion carries it)"
+for ev in \
+  "\`curl localhost:3000/items\` -> \`[{\"id\":1}]\` 200; screenshot dashboard.png" \
+  "REST GET /items -> 200 \`[{\"id\":1}]\`; ![dash](shots/dash.png)" \
+  "exit 0 from \`andb query\`; screenshot of result.png" \
+  "DOM \`.items li\` count = 3 (asserted); see screenshot login.png"; do
+  cat > "$tmpdir/t17.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t17.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "assertion + screenshot accepted (exit 0): '$ev'"
+  else
+    bad "expected exit 0 for assertion+screenshot, got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 18: behavioral assertion ALONE -> exit 0 (screenshots optional) ----------
+# Non-goal: screenshots are NOT mandatory. An assertion-only PASS stays valid.
+say "Test 18: behavioral assertion alone, no screenshot -> exit 0 (screenshots optional)"
+cat > "$tmpdir/t18.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Health endpoint returns 200 | PASS | `curl localhost:3000/health` -> `{"ok":true}` 200 |
+| 2 | exit code is 0 | PASS | `andb migrate` -> exit 0 |
+EOF
+run_stdin "$tmpdir/t18.md"
+if [[ "$EC" -eq 0 ]]; then ok "assertion-only PASS still valid (screenshots optional)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+
 # ---------- summary ----------
 echo ""
 echo "============================================================"
