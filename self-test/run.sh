@@ -62,6 +62,13 @@ Options:
   --parallel          Run cases concurrently via xargs -P, bounded by
                       budget.json:phase1_subscription_caps.max_concurrent_workers
   --verbose           Print command stdout/stderr even on success
+  --json              Emit a single machine-readable JSON summary to stdout
+                      instead of the decorative per-case lines:
+                        {"passed":N,"failed":N,"skipped":N,
+                         "executable_assertions":N,"kind":"<kind>"}
+                      executable_assertions = total steps that actually ran in
+                      non-skipped script cases (the "net assertions" baseline
+                      guard tracks; see scripts/check-self-test-baseline.sh).
   -h, --help          Show this help
 
 Exit codes:
@@ -78,6 +85,7 @@ kind_filter="all"
 case_id=""
 parallel=0
 verbose=0
+json_output=0
 cases_file=""
 
 while [[ $# -gt 0 ]]; do
@@ -109,6 +117,9 @@ while [[ $# -gt 0 ]]; do
     --verbose)
       verbose=1; shift
       ;;
+    --json)
+      json_output=1; shift
+      ;;
     -h|--help)
       usage; exit 0
       ;;
@@ -122,6 +133,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# --json needs the sequential path: only it accumulates executable_assertions.
+# The parallel dispatcher tallies pass/skip from child stdout and cannot sum
+# step counts, so --json implies sequential execution.
+if [[ "$json_output" -eq 1 ]] && [[ "$parallel" -eq 1 ]]; then
+  parallel=0
+fi
 
 case "$kind_filter" in
   all|script|commander-inline|commander-self|worker-implementation|worker-subagent) ;;
@@ -293,12 +311,21 @@ if [[ -n "$case_id" ]]; then
   fi
 fi
 
+if [[ "$json_output" -eq 1 ]]; then
+  print_header=0
+fi
+
 if [[ "$print_header" -eq 1 ]]; then
   echo "${C_BOLD}▸ Running self-test (${#all_ids[@]} case$([[ ${#all_ids[@]} -ne 1 ]] && echo s), kind=$kind_filter)${C_RESET}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 fi
 
 passed=0; failed=0; skipped=0
+# executable_assertions: count of step-level assertions that actually ran in
+# non-skipped script cases. This is the "net assertions" metric the baseline
+# guard tracks (scripts/check-self-test-baseline.sh) — it collapses to 0 in the
+# regression #118 describes and ignores host-dependent SKIPs.
+executable_assertions=0
 overall_start="$(date +%s)"
 
 # -----------------------------------------------------------------------------
@@ -388,13 +415,26 @@ run_script_case() {
   case_end="$(date +%s)"
   elapsed=$((case_end - case_start))
 
+  # Report how many step-level assertions actually executed in this case, so the
+  # caller can accumulate the net executable-assertion count. A passing case ran
+  # all n_steps; a failing case ran up to and including the failing step.
   if [[ -z "$failed_step_idx" ]]; then
-    echo "${C_GREEN}✓${C_RESET} ${id} (${n_steps} steps, ${elapsed}s)"
+    _last_case_steps_run="$n_steps"
+  else
+    _last_case_steps_run="$failed_step_idx"
+  fi
+
+  if [[ -z "$failed_step_idx" ]]; then
+    [[ "$json_output" -eq 1 ]] || echo "${C_GREEN}✓${C_RESET} ${id} (${n_steps} steps, ${elapsed}s)"
     return 0
   fi
 
-  echo "${C_RED}✗${C_RESET} ${id} ${C_RED}FAIL${C_RESET} — ${failed_reason} (${elapsed}s)"
-  if [[ "$verbose" -eq 1 ]] || [[ -n "$step_stdout_all$step_stderr_all" ]]; then
+  if [[ "$json_output" -eq 1 ]]; then
+    echo "${C_RED}✗${C_RESET} ${id} ${C_RED}FAIL${C_RESET} — ${failed_reason} (${elapsed}s)" >&2
+  else
+    echo "${C_RED}✗${C_RESET} ${id} ${C_RED}FAIL${C_RESET} — ${failed_reason} (${elapsed}s)"
+  fi
+  if [[ "$json_output" -ne 1 ]] && { [[ "$verbose" -eq 1 ]] || [[ -n "$step_stdout_all$step_stderr_all" ]]; }; then
     if [[ -n "$step_stdout_all" ]]; then
       echo "  ${C_DIM}--- stdout ---${C_RESET}"
       sed 's/^/  /' <<<"$step_stdout_all"
@@ -410,7 +450,7 @@ run_script_case() {
 run_skip_case() {
   # $1 = id, $2 = kind, $3 = reason
   local id="$1" _kind="$2" reason="$3"
-  echo "${C_YELLOW}∅${C_RESET} ${id}  ${C_DIM}(SKIP: ${reason})${C_RESET}"
+  [[ "$json_output" -eq 1 ]] || echo "${C_YELLOW}∅${C_RESET} ${id}  ${C_DIM}(SKIP: ${reason})${C_RESET}"
   return 0
 }
 
@@ -528,8 +568,10 @@ for id in "${all_ids[@]}"; do
         skipped=$((skipped + 1))
       elif run_script_case "$id" "$case_json"; then
         passed=$((passed + 1))
+        executable_assertions=$((executable_assertions + ${_last_case_steps_run:-0}))
       else
         failed=$((failed + 1))
+        executable_assertions=$((executable_assertions + ${_last_case_steps_run:-0}))
       fi
       ;;
     worker-implementation)
@@ -549,7 +591,11 @@ for id in "${all_ids[@]}"; do
       skipped=$((skipped + 1))
       ;;
     unknown|*)
-      echo "${C_RED}✗${C_RESET} ${id} ${C_RED}FAIL${C_RESET} — could not infer kind (need .kind or .worker_type or .steps)"
+      if [[ "$json_output" -eq 1 ]]; then
+        echo "${C_RED}✗${C_RESET} ${id} ${C_RED}FAIL${C_RESET} — could not infer kind (need .kind or .worker_type or .steps)" >&2
+      else
+        echo "${C_RED}✗${C_RESET} ${id} ${C_RED}FAIL${C_RESET} — could not infer kind (need .kind or .worker_type or .steps)"
+      fi
       failed=$((failed + 1))
       ;;
   esac
@@ -558,7 +604,15 @@ done
 overall_end="$(date +%s)"
 total_elapsed=$((overall_end - overall_start))
 
-if [[ "$print_header" -eq 1 ]]; then
+if [[ "$json_output" -eq 1 ]]; then
+  jq -n \
+    --argjson passed "$passed" \
+    --argjson failed "$failed" \
+    --argjson skipped "$skipped" \
+    --argjson executable_assertions "$executable_assertions" \
+    --arg kind "$kind_filter" \
+    '{passed: $passed, failed: $failed, skipped: $skipped, executable_assertions: $executable_assertions, kind: $kind}'
+elif [[ "$print_header" -eq 1 ]]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "${passed} passed · ${failed} failed · ${skipped} skipped    (total ${total_elapsed}s)"
 fi
