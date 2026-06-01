@@ -137,6 +137,29 @@ invocation is `HYDRA_SELFTEST_BASELINE_GATE=1` (or calling the guard directly in
 review gate). This honors "refuse to merge a PR that drops assertions" without making every
 ticket-pickup pay a 90s tax — the gate fires where merges are decided.
 
+#### Recursion guard (mandatory — found during resume verification)
+
+The gate runs `check-self-test-baseline.sh`, which runs `self-test/run.sh --kind=script`,
+which executes **every** script golden case — including the `state-schemas` case, which
+itself shells out to `scripts/validate-state-all.sh --state-dir <fixture>`. Because
+`HYDRA_SELFTEST_BASELINE_GATE` is an *exported* env var, a naive gate re-fires inside that
+nested `validate-state-all.sh`, which re-runs the harness, which re-runs the nested case — an
+unbounded fork explosion (observed: 343 runaway processes; the canonical
+`HYDRA_SELFTEST_BASELINE_GATE=1 validate-state-all.sh` never terminated). Two independent
+defenses, **either sufficient**, both applied:
+
+1. **`--state-dir` suppression.** Skip the gate whenever `--state-dir` was explicitly passed
+   (`state_dir_overridden=1`). A fixture/self-test sub-run has no real `state/` coverage to
+   gate, so the gate is meaningless there. This breaks the nested call directly, since the
+   `state-schemas` case always passes `--state-dir`.
+2. **In-progress marker.** Export `HYDRA_SELFTEST_BASELINE_GATE_ACTIVE=1` around the guard
+   invocation and skip the gate if it is already set. Any nested `validate-state-all.sh`
+   (however reached) sees the marker and declines to re-enter.
+
+Regression-protected by a 5th step in the `self-test-baseline-guard` golden case asserting
+`HYDRA_SELFTEST_BASELINE_GATE=1 validate-state-all.sh --state-dir <fixture>` exits 0 and
+emits the skip line (i.e. does not re-enter the harness).
+
 ## Test plan
 
 All via `self-test/run.sh` itself (the harness tests the harness — dogfood) plus a new

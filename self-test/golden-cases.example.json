@@ -3173,6 +3173,12 @@
           "cmd": "bl=$(mktemp); printf '%s' '{\"executable_assertions\":1,\"tolerance\":0}' > \"$bl\"; hi=$(mktemp); printf '%s' '{\"executable_assertions\":999,\"kind\":\"script\"}' > \"$hi\"; scripts/check-self-test-baseline.sh --baseline \"$bl\" --from-json \"$hi\" --update --quiet; val=$(jq -r '.executable_assertions' \"$bl\"); rm -f \"$bl\" \"$hi\"; [ \"$val\" = \"999\" ]",
           "expected_exit": 0,
           "expected_stdout_contains": ""
+        },
+        {
+          "name": "recursion guard: gate flag + --state-dir override skips the harness (no fork explosion) and exits 0",
+          "cmd": "out=$(HYDRA_SELFTEST_BASELINE_GATE=1 bash scripts/validate-state-all.sh --state-dir self-test/fixtures/state-schemas/valid 2>&1); ec=$?; printf '%s\\n' \"$out\" | grep -q 'check-self-test-baseline.sh (skip' && [ \"$ec\" -eq 0 ]",
+          "expected_exit": 0,
+          "expected_stdout_contains": ""
         }
       ],
       "last_run": null,
