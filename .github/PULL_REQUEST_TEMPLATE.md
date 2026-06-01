@@ -9,7 +9,7 @@
 - [ ] `bash -n` / `jq .` on modified shell + JSON files
 - [ ] Relevant self-test case passes (once #15 self-test runner lands)
 - [ ] Manual smoke test on a fixture repo (if behavior change)
-- [ ] Screenshot or log evidence for UI/CLI output changes
+- [ ] Behavioral assertion (exit code / DOM / SDK / REST body / HTTP status) for UI/CLI output changes — plus one representative screenshot if useful. You do NOT need a screenshot at every step, and a flaky capture tool doesn't block a behavior that's otherwise proven (see `docs/specs/2026-05-21-evidence-based-review-gate.md` #191).
 
 ## Affects CHANGELOG [Unreleased]?
 

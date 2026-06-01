@@ -103,7 +103,10 @@ Coordinator-Implementor-Verifier pattern).
 2. **Verification gate (b) — attach evidence per criterion.** For each row, pick
    a verdict and cite the evidence that justifies it:
    - `PASS` — REQUIRES concrete evidence: a command + its output, a test name +
-     its pass line, or a diff `file:line`. Never `PASS` on "looks right".
+     its pass line, a diff `file:line`, or a **behavioral assertion** — a *real
+     asserted state check*: an exit code, a DOM/SDK/REST body value, an HTTP
+     status, observed and quoted. Never `PASS` on "looks right" or on a
+     screenshot alone (see "Verification flexibility" below).
    - `FAIL` — the criterion is not met; say what's wrong (evidence optional).
    - `UNVERIFIED` — you could not verify it (no fixture, needs a live service,
      out of review scope); say why. **A criterion you can't verify is
@@ -116,12 +119,28 @@ Coordinator-Implementor-Verifier pattern).
    below for the exact invocation.)
 
 > **#197 extension point.** Evidence today is a command+output, a test+pass
-> line, or a diff `file:line`. When #197 (session trace) lands, a fourth kind —
+> line, a diff `file:line`, or a behavioral assertion (exit code / DOM / SDK /
+> REST body / HTTP status). When #197 (session trace) lands, a further kind —
 > `trace:<step-id>` pointing at a recorded session-trace step — becomes an
 > *additional* evidence source. The checker already treats any non-empty
 > Evidence cell as valid regardless of kind, so `trace:` references will work
 > with NO checker change. Do NOT depend on #197 being present — gather evidence
 > from test output / diffs / command output directly until it lands.
+
+> **Verification flexibility — behavioral assertion + one screenshot (#191).**
+> You do NOT need a screenshot at every step. A **behavioral assertion** (the
+> asserted REST/DOM/SDK/exit-code/HTTP state) is sufficient evidence for a
+> `PASS`; **one representative screenshot** corroborates it but is optional. A
+> screenshot proves a render happened, not that the state is correct — so a
+> `PASS` whose evidence is a **screenshot ALONE** is rejected exactly like an
+> empty cell (`validate-evidence-table.sh` exit 1). And a **flaky
+> evidence-capture tool** (e.g. the browse daemon down) must NOT block a
+> criterion whose behavior is proven by a non-visual assertion — fall back to
+> the assertion + (if you can get one) a single screenshot, mark the row `PASS`
+> on the assertion, and move on. This is the review-gate counterpart of the
+> watchdog's flaky-tool fallback (`docs/specs/2026-05-21-flaky-tool-probe-verdict.md`
+> → "curl/SDK + single screenshot"). Spec:
+> `docs/specs/2026-05-21-evidence-based-review-gate.md` (#191 amendment).
 
 ### Adversarial pass for SECURITY findings only (Refute-or-Promote, #199)
 
@@ -187,8 +206,9 @@ Commander review of PR #<n>
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
 | 1 | <criterion text, from the ticket> | PASS | `<cmd>` -> `<output>` / test `<name>` -> `1 passed` / diff `file:line` |
-| 2 | <criterion text> | FAIL | <what's wrong> |
-| 3 | <criterion text> | UNVERIFIED | <why you couldn't verify it> |
+| 2 | <criterion, UI behavior> | PASS | REST `GET /items` -> `200 [{"id":1}]`; screenshot `dash.png` (one shot corroborates) |
+| 3 | <criterion text> | FAIL | <what's wrong> |
+| 4 | <criterion text> | UNVERIFIED | <why you couldn't verify it> |
 
 <!-- SECURITY PRs ONLY (security-trigger diff + ≥1 finding raised) — omit otherwise -->
 **Security findings — adversarial pass (kill mandate)**
@@ -317,8 +337,9 @@ only after it exits 0 do the `REPORTED` rows become `SECURITY:` blockers.
   ```
 
   Exit 0 = every `PASS` carries evidence (post it). Exit 1 = a `PASS` lacks
-  evidence / illegal verdict / zero criteria (fix the table). Exit 2 = no table
-  found (you forgot it). Regression test: `bash scripts/test-validate-evidence-table.sh`.
+  evidence / is a screenshot ALONE with no behavioral assertion (#191) /
+  illegal verdict / zero criteria (fix the table). Exit 2 = no table found (you
+  forgot it). Regression test: `bash scripts/test-validate-evidence-table.sh`.
 - **Findings table enforced (security PRs only):** for a `security-trigger` diff
   with ≥1 raised finding, the comment carries a FINDINGS TABLE and passes the
   adversarial checker. Validate the body before escalating:
