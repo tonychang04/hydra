@@ -36,7 +36,7 @@ Exit codes: `0` = all cases passed or skipped · `1` = one or more failed · `2`
 `--json` prints a single object instead of the decorative lines:
 
 ```json
-{"passed":45,"failed":0,"skipped":4,"executable_assertions":333,"kind":"script"}
+{"passed":46,"failed":0,"skipped":4,"executable_assertions":338,"kind":"script"}
 ```
 
 `executable_assertions` is the count of step-level assertions that actually ran in non-skipped
