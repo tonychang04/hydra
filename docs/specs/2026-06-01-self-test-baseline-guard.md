@@ -1,3 +1,11 @@
+---
+status: draft
+date: 2026-06-01
+author: hydra worker (#118)
+ticket: 118
+tier: T2
+---
+
 # Self-test assertion-count baseline guard
 
 Ticket: #118 — "Self-test harness has zero script-kind cases executing — trust undermined"
