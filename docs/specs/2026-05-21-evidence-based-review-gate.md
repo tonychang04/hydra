@@ -177,3 +177,113 @@ Run the test, paste output, attach to the PR.
   opt-in from the agent flow; nothing else calls it, so removal is clean. The
   evidence table degrades gracefully to "extra section in a comment" if the
   checker is removed.
+
+---
+
+## Amendment — verification flexibility (#191, 2026-06-01)
+
+### Problem (the #191 delta)
+
+A dogfood run proved an app worked end-to-end via **behavioral assertions
+(REST/SDK/DOM state checks) + one representative screenshot**, despite a flaky
+browser daemon. Read rigidly, a "screenshot at every step" expectation would
+have *blocked a genuinely-verified ticket*: the behavior was proven, but the
+capture tool that takes the pretty pictures was flaky. The original gate above
+already accepts "command + output / test + pass line / diff `file:line`" as
+evidence kinds — but it never named **behavioral assertions** as a first-class
+kind, never said **one screenshot is enough** (vs. one per step), and gave no
+guidance that **a flaky evidence-capture tool must not block** a ticket whose
+behavior is otherwise proven.
+
+This amendment makes that policy explicit AND keeps the bar meaningful, so the
+flexibility does NOT re-open the "tests claimed not run" regression that #118
+just closed.
+
+### Goals (amendment)
+
+1. Name **behavioral assertion** as a first-class evidence kind: a *real
+   asserted state check* — an exit code, a DOM/SDK/REST body value, an HTTP
+   status — observed and quoted. NOT a claim ("it works", "looks right").
+2. State that **one representative screenshot is sufficient corroboration**, not
+   a screenshot at every step. A screenshot supplements a behavioral assertion;
+   it is never the *sole* proof of a PASS.
+3. State that **a flaky evidence-capture tool (e.g. the browse daemon) must not
+   block** a criterion whose behavior is proven by a non-visual assertion. This
+   reuses the existing flaky-tool fallback already wired at the watchdog layer
+   (`docs/specs/2026-05-21-flaky-tool-probe-verdict.md` → "curl/SDK + single
+   screenshot") and brings the same posture into the *review gate*.
+4. **Keep the bar meaningful (the load-bearing constraint).** A PASS backed by
+   *only* a screenshot reference — a picture with no asserted state — is NOT a
+   clean pass. A screenshot is not an assertion; it can show a rendered page
+   while the underlying state is wrong. So: a **screenshot-only** evidence cell
+   is rejected exactly like an empty one. The behavioral assertion is the
+   load-bearing evidence; the screenshot rides along.
+
+### Non-goals (amendment)
+
+- Do **not** weaken the core invariant. PASS still REQUIRES non-empty,
+  non-placeholder evidence. We are *adding* a rejected sub-case
+  (screenshot-only), not removing any.
+- Do **not** make screenshots mandatory. A behavioral assertion alone is a
+  valid PASS — the screenshot is optional corroboration. We accept assertion-only
+  and assertion+screenshot; we reject screenshot-only and empty.
+- No change to the security FINDINGS TABLE, the `/cso` trigger set, or the
+  `Commander review` body-prefix contract.
+
+### Approach (amendment) — where the pieces change, in lock-step
+
+| File | Change |
+|---|---|
+| `scripts/validate-evidence-table.sh` | Add a **screenshot-only PASS → exit 1** rule: if a PASS row's evidence, after stripping a leading/embedded screenshot reference (`screenshot`, `screencap`, an image link `![…](…)`, a `.png`/`.jpg` path), has no remaining asserted content, it is treated as EMPTY. Any behavioral assertion in the cell (an exit code, an HTTP status, a quoted body, a `file:line`, a command+output, a `trace:<id>`) keeps the PASS valid. Pure non-screenshot evidence is unaffected. |
+| `scripts/test-validate-evidence-table.sh` | New cases: (a) **screenshot-only PASS → exit 1** (the new meaningful-bar assertion); (b) **behavioral assertion + one screenshot → exit 0** (the #191 happy path); (c) **behavioral assertion alone → exit 0** (screenshots stay optional). |
+| `.claude/skills/classify-pr-for-review/SKILL.md` | Evidence-kind list + template gain "behavioral assertion (exit code / DOM / SDK / REST body / HTTP status)" and the "one screenshot corroborates, never proves; a flaky capture tool does not block a proven behavior" note. |
+| `.claude/agents/worker-review.md` | Verification-gate step (9) names the behavioral-assertion + one-screenshot policy and the flaky-capture-tool-does-not-block rule. |
+| `.github/PULL_REQUEST_TEMPLATE.md` | The "Screenshot or log evidence for UI/CLI output changes" line softens to "Behavioral assertion (exit code / DOM / REST state) — plus one screenshot if useful — for UI/CLI output changes; a flaky capture tool doesn't block a proven behavior." |
+
+### Why a screenshot-only PASS is the right thing to reject (alternatives)
+
+- **Alternative A — accept screenshot-only as evidence (any non-empty cell).**
+  Rejected: that is exactly the "looks right" pass the gate exists to prevent. A
+  screenshot proves a render happened, not that the state is correct (a page can
+  render a stale or wrong value). #191 asks for *behavioral assertion + one
+  screenshot*, where the assertion is load-bearing — accepting screenshot-only
+  would invert that.
+- **Alternative B — require a screenshot on every UI PASS.** Rejected: that is
+  the rigid "screenshot at every step" rule #191 is removing; it blocks a proven
+  ticket when the capture tool is flaky.
+- **Chosen:** behavioral assertion is required for a PASS; a screenshot is
+  optional corroboration; screenshot-*only* is rejected like empty. The checker
+  enforces presence-of-an-assertion deterministically; the human merger still
+  sees the screenshot for the human-eyeball check.
+
+### Test plan (amendment)
+
+Extends `scripts/test-validate-evidence-table.sh` (same bash/pass-fail-counter
+shape). New assertions, all in the one suite, run + paste output in the PR:
+
+- **Screenshot-only PASS → exit 1.** `| 1 | … | PASS | screenshot dashboard.png |`
+  is rejected; stderr names the row and says a screenshot is not an assertion.
+- **Behavioral assertion + one screenshot → exit 0.** `… PASS | `curl …/items`
+  -> `[{"id":1}]` 200; screenshot dashboard.png |` passes — the assertion
+  carries it, the screenshot rides along.
+- **Behavioral assertion alone → exit 0.** Screenshots stay optional; an
+  assertion-only PASS is still valid (regression guard for non-goal #2).
+- All **pre-existing** cases still pass unchanged (the core invariant, the
+  trace: forward-compat case, the placeholder cases) — proves additive.
+
+### Risks / rollback (amendment)
+
+- **Risk: the screenshot-detector strips a legitimately-named criterion.** e.g.
+  a PASS whose real evidence is the string "screenshot" in a command name.
+  Mitigation: the detector only strips a *leading/standalone* screenshot
+  reference and an image link; an exit code, HTTP status, quoted body, command
+  output, `file:line`, or `trace:` token anywhere in the cell keeps the PASS
+  valid. The rejected set is narrow: a cell that is *nothing but* a screenshot
+  reference.
+- **Risk: re-opening "claimed not run".** Mitigation: this amendment only widens
+  the *accepted assertion kinds* (REST/DOM/SDK/exit-code already counted as
+  "command + output") and *narrows* PASS by rejecting screenshot-only. The
+  non-empty-assertion requirement that #118 relies on is strictly preserved.
+- **Rollback:** revert the checker hunk + the new test cases + the three prose
+  edits. The core gate is untouched, so rollback returns to the pre-#191 gate
+  with no residue.
