@@ -287,3 +287,108 @@ shape). New assertions, all in the one suite, run + paste output in the PR:
 - **Rollback:** revert the checker hunk + the new test cases + the three prose
   edits. The core gate is untouched, so rollback returns to the pre-#191 gate
   with no residue.
+
+---
+
+## Amendment 2 — invert the detector: require a positive assertion signal (#191 redesign, 2026-06-01)
+
+### Problem (why the denylist kept leaking)
+
+Amendment 1 implemented the "screenshot-only PASS → reject" rule as a
+**denylist**: `is_screenshot_only_evidence` stripped away every *known*
+screenshot/filler token (image extensions, the words `screenshot`/`screencap`,
+date/time/resolution fragments, a hand-maintained list of UI nouns like
+`dashboard`/`login`) and rejected the cell only if **nothing was left**. That
+shape is structurally leak-prone: it FAILS OPEN. Any screenshot-y token the
+denylist did not anticipate *survives the strip* and is then mistaken for a
+behavioral assertion, so a screenshot-only PASS sneaks through. Three review
+cycles found three distinct leak classes (bare image extensions beyond the
+original five; the URL/query/punctuation-adjacent forms; the macOS default
+two-word `Screen Shot …` filename), each patched by *adding another entry to the
+denylist*. A denylist of "things that are NOT evidence" can never be complete —
+the next unanticipated screenshot word is the next leak.
+
+### Goals (amendment 2)
+
+1. **Invert the test.** A PASS cell is VALID only if, after stripping image
+   references (reuse amendment 1's image/alt-text handling unchanged), it
+   contains **at least one token/pattern matching a behavioral-assertion
+   signal**. No assertion signal present → INVALID (exit 1), regardless of what
+   filler/screenshot words are there. This **fails closed**: an unenumerated
+   screenshot word has no assertion signal, so it fails *by construction* —
+   structurally closing the entire "unenumerated screenshot word looks like an
+   assertion" leak class. `Screen Shot 2026-06-01 at 3.04.55 PM.png` alone has
+   no assertion signal → FAIL, with zero special-casing of that filename.
+2. **Define the assertion-signal set as a clear, documented allowlist** — one
+   regex list, easy to extend — covering: exit codes, HTTP status, test/assert
+   constructs, comparison operators on observed state, source/trace refs, and
+   DOM/SDK/REST state. (Full enumeration in the script's `ASSERTION_SIGNALS`
+   block.) Broad enough to avoid false-rejecting genuine evidence.
+
+### Desirable side effect: bare-claim-only now FAILs (#196/#209)
+
+Inverting the test ALSO makes a PASS whose evidence is **bare prose with no
+asserted state** ("it works as expected", "renders correctly") FAIL — because
+prose carries no assertion signal. That is the pre-existing #196/#209 "bare
+claim still passes" gap, and closing it strengthens the #118 "tests claimed not
+run" guarantee. This is intentional and is NOT suppressed; #196/#209 are
+incidentally addressed. The four-corner invariant is now:
+
+| Evidence cell | Verdict |
+|---|---|
+| assertion + screenshot | PASS |
+| assertion only | PASS |
+| screenshot only | FAIL |
+| bare-claim only (prose, no asserted state) | FAIL |
+
+### Approach (amendment 2) — where the pieces change, in lock-step
+
+| File | Change |
+|---|---|
+| `scripts/validate-evidence-table.sh` | Replace the screenshot-only denylist with `cell_has_assertion_signal`: strip image refs (keep amendment-1 alt-text handling), then require ≥1 match against the documented `ASSERTION_SIGNALS` regex list. A PASS with no signal → exit 1. `is_screenshot_only_evidence` is removed; `token_is_image_ref` / `IMAGE_EXT_GLOB` are retained (still used to strip the screenshot before checking for a signal). |
+| `scripts/test-validate-evidence-table.sh` | Bare-claim-only PASS rows that previously passed are updated to FAIL (commented as the intentional #196/#209 flip) or given a real signal where the test's purpose is something else (e.g. case-insensitivity). New cases pin: the 3 historical leak inputs, the macOS two-word filename, a spread of genuine assertion phrasings each → PASS, and screenshot-only / bare-claim-only → FAIL. |
+| `.claude/skills/classify-pr-for-review/SKILL.md` | The evidence-kind prose now describes POSITIVELY what counts as a behavioral assertion (the allowlist), so workers phrase evidence to match. |
+| `.claude/agents/worker-review.md` | Verification-gate step names the positive-assertion requirement + the allowlist categories. |
+
+### Why a positive allowlist (alternatives)
+
+- **Alternative A — keep extending the screenshot denylist.** Rejected: three
+  cycles proved it fails open; completeness is unreachable.
+- **Alternative B — LLM judges "is this an assertion".** Rejected:
+  non-deterministic, untestable; the checker must stay a pure deterministic
+  text validator.
+- **Chosen:** a documented regex allowlist of assertion signals, checked
+  *after* stripping image refs. Fails closed, deterministic, one extensible
+  list. The cost is that genuinely-novel assertion phrasings the allowlist
+  doesn't cover get a false-reject — mitigated by making the list broad and
+  easy to extend, and by the skill teaching workers the phrasing that matches.
+
+### Test plan (amendment 2)
+
+Extends the one bash suite. New / changed assertions:
+
+- **`Screen Shot 2026-06-01 at 3.04.55 PM.png` alone → exit 1** (the headline:
+  the macOS default filename fails by construction, no denylist entry).
+- **The 3 historical leak inputs → exit 1** (regression pins; they now fail for
+  the *structural* reason — no signal — not because each was denylisted).
+- **A spread of genuine assertion phrasings, each → exit 0**: `exit 0`,
+  `HTTP 204 on /x`, `200 OK`, `→ 200`, `assert`, `expect(x).toBe(3)`,
+  `3 passed, 0 failed`, `count == 3`, `returned 5 rows`, `src/x.ts:42`,
+  `trace:abc`, `.ok === true`.
+- **Bare-claim-only PASS → exit 1** (the intentional #196/#209 flip).
+- **Adversarial**: try to make a screenshot-only or claim-only cell pass — can't.
+
+### Risks / rollback (amendment 2)
+
+- **Risk: false-reject a genuine but novel assertion phrasing.** Mitigation: the
+  allowlist is deliberately broad (operators of the gate phrase evidence with
+  one of the documented signals; the skill teaches this). Adding a signal is a
+  one-line edit to `ASSERTION_SIGNALS`. This is the deliberate trade — fail
+  closed and occasionally ask the reviewer to phrase evidence concretely, rather
+  than fail open and leak screenshots.
+- **Risk: a PASS row's only evidence is a `file:line` whose path contains an
+  image ext** (`app.png.ts:42`). Mitigation: the `file:line` signal matches the
+  `:NN` suffix directly, independent of image-stripping, so it is preserved.
+- **Rollback:** revert the checker hunk + the test changes + the prose edits.
+  Amendment-1 behavior is fully contained in the replaced function, so reverting
+  amendment 2 restores the denylist with no residue.
