@@ -210,7 +210,7 @@ Commander review of PR #42
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
 | 1 | digest command added | PASS | test `digest channel` -> `4 passed`; diff `scripts/build-daily-digest.sh:1` |
-| 2 | composer renders sections | PASS | `bash scripts/build-daily-digest.sh --dry-run` -> non-empty digest |
+| 2 | composer renders sections | PASS | `bash scripts/build-daily-digest.sh --dry-run` -> exit 0, 5 rows rendered |
 | 3 | autopickup step-1.6 hook fires | UNVERIFIED | scheduler not exercised in CI |
 
 **Blockers** (must fix before merge)
@@ -266,7 +266,7 @@ Commander review of PR #42
 
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
-| 1 | a | pass | `cmd` -> ok |
+| 1 | a | pass | `cmd` -> exit 0 |
 | 2 | b | fail |  |
 | 3 | c | unverified |  |
 EOF
@@ -283,7 +283,7 @@ Commander review of PR #42
 
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
-| 1 | counts matching lines with `grep x \| wc -l` | PASS | ran `grep x f \| wc -l` -> `3` |
+| 1 | counts matching lines with `grep x \| wc -l` | PASS | ran `grep x f \| wc -l` -> count == 3 |
 EOF
 run_stdin "$tmpdir/t14.md"
 if [[ "$EC" -eq 0 ]]; then
@@ -565,6 +565,206 @@ EOF
     bad "expected exit 1 for adversarial screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
   fi
 done
+
+# =============================================================================
+# Amendment 2 (#191 redesign): the detector is now a POSITIVE assertion-signal
+# allowlist, not a screenshot denylist. A PASS cell is valid ONLY if, after
+# stripping image refs, it carries >=1 behavioral-assertion signal. This block
+# pins the inversion: the macOS default filename fails BY CONSTRUCTION, the 3
+# historical leak inputs fail for the structural (no-signal) reason, a broad
+# spread of genuine assertion phrasings each PASS, and bare-claim-only now FAILs
+# (the intentional, desirable #196/#209 side effect).
+# =============================================================================
+
+# ---------- Test 24: the macOS default screenshot filename ALONE -> exit 1 ----------
+# THE headline of the redesign. `Screen Shot 2026-06-01 at 3.04.55 PM.png` (and
+# the newer `Screenshot ...` form) carry NO assertion signal, so they fail by
+# construction — with zero special-casing of the filename. This is the leak
+# class the denylist kept re-opening; the allowlist closes it structurally.
+say "Test 24: macOS default screenshot filename ALONE -> exit 1 (fails by construction)"
+for shot in \
+  "Screen Shot 2026-06-01 at 3.04.55 PM.png" \
+  "Screenshot 2026-06-01 at 3.04.55 PM.png" \
+  "Screen Shot 2026-06-01 at 3.04.55 PM.png attached"; do
+  cat > "$tmpdir/t24.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t24.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "macOS default filename '$shot' rejected (exit 1, no assertion signal)"
+  else
+    bad "expected exit 1 for '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 25: a broad spread of GENUINE assertion phrasings -> exit 0 ----------
+# Each carries at least one documented assertion signal (exit code / HTTP status /
+# test+assert construct / comparison operator / source-or-trace ref / DOM-SDK-REST
+# state). All must PASS — the allowlist is broad, not just exit-code+200.
+say "Test 25: genuine assertion phrasings (each carries a signal) -> exit 0"
+for ev in \
+  "exit 0" \
+  "exit=0" \
+  "EXIT=0" \
+  "exit code 0" \
+  "exit code: 0" \
+  "HTTP 200" \
+  "HTTP 204 on /x" \
+  "200 OK" \
+  "201 Created" \
+  "-> 200" \
+  "status 204" \
+  "assert dashboard visible" \
+  "expect(x).toBe(3)" \
+  "expect(res).toEqual({ ok: true })" \
+  "3 passed, 0 failed" \
+  "12 passed" \
+  "count == 3" \
+  "len === 5" \
+  "value >= 10" \
+  "x != null" \
+  "returned 5 rows" \
+  "query returned rows" \
+  "equals 42" \
+  "src/app.ts:42" \
+  "scripts/x.sh:128" \
+  "trace:abc123" \
+  ".ok === true" \
+  "res.ok" \
+  "verify_chain passed" \
+  'GET /items -> `[{"id":1}]`'; do
+  cat > "$tmpdir/t25.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Behavior asserted | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t25.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "assertion '$ev' accepted (exit 0)"
+  else
+    bad "expected exit 0 for assertion '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 26: bare-claim-only PASS -> exit 1 (intentional #196/#209 flip) ----------
+# The inversion ALSO makes bare prose with no asserted state FAIL — this is the
+# pre-existing #196/#209 "bare claim still passes" gap, now closed as a DESIRABLE
+# side effect that strengthens #118. None of these carry an assertion signal.
+say "Test 26: bare-claim-only PASS (prose, no asserted state) -> exit 1 (#196/#209 closed)"
+for claim in \
+  "it works as expected" \
+  "renders correctly" \
+  "looks right" \
+  "verified manually, all good" \
+  "the feature works" \
+  "tested and working" \
+  "implemented per the ticket" \
+  "no issues found" \
+  "behaves as described in the spec"; do
+  cat > "$tmpdir/t26.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Some criterion | PASS | $claim |
+EOF
+  run_stdin "$tmpdir/t26.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "bare claim '$claim' rejected (exit 1, no assertion signal)"
+  else
+    bad "expected exit 1 for bare claim '$claim', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+# stderr should point the reviewer at the missing assertion.
+cat > "$tmpdir/t26b.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Some criterion | PASS | it works as expected |
+EOF
+run_stdin "$tmpdir/t26b.md"
+if grep -qiE "assertion|behaviou?ral|signal|exit code|HTTP|file:line" "$tmpdir/out"; then
+  ok "stderr explains a behavioral assertion is required"
+else
+  bad "expected assertion guidance in stderr; got: $(cat "$tmpdir/out")"
+fi
+
+# ---------- Test 27: the 3 historical leak inputs -> exit 1 (now fail structurally) ----------
+# These are the inputs that slipped past the denylist across 3 review cycles. Under
+# the allowlist they fail for the STRUCTURAL reason (no assertion signal), not
+# because each was individually denylisted. Regression pins so a future edit can't
+# silently re-open any of them.
+say "Test 27: 3 historical leak inputs -> exit 1 (structural: no assertion signal)"
+for shot in \
+  "Screen Shot 2026-06-01 at 3.04.55 PM.png" \
+  "capture.bmp" \
+  "x.png?raw=1"; do
+  cat > "$tmpdir/t27.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t27.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "historical leak input '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for historical leak '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 28: assertion + screenshot stays PASS; screenshot alone FAILs ----------
+# The four-corner invariant in one place: assertion+screenshot -> PASS,
+# assertion-only -> PASS, screenshot-only -> FAIL, bare-claim-only -> FAIL.
+say "Test 28: four-corner invariant (assertion[+screenshot]->PASS, screenshot/claim-only->FAIL)"
+# assertion + screenshot -> PASS
+cat > "$tmpdir/t28.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | `curl /items` -> 200 `[{"id":1}]`; Screen Shot 2026-06-01 at 3.04.55 PM.png |
+EOF
+run_stdin "$tmpdir/t28.md"
+if [[ "$EC" -eq 0 ]]; then ok "assertion + screenshot -> PASS"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+# assertion only -> PASS
+cat > "$tmpdir/t28b.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | `curl /items` -> 200 |
+EOF
+run_stdin "$tmpdir/t28b.md"
+if [[ "$EC" -eq 0 ]]; then ok "assertion only -> PASS"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+# screenshot only -> FAIL
+cat > "$tmpdir/t28c.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | Screen Shot 2026-06-01 at 3.04.55 PM.png |
+EOF
+run_stdin "$tmpdir/t28c.md"
+if [[ "$EC" -eq 1 ]]; then ok "screenshot only -> FAIL"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+# bare-claim only -> FAIL
+cat > "$tmpdir/t28d.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | it works |
+EOF
+run_stdin "$tmpdir/t28d.md"
+if [[ "$EC" -eq 1 ]]; then ok "bare-claim only -> FAIL"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
 
 # ---------- summary ----------
 echo ""

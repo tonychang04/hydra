@@ -35,11 +35,22 @@
 #   - Verdict in {PASS, FAIL, UNVERIFIED} (case-insensitive). Else: malformed.
 #   - PASS => Evidence cell non-empty after stripping whitespace + placeholders
 #     (a lone -, n/a, none, or backticks-only counts as EMPTY).
+#   - PASS => Evidence cell carries a POSITIVE behavioral-assertion signal
+#     (#191 redesign — amendment 2). A PASS whose evidence is a screenshot ALONE,
+#     or a bare prose claim ("it works"), carries no assertion signal and is
+#     rejected exactly like an empty cell. The signal set is the documented
+#     ASSERTION_SIGNALS allowlist (exit codes / HTTP status / test+assert
+#     constructs / comparison operators / file:line + trace: refs / observed
+#     REST-DOM-SDK state). This INVERTS the prior screenshot denylist, which
+#     failed open; the allowlist fails closed (an unenumerated screenshot word
+#     has no signal -> FAIL by construction). It also makes bare-claim-only FAIL,
+#     incidentally closing #196/#209. See docs/specs/2026-05-21-evidence-based-
+#     review-gate.md (amendment 2).
 #   - FAIL / UNVERIFIED may have empty evidence (a FAIL says what's wrong;
 #     UNVERIFIED says why it couldn't be checked).
 #   - At least one criterion (data) row must exist.
-#   - The #197 session trace will add a `trace:<id>` evidence kind later; any
-#     non-empty cell counts as evidence regardless of kind, so trace: works
+#   - The #197 session trace's `trace:<id>` evidence kind is already a recognized
+#     assertion signal (the `trace:` pattern in ASSERTION_SIGNALS), so it works
 #     with NO change here. (#197 extension point.)
 #
 # Pipes in cells: a pipe meant as literal content (a shell pipeline in evidence,
@@ -98,8 +109,12 @@ Expected table (Markdown), anywhere in the body:
   | 3 | ... | UNVERIFIED | why it could not be verified |
 
 Verdicts: PASS, FAIL, UNVERIFIED (case-insensitive).
-Rule: PASS requires non-empty evidence (a lone -, n/a, none, or backticks-only
-is treated as EMPTY). FAIL / UNVERIFIED may omit evidence.
+Rule: PASS requires evidence carrying a behavioral-assertion signal — an exit
+code, an HTTP status, a test/assert construct, a comparison on observed state, a
+file:line or trace: reference, or observed REST/DOM/SDK state. A lone -, n/a,
+none, or backticks-only is EMPTY; a screenshot ALONE or a bare claim ("it works")
+carries no assertion signal and is rejected like EMPTY. FAIL / UNVERIFIED may
+omit evidence.
 
 Exit codes:
   0 = valid          1 = invariant violation (PASS w/o evidence, bad verdict,
@@ -199,206 +214,116 @@ is_placeholder_evidence() {
   return 1
 }
 
-# -----------------------------------------------------------------------------
-# IMAGE_EXT_GLOB — the ONE shared image-extension set, used by BOTH the fast-path
-# hint and the per-token image-reference test below. Keeping a single source of
-# truth is the whole point of the #191 re-work FINAL fix: the previous code had a
-# `*.png*` SUBSTRING rule (too broad -> false-rejected real `app.png.ts:42`
-# assertions) layered over a 5-extension allow-list `png|jpg|jpeg|gif|webp` (too
-# narrow -> false-accepted `capture.bmp` screenshots). Both halves were wrong in
-# opposite directions. This set is the broad, correct one; the matching is now
-# "token ENDS in one of these" (see token_is_image_ref), never substring.
-IMAGE_EXT_GLOB='png|jpg|jpeg|gif|webp|bmp|svg|heic|tif|tiff|avif'
+# =============================================================================
+# POSITIVE ASSERTION-SIGNAL DETECTION (#191 redesign — amendment 2).
+#
+# The previous design was a DENYLIST: strip every KNOWN screenshot/filler token
+# and reject the cell only if nothing was left. That fails OPEN — any screenshot
+# word the denylist did not anticipate survives the strip and is mistaken for an
+# assertion. Three review cycles found three leak classes that way.
+#
+# The INVERSION: a PASS cell is valid ONLY if, after stripping image references,
+# it carries at least one POSITIVE behavioral-assertion signal. No signal -> the
+# cell is treated as EMPTY (rejected like a blank or placeholder cell), no matter
+# what filler/screenshot words are present. This fails CLOSED: an unenumerated
+# screenshot word has no assertion signal, so it fails by construction —
+# `Screen Shot 2026-06-01 at 3.04.55 PM.png` alone fails with zero special-casing.
+# It also makes bare prose ("it works") fail — the desirable #196/#209 side effect.
+#
+# Spec: docs/specs/2026-05-21-evidence-based-review-gate.md (amendment 2).
+# =============================================================================
 
 # -----------------------------------------------------------------------------
-# token_is_image_ref — true (0) if a SINGLE whitespace-delimited token is an
-# image reference, i.e. it ENDS in a known image extension after stripping a
-# trailing query string (`?...`) / fragment (`#...`) and trailing punctuation.
-# Case-insensitive. This is the principled rule that fixes both blockers:
+# ASSERTION_SIGNALS — the documented allowlist of behavioral-assertion patterns.
+# A cell carries an assertion iff it matches ANY of these (case-insensitive; we
+# match against a lowercased copy of the cell with image refs already stripped).
 #
-#   `app.png.ts`      -> ends in `ts`  -> NOT an image (real source ref, kept)
-#   `shot.png`        -> ends in `png` -> image (dropped)
-#   `x.png?raw=1`     -> strip `?raw=1` -> ends in `png` -> image (dropped)
-#   `https://h/x.jpeg`-> ends in `jpeg` -> image (dropped)
-#   `a.png,`          -> strip trailing `,` -> ends in `png` -> image (dropped)
-#   `diagram.SVG.`    -> strip trailing `.` -> ends in `svg` -> image (dropped)
+# Patterns are POSIX ERE (used with `grep -Eiq`). To extend the gate, add one
+# line here — that is the single source of truth. Each entry names its category.
 #
-# Pure bash + `tr` — no GNU-only sed escapes; BSD/macOS-portable.
+# Categories (mirrors the spec + the SKILL.md prose):
+#   - exit codes:      exit 0 / exit=0 / EXIT=0 / exit code 0 / exit code: 0
+#   - HTTP status:     HTTP 2xx-5xx / "200 OK" etc / "-> 200" / "status 204" /
+#                      a bare 3-digit 2xx-5xx adjacent to an arrow or "status"
+#   - test/assert:     assert / expect( / toBe / toEqual / "N passed" /
+#                      "N failed" / PASS|FAIL as a result token
+#   - comparisons:     == / === / >= / <= / != / returned / equals
+#   - source/trace:    file.ext:NN (file:line) / trace:<id> (+ session/req/resp/sha/commit)
+#   - DOM/SDK/REST:    rows / .ok / verify_chain / a JSON object/array literal
 # -----------------------------------------------------------------------------
-token_is_image_ref() {
-  local t="$1"
-  # Strip a trailing query string / fragment: everything from the first ? or #.
-  t="${t%%[?#]*}"
-  # Lowercase for case-insensitive extension match.
-  t="$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]')"
-  # Strip trailing punctuation (commas, periods, parens, quotes, etc.) so a glued
-  # `a.png,` or `diagram.svg.` still ends in its extension. Loop until stable.
-  local prev=""
-  while [[ "$t" != "$prev" ]]; do
-    prev="$t"
-    case "$t" in
-      *[\).,\;\:\!\?\"\'\]\}\>\*\`]) t="${t%?}" ;;
-    esac
-  done
-  # The extension is the substring after the LAST dot; no dot -> not an image.
-  case "$t" in
-    *.*) : ;;
-    *) return 1 ;;
-  esac
-  local ext="${t##*.}"
-  # Compare ext against the shared set (anchored: the WHOLE ext must match).
-  case "|$IMAGE_EXT_GLOB|" in
-    *"|$ext|"*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+ASSERTION_SIGNALS=(
+  # --- exit codes ---
+  'exit[ =:]*(code)?[ =:]*-?[0-9]+'        # exit 0 / exit=0 / exit code 0 / exit code: 1
+  # --- HTTP status ---
+  'http/?[0-9.]* +[1-5][0-9][0-9]'         # HTTP 200 / HTTP/1.1 204
+  'http +[1-5][0-9][0-9]'                  # HTTP 200 (explicit)
+  '[1-5][0-9][0-9] +(ok|created|accepted|no content|moved|found|bad request|unauthorized|forbidden|not found|conflict|gone|unprocessable|too many|internal|not implemented|bad gateway|service unavailable|gateway timeout)' # 200 OK / 404 Not Found
+  '(->|→|=>) *[1-5][0-9][0-9]\b'           # -> 200 / → 204
+  '(status|code|returned|got|->|→) *[1-5][0-9][0-9]\b' # status 204 / got 500
+  '\bhttp +[1-5][0-9][0-9]\b'
+  '\b[1-5][0-9][0-9] +(on|from|for|at) +/' # 204 on /x  (status + path)
+  # --- test / assert constructs ---
+  '\bassert(s|ed|ion|ions)?\b'             # assert / asserted / assertion
+  'expect\('                               # expect(
+  '\.to(be|equal|match|contain|throw|havelength|havebeencalled)' # toBe / toEqual / toMatch ...
+  '[0-9]+ +(passed|passing|pass\b)'        # 3 passed / 12 passing
+  '[0-9]+ +(failed|failing|fail\b)'        # 0 failed
+  '\b(all +)?(tests? +)?(passed|passing)\b' # tests passed / all passing
+  # --- comparison / operators on observed state ---
+  '(==|===|!=|!==|>=|<=)'                  # == / === / != / >= / <=
+  '\breturn(s|ed)\b'                       # returned / returns
+  '\bequals?\b'                            # equals / equal
+  '\b(count|len|length|size|total|rows?) *(==|===|=|:|>=|<=|>|<) *[0-9]' # count == 3 / rows: 5
+  # --- source / trace references ---
+  '[a-z0-9_./-]+\.[a-z0-9]+:[0-9]+'        # file.ext:NN  (file:line)
+  '\b(trace|session|req|request|resp|response|sha|commit):[a-z0-9_./-]' # trace:abc / sha:deadbee
+  # --- DOM / SDK / REST observed state ---
+  '\b[0-9]+ +rows?\b'                      # 5 rows / 1 row
+  '\brows? +(returned|affected|matched)\b' # rows returned
+  '(^|[^a-z0-9])\.ok\b'                    # .ok  (res.ok / .ok === true)
+  '\bres(ponse)?\.ok\b'                    # res.ok / response.ok
+  '\bverify_chain\b'                       # verify_chain (andb)
+  '\{[^}]*:[^}]*\}'                        # a JSON-ish object literal {"k":v}
+  '\[\s*\{'                                # a JSON array of objects [{...
+)
 
 # -----------------------------------------------------------------------------
-# is_screenshot_only_evidence — true (0) if the evidence cell is NOTHING BUT a
-# screenshot reference: a picture with no asserted state. (#191 amendment,
-# docs/specs/2026-05-21-evidence-based-review-gate.md.)
+# cell_has_assertion_signal — true (0) if the evidence cell carries at least one
+# behavioral-assertion signal. This is the POSITIVE test that replaced the
+# screenshot denylist. A cell with no signal (a screenshot alone, a bare prose
+# claim, filler) returns false (1) and is rejected like an empty cell.
 #
-# The #191 policy is "behavioral assertion + ONE screenshot": the behavioral
-# assertion (exit code / DOM / SDK / REST body / HTTP status / command output /
-# file:line / trace:<id>) is the load-bearing evidence; a screenshot only
-# corroborates. A screenshot proves a render happened, not that the state is
-# correct — so a PASS backed by a screenshot ALONE is rejected exactly like an
-# empty cell. Any real assertion anywhere in the cell keeps the PASS valid.
+# We scan the signal patterns against the WHOLE cell (lowercased, backticks
+# dropped) — no image-stripping needed. This is deliberate and is what makes the
+# `assertion + screenshot` case work AND keeps a `trace:`/`file:line` whose path
+# contains an image ext valid:
 #
-# Method (token-based, robust to surrounding whitespace/punctuation/URLs):
-#   1. Preserve markdown alt-text: `![alt](url)` -> keep `alt`, drop the link.
-#      An assertion can live ONLY in alt-text (`![HTTP 200](x.png)`); stripping
-#      it wholesale was a false-reject bug (#191 re-work BLOCKER 2).
-#   2. Tokenize on whitespace. For each token, DROP it if it is an image
-#      reference per token_is_image_ref (token ENDS in a known image extension
-#      after stripping query/fragment + trailing punct — the principled rule that
-#      replaced the broken `*.png*` SUBSTRING test, #191 re-work FINAL), or a
-#      screenshot keyword, or a date/time fragment, or pure connective filler.
-#      A token like `app.png.ts:42` does NOT end in an image ext, so it survives
-#      as a real assertion (BLOCKER B fix); `capture.bmp` DOES, so it is dropped
-#      (BLOCKER A fix). Tokenizing first means a space/quote/paren/comma/`*`/`@`/
-#      `?` adjacent to the filename can no longer strand a bare token.
-#   3. If anything substantive remains -> NOT screenshot-only (an assertion is
-#      present). If nothing remains -> screenshot-only.
+#   - `curl /x -> 200; shot.png`  -> the `-> 200` HTTP signal matches; the
+#                                    adjacent `shot.png` matches NO signal, so it
+#                                    neither helps nor hurts. PASS.
+#   - `trace:shot.png`            -> matches the trace: signal directly (the image
+#                                    ext in the path is irrelevant to the scan).
+#                                    PASS — no special pre-stripping required.
+#   - `Screen Shot ... PM.png`    -> a screenshot filename matches NO assertion
+#                                    signal (its digits are a date/time, not an
+#                                    HTTP/exit/comparison context). FAIL.
 #
-# Portability: pure bash + `tr` (no GNU-only `sed` `\b`/`\s`/`\d`; BSD/macOS sed
-# lacks them). CI runs Linux; the dev host is macOS — this works on both.
+# So a screenshot filename can never manufacture a false signal: it only fails to
+# add one. Image references are inert to this scan by construction — which is why
+# the whole screenshot denylist (and its leak classes) is gone.
 # -----------------------------------------------------------------------------
-is_screenshot_only_evidence() {
-  local cell lower residue
+cell_has_assertion_signal() {
+  local cell lower pat
   cell="$(trim "$1")"
-  cell="${cell//\`/}"              # drop backticks for content inspection
+  cell="${cell//\`/}"                       # drop backticks for content inspection
   lower="$(printf '%s' "$cell" | tr '[:upper:]' '[:lower:]')"
-  # Fast path: a cell with no screenshot/image hint at all is never
-  # screenshot-only — leave it to the assertion checks. The image-extension hint
-  # here is a SUBSTRING (cheap over-trigger): it only decides whether to run the
-  # precise per-token analysis below, which is authoritative. So a `.png`
-  # anywhere (even mid-path in `app.png.ts`) routes into the token loop, where
-  # token_is_image_ref then correctly KEEPS the real assertion. Built from the
-  # shared IMAGE_EXT_GLOB so the fast-path and the token-drop can never drift.
-  local ext_hint=0 e
-  local _ifs="$IFS"; IFS='|'
-  for e in $IMAGE_EXT_GLOB; do
-    if [[ "$lower" == *".$e"* ]]; then ext_hint=1; break; fi
+  [[ -z "$(trim "$lower")" ]] && return 1   # empty -> no signal
+  for pat in "${ASSERTION_SIGNALS[@]}"; do
+    if printf '%s' "$lower" | grep -Eiq -- "$pat"; then
+      return 0
+    fi
   done
-  IFS="$_ifs"
-  case "$lower" in
-    *screenshot*|*screencap*|*screen-grab*|*screen\ grab*|*"!["*) ext_hint=1 ;;
-  esac
-  [[ "$ext_hint" -eq 1 ]] || return 1
-
-  # Step 1: replace each markdown image `![alt](url)` with ` alt ` — preserve the
-  # alt-text (it may be the assertion), drop the link target. Loop handles
-  # multiple images. Non-greedy by construction: %%/## cut at the FIRST/LAST
-  # delimiter, so we slice exactly one `![ ... ]( ... )` per iteration.
-  residue="$lower"
-  while [[ "$residue" == *"!["*"]("*")"* ]]; do
-    local before rest alt after
-    before="${residue%%"!["*}"        # text before the image
-    rest="${residue#*"!["}"           # everything after the leading ![
-    alt="${rest%%"]("*}"              # alt-text: between ![ and ](
-    after="${rest#*")"}"             # everything after the closing )
-    residue="$before $alt $after"
-  done
-
-  # Step 2: tokenize on whitespace, classify each token.
-  local tok bare out=""
-  for tok in $residue; do
-    # `bare`: token with all surrounding/embedded punctuation removed, used to
-    # decide if what remains is a real word. Keep `tok` to test for an image ext.
-    bare="$(printf '%s' "$tok" | tr -d '[:punct:]')"
-    [[ -z "$bare" ]] && continue       # pure punctuation -> nothing
-    # KEEP assertion-marker tokens BEFORE the image-ref drop. The spec enumerates
-    # `file:line` and `trace:<id>` as first-class evidence kinds. Such a token can
-    # legitimately carry an image extension in its PATH (`trace:shot.png`,
-    # `src/app.png.ts:42`) yet still be a behavioral/source reference, not a
-    # screenshot. We recognize two marker shapes (case-insensitive, on `lower`):
-    #   - a `<scheme>:` prefix from the assertion vocab (trace:/session:/req:/...)
-    #   - a `:<digits>` file:line suffix (`foo.ts:42`)
-    # This guard is why BLOCKER B passes: these are PRESERVED as assertions.
-    case "$tok" in
-      trace:*|session:*|req:*|request:*|resp:*|response:*|sha:*|commit:*) out+="x"; continue ;;
-    esac
-    case "$tok" in
-      *:[0-9]) out+="x"; continue ;;       # file:line (single digit)
-      *:[0-9]*[0-9]) out+="x"; continue ;; # file:line (multi-digit)
-    esac
-    # Drop image references via the principled per-token test: a token that ENDS
-    # in a known image ext (after stripping query/fragment + trailing punct) is a
-    # screenshot ref and is removed whole. `foo@2x.png`, `*.png`, `x.png?raw=1`,
-    # `https://h/x.png`, `capture.bmp`, `diagram.svg`, `a.png,` all match here. A
-    # token like `app.png.ts:42` ends in `ts` (not an image), so it is KEPT as a
-    # real assertion — fixing both #191 re-work FINAL blockers in one rule.
-    if token_is_image_ref "$tok"; then continue; fi
-    # For a PATH-shaped token (no image ext, no assertion marker — e.g. the
-    # directory part `~/Desktop/Screen` that precedes a glued `Shot.png`), judge
-    # it by its final path segment, the meaningful leaf. `~/Desktop/Screen` ->
-    # `screen`, which the filler table below recognizes as a screenshot-path word.
-    # This cannot swallow a real assertion: `src/app.png.ts:42` is kept earlier by
-    # the file:line marker guard, never reaching here.
-    case "$tok" in
-      */*) bare="$(printf '%s' "${tok##*/}" | tr -d '[:punct:]')"
-           [[ -z "$bare" ]] && continue ;;
-    esac
-    # Drop screenshot keywords.
-    case "$bare" in
-      screenshot|screenshots|screencap|screencaps|screengrab|screengrabs) continue ;;
-    esac
-    # Drop a date / time / clock / RESOLUTION fragment. The macOS default
-    # screenshot name embeds a date + time (`Screenshot 2026-06-01 at 1.23.45
-    # PM.png`); `2026-06-01` and `1.23.45` collapse to all-digit `bare`. A
-    # resolution string (`1920x1080`) collapses to digits plus a lone `x`/`X`
-    # separator. None is a behavioral assertion — a real assertion always pairs
-    # its number with an anchor WORD or symbol (`HTTP 200`, `exit 0`, `count = 3`),
-    # and those anchors survive as their own tokens, so dropping these numeric
-    # fragments cannot erase an assertion.
-    case "$bare" in
-      *[!0-9]*) : ;;                  # has a non-digit -> keep evaluating
-      *) continue ;;                  # all digits -> date/time fragment, drop
-    esac
-    # Resolution: digits separated by a single x/X (e.g. 1920x1080, 800X600).
-    case "$bare" in
-      [0-9]*[xX][0-9]*)
-        case "${bare//[0-9]/}" in
-          x|X) continue ;;            # only an x/X between the digit runs -> drop
-        esac ;;
-    esac
-    # Drop pure connective filler — articles, prepositions, screenshot verbs, and
-    # the descriptive UI nouns that label a screenshot ("dashboard", "login")
-    # without asserting any state. Alt-text labels of this kind must NOT keep a
-    # screenshot-only PASS alive.
-    case "$bare" in
-      see|of|the|a|an|and|in|at|to|on|for|with|attached|below|above|here|this|\
-      that|representative|one|single|page|pages|result|results|view|views|is|\
-      its|shows|showing|show|rendered|render|renders|displayed|displays|display|\
-      captured|capture|pm|am|grab|\
-      dashboard|login|logout|signup|signin|home|homepage|screen|panel|modal|\
-      dialog|form|list|table|chart|graph|map|menu|nav|navbar|sidebar|header|\
-      footer|button|tab|tabs|card|cards|item|items|ui|app) continue ;;
-    esac
-    out+="$bare"
-  done
-  [[ -z "$out" ]]
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -541,11 +466,14 @@ for ((ln = data_start; ln <= ${#LINES[@]}; ln++)); do
         echo "${C_DIM}    criterion: $(trim "$crit")${C_RESET}" >&2
         echo "${C_DIM}    -> a clean PASS requires concrete evidence; mark it UNVERIFIED if you could not verify it.${C_RESET}" >&2
         violations=$((violations + 1))
-      elif is_screenshot_only_evidence "$evidence"; then
-        # #191: a screenshot corroborates a behavioral assertion; it is not one.
-        echo "${C_RED}x${C_RESET} validate-evidence-table: row $row_count (criterion $(trim "$num")) is PASS with a SCREENSHOT ONLY — that is not a behavioral assertion." >&2
+      elif ! cell_has_assertion_signal "$evidence"; then
+        # #191 redesign (amendment 2): a PASS requires a POSITIVE behavioral-
+        # assertion signal. A screenshot alone, or a bare prose claim, carries
+        # none and is rejected exactly like an empty cell — failing CLOSED so no
+        # unenumerated screenshot word (or claim) can pose as an assertion.
+        echo "${C_RED}x${C_RESET} validate-evidence-table: row $row_count (criterion $(trim "$num")) is PASS with NO BEHAVIORAL ASSERTION — a screenshot or a bare claim is not an assertion." >&2
         echo "${C_DIM}    criterion: $(trim "$crit")${C_RESET}" >&2
-        echo "${C_DIM}    -> add a behavioral assertion (exit code / DOM / SDK / REST body / HTTP status / command output / file:line); a screenshot corroborates but cannot be the sole PASS evidence. See docs/specs/2026-05-21-evidence-based-review-gate.md (#191).${C_RESET}" >&2
+        echo "${C_DIM}    -> cite a behavioral assertion signal: exit code (exit 0) / HTTP status (HTTP 204) / test+assert (3 passed, expect(x).toBe) / comparison (count == 3) / file:line (src/x.ts:42) / trace:<id> / observed REST/DOM/SDK state (rows, .ok, JSON body). A screenshot or 'it works' corroborates but cannot be the sole PASS evidence. See docs/specs/2026-05-21-evidence-based-review-gate.md (#191).${C_RESET}" >&2
         violations=$((violations + 1))
       fi
       ;;
