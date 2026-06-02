@@ -392,3 +392,71 @@ Extends the one bash suite. New / changed assertions:
 - **Rollback:** revert the checker hunk + the test changes + the prose edits.
   Amendment-1 behavior is fully contained in the replaced function, so reverting
   amendment 2 restores the denylist with no residue.
+
+## Amendment 3 — close the under-delivery: image-strip BEFORE scanning, broaden advertised signals (#191 re-work, 2026-06-01)
+
+### Problem (the allowlist under-delivers vs. the docs)
+
+Amendment 2's `cell_has_assertion_signal` was shipped scanning the **whole cell**
+(the `:298` comment claimed "no image-stripping needed"). A code review found
+four defects where the implementation diverges from what the SKILL/agent/template
+docs advertise:
+
+1. **False-REJECT `2 audit rows`.** The rows signal `\b[0-9]+ +rows?\b` requires
+   the number *immediately adjacent* to `rows`; an intervening noun breaks it. All
+   three docs advertise "N rows" as a valid evidence form, but `2 audit rows`,
+   `5 rows returned`, `rows: 5`, `count == 3` did not all match.
+2. **False-REJECT `DOM shows .toast-success`.** DOM state is advertised as a
+   first-class evidence category, yet the only DOM signal was `.ok`/`verify_chain`.
+   A bare CSS selector / DOM-state assertion (`.some-class`, `#some-id`,
+   `[data-…]`, `element visible/present`, `text content`) was not recognized.
+3. **False-ACCEPT image-hidden text.** Because the cell was scanned *without*
+   stripping image references, the scanner fired on text INSIDE a screenshot
+   filename / alt-text: `![dashboard](shots/HTTP 200.png)`, `Screen Shot exit 0.png`,
+   and `![assert all good](shot.png)` all WRONGLY passed. The script header AND this
+   spec's amendment-2 say image refs must be stripped *first*; the implementation
+   skipped it and the `:298` comment contradicted the spec.
+4. **Over-broad bare verbs (CONCERN).** `\breturn(s|ed)\b` / `\bequals?\b` fired on
+   a stray verb with no operand: `returns home`, `values are equal in the UI`
+   passed on the bare verb, softening the #196/#209 bare-claim closure.
+
+### Decision: drop alt-text when stripping image references (supersedes amendment 2's "preserve alt-text")
+
+Amendment 2 reused amendment 1's alt-text-PRESERVING image handling (an assertion
+could live ONLY in `![alt](url)` alt-text). This re-work **inverts that**: a
+markdown image `![alt](url)` is stripped **whole — both alt-text AND url — before
+scanning**. Rationale: preserving alt-text is itself a fail-open hole. `![assert
+all good](shot.png)` has no real evidence, only a screenshot, but its alt-text
+`assert all good` matched the `assert` signal and PASSed. A reviewer's real
+evidence belongs in the cell text, not buried in an image's alt attribute; a
+screenshot (including its caption) corroborates, it does not assert. Dropping
+alt-text closes the alt-text leak class structurally. This retires amendment-2
+goal-1's "image/alt-text handling unchanged" clause and the old Test 20
+("alt-text preserved → PASS"), which is inverted to a FAIL case.
+
+### Approach (amendment 3) — lock-step changes
+
+| File | Change |
+|---|---|
+| `scripts/validate-evidence-table.sh` | (a) Re-introduce image stripping in `cell_has_assertion_signal`: strip markdown `![alt](url)` whole (alt AND url) and bare `name.ext` image tokens (reusing the retained `token_is_image_ref` / `IMAGE_EXT_GLOB` rule) BEFORE the signal scan; update the contradictory `:298` comment. (b) Broaden the rows/count signal so `2 audit rows`, `5 rows returned`, `rows: 5`, `count == 3` all match. (c) Add a DOM-assertion signal: a CSS selector (`.class`, `#id`, `[data-…]`) or DOM-state phrase (`element visible/present`, `text content`), guarded so it cannot match a bare filename (image refs already stripped). (d) Tighten `returned`/`equals` to require an observed operand nearby (`returned <value>`, `X equals Y`), not the bare verb. |
+| `scripts/test-validate-evidence-table.sh` | Add must-PASS: `2 audit rows`, `5 rows returned`, `DOM shows .toast-success`, `#main visible`. Add must-FAIL: `![dashboard](shots/HTTP 200.png)`, `Screen Shot exit 0.png`, `values are equal in the UI`, `returns home`. Invert Test 20 (alt-text now dropped → screenshot-only alt-text FAILs). Keep all genuinely-valid prior cases green. |
+| `.claude/skills/classify-pr-for-review/SKILL.md` / `.claude/agents/worker-review.md` | Note that evidence in image alt-text is NOT counted; put assertions in the cell text. |
+
+### Test plan (amendment 3)
+
+Watch RED→GREEN on each new case. Full invariant re-confirmed:
+assertion(any advertised form: exit/HTTP/test+assert/comparison/file:line/trace/rows/DOM)
+→ PASS; assertion+screenshot → PASS; screenshot-only → FAIL; bare-claim-only → FAIL;
+**assertion-text-hidden-in-a-filename-or-alt-text → FAIL**. Run
+`scripts/test-validate-evidence-table.sh` + `scripts/validate-state-all.sh`.
+
+### Risks / rollback (amendment 3)
+
+- **Risk: dropping alt-text false-rejects a reviewer who put a real assertion only
+  in alt-text.** Accepted: that phrasing is discouraged by the skill/agent prose;
+  put the assertion in the cell. Failing closed here is the point.
+- **Risk: the DOM-selector signal matches a stray dotted/hashed token.** Mitigation:
+  image refs are stripped first, and the selector pattern requires a CSS-identifier
+  shape, not any dotted token.
+- **Rollback:** revert the checker hunk + the test changes. Amendment-2's whole-cell
+  scan is restored by removing the strip call.
