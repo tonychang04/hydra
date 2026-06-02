@@ -102,11 +102,27 @@ Coordinator-Implementor-Verifier pattern).
    GitHub ticket — the PR body is always a usable source.
 2. **Verification gate (b) — attach evidence per criterion.** For each row, pick
    a verdict and cite the evidence that justifies it:
-   - `PASS` — REQUIRES concrete evidence: a command + its output, a test name +
-     its pass line, a diff `file:line`, or a **behavioral assertion** — a *real
-     asserted state check*: an exit code, a DOM/SDK/REST body value, an HTTP
-     status, observed and quoted. Never `PASS` on "looks right" or on a
-     screenshot alone (see "Verification flexibility" below).
+   - `PASS` — REQUIRES a **behavioral-assertion signal** in the evidence cell.
+     The checker (`validate-evidence-table.sh`, #191 redesign) accepts a `PASS`
+     ONLY if the evidence carries at least one of these — phrase your evidence so
+     it matches at least one:
+     - **exit code** — `exit 0`, `exit=0`, `exit code 0`
+     - **HTTP status** — `HTTP 200`, `200 OK`, `→ 200`, `status 204`, `204 on /x`
+     - **test / assert construct** — `assert…`, `expect(x).toBe(3)`,
+       `expect(r).toEqual(…)`, `3 passed`, `0 failed`, `all tests passing`
+     - **comparison on observed state** — `==`, `===`, `>=`, `<=`, `!=`,
+       `returned`, `equals`, `count == 3`, `rows: 5`
+     - **source / trace reference** — `src/x.ts:42` (`file.ext:NN`),
+       `trace:<id>` (and `session:`/`req:`/`resp:`/`sha:`/`commit:`)
+     - **observed REST / DOM / SDK state** — `5 rows`, `rows returned`, `.ok`,
+       `res.ok`, `verify_chain`, a quoted JSON body `[{"id":1}]` / `{"ok":true}`
+
+     A `PASS` whose evidence is a **screenshot alone**, or a **bare prose claim**
+     ("it works", "renders correctly", "looks right"), carries NO assertion
+     signal and is rejected exactly like an empty cell. This is the #191 redesign
+     (inverted from a screenshot denylist to a positive allowlist — fails closed,
+     see "Verification flexibility" below); it also closes the #196/#209
+     bare-claim gap.
    - `FAIL` — the criterion is not met; say what's wrong (evidence optional).
    - `UNVERIFIED` — you could not verify it (no fixture, needs a live service,
      out of review scope); say why. **A criterion you can't verify is
@@ -118,29 +134,36 @@ Coordinator-Implementor-Verifier pattern).
    is empty. Fix the table until it exits 0, THEN post. (See "Verification"
    below for the exact invocation.)
 
-> **#197 extension point.** Evidence today is a command+output, a test+pass
-> line, a diff `file:line`, or a behavioral assertion (exit code / DOM / SDK /
-> REST body / HTTP status). When #197 (session trace) lands, a further kind —
-> `trace:<step-id>` pointing at a recorded session-trace step — becomes an
-> *additional* evidence source. The checker already treats any non-empty
-> Evidence cell as valid regardless of kind, so `trace:` references will work
-> with NO checker change. Do NOT depend on #197 being present — gather evidence
-> from test output / diffs / command output directly until it lands.
+> **#197 extension point.** The evidence kinds above ARE the assertion-signal
+> allowlist the checker enforces (`ASSERTION_SIGNALS` in
+> `validate-evidence-table.sh`). The `trace:<id>` kind for #197 (session trace)
+> is ALREADY a recognized signal (the `trace:` pattern), so a recorded
+> session-trace step works with NO checker change. To extend the allowlist with a
+> genuinely new evidence shape, add one regex to `ASSERTION_SIGNALS` (single
+> source of truth) and a test case. Do NOT depend on #197 being present — gather
+> evidence from test output / diffs / command output directly until it lands.
 
 > **Verification flexibility — behavioral assertion + one screenshot (#191).**
-> You do NOT need a screenshot at every step. A **behavioral assertion** (the
-> asserted REST/DOM/SDK/exit-code/HTTP state) is sufficient evidence for a
-> `PASS`; **one representative screenshot** corroborates it but is optional. A
-> screenshot proves a render happened, not that the state is correct — so a
-> `PASS` whose evidence is a **screenshot ALONE** is rejected exactly like an
-> empty cell (`validate-evidence-table.sh` exit 1). And a **flaky
-> evidence-capture tool** (e.g. the browse daemon down) must NOT block a
-> criterion whose behavior is proven by a non-visual assertion — fall back to
-> the assertion + (if you can get one) a single screenshot, mark the row `PASS`
-> on the assertion, and move on. This is the review-gate counterpart of the
-> watchdog's flaky-tool fallback (`docs/specs/2026-05-21-flaky-tool-probe-verdict.md`
-> → "curl/SDK + single screenshot"). Spec:
-> `docs/specs/2026-05-21-evidence-based-review-gate.md` (#191 amendment).
+> You do NOT need a screenshot at every step. A **behavioral assertion** (any
+> signal in the allowlist above — exit code / HTTP status / test+assert /
+> comparison / file:line / trace: / observed REST/DOM/SDK state) is sufficient
+> evidence for a `PASS`; **one representative screenshot** corroborates it but is
+> optional. A screenshot proves a render happened, not that the state is correct
+> — so a `PASS` whose evidence is a **screenshot ALONE** carries no assertion
+> signal and is rejected exactly like an empty cell (`validate-evidence-table.sh`
+> exit 1). The detector is a POSITIVE allowlist (#191 redesign): it requires a
+> signal rather than denylisting screenshot words, so it fails CLOSED — an
+> unenumerated screenshot word (the macOS default `Screen Shot … PM.png`, any new
+> image form) has no signal and fails by construction. A **bare prose claim**
+> ("it works") likewise has no signal and is rejected (this closes #196/#209).
+> And a **flaky evidence-capture tool** (e.g. the browse daemon down) must NOT
+> block a criterion whose behavior is proven by a non-visual assertion — fall
+> back to the assertion + (if you can get one) a single screenshot, mark the row
+> `PASS` on the assertion, and move on. This is the review-gate counterpart of
+> the watchdog's flaky-tool fallback
+> (`docs/specs/2026-05-21-flaky-tool-probe-verdict.md` → "curl/SDK + single
+> screenshot"). Spec: `docs/specs/2026-05-21-evidence-based-review-gate.md`
+> (#191 amendments 1 + 2).
 
 ### Adversarial pass for SECURITY findings only (Refute-or-Promote, #199)
 
@@ -336,10 +359,11 @@ only after it exits 0 do the `REPORTED` rows become `SECURITY:` blockers.
   printf '%s' "$comment_body" | bash scripts/validate-evidence-table.sh
   ```
 
-  Exit 0 = every `PASS` carries evidence (post it). Exit 1 = a `PASS` lacks
-  evidence / is a screenshot ALONE with no behavioral assertion (#191) /
-  illegal verdict / zero criteria (fix the table). Exit 2 = no table found (you
-  forgot it). Regression test: `bash scripts/test-validate-evidence-table.sh`.
+  Exit 0 = every `PASS` carries a behavioral-assertion signal (post it). Exit 1 =
+  a `PASS` lacks evidence / carries no assertion signal — a screenshot ALONE or a
+  bare claim (#191) / illegal verdict / zero criteria (fix the table). Exit 2 =
+  no table found (you forgot it). Regression test:
+  `bash scripts/test-validate-evidence-table.sh`.
 - **Findings table enforced (security PRs only):** for a `security-trigger` diff
   with ≥1 raised finding, the comment carries a FINDINGS TABLE and passes the
   adversarial checker. Validate the body before escalating:
