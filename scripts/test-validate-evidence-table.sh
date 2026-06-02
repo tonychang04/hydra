@@ -393,6 +393,89 @@ EOF
 run_stdin "$tmpdir/t18.md"
 if [[ "$EC" -eq 0 ]]; then ok "assertion-only PASS still valid (screenshots optional)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
 
+# ---------- Test 19: messy screenshot-ONLY forms -> exit 1 (the leak fix) ----------
+# Tests 16-18 only covered clean single-filename screenshot refs. The #191 fix
+# shipped a leak: any space / quote / paren / comma / *, @, ?, or URL adjacent to
+# the image filename left a bare token (png/jpg, a URL scheme, a query string)
+# that survived the strip and was mistaken for a behavioral assertion -> a
+# screenshot-ONLY PASS was WRONGLY accepted. These forms MUST be rejected (exit 1)
+# exactly like an empty cell, preserving the #118 "tests claimed not run" guard.
+# The most important case is the literal default macOS screenshot filename, which
+# carries spaces.
+say "Test 19: messy screenshot-only forms (spaces / punctuation / URL / query) -> exit 1"
+for shot in \
+  "Screenshot 2026-06-01 at 1.23.45 PM.png" \
+  "foo@2x.png" \
+  "screenshots: a.png" \
+  "*.png" \
+  "https://example.com/x.png" \
+  "x.png?raw=1" \
+  '"a.png"' \
+  "(a.png)" \
+  "screenshot, a.png" \
+  "see Screenshot 2026-06-01 at 1.23.45 PM.png attached"; do
+  cat > "$tmpdir/t19.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t19.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "messy screenshot-only '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for messy screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 20: markdown image ALT-TEXT carries a real assertion -> exit 0 ----------
+# An assertion can live ONLY in the alt-text of a markdown image: ![HTTP 200](x.png).
+# The previous code stripped the whole `![alt](url)` construct INCLUDING the
+# alt-text, wrongly REJECTING a real assertion. The alt-text must be PRESERVED
+# (keep `alt`, drop the link) so a PASS asserting state via alt-text passes.
+say "Test 20: assertion in markdown image alt-text -> exit 0 (alt-text preserved)"
+for alt in \
+  "![HTTP 200](x.png)" \
+  "![exit 0](run.png)" \
+  "![curl /items -> 200 \`[{\"id\":1}]\`](shots/items.png)"; do
+  cat > "$tmpdir/t20.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | $alt |
+EOF
+  run_stdin "$tmpdir/t20.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "alt-text assertion '$alt' preserved -> exit 0"
+  else
+    bad "expected exit 0 for alt-text assertion '$alt', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# A markdown image whose alt-text is ITSELF just a screenshot label (no assertion)
+# must still be rejected — preserving alt-text must not become a new leak.
+say "Test 20b: markdown image with screenshot-only alt-text -> exit 1 (still no assertion)"
+for alt in \
+  "![dashboard screenshot](shots/dash.png)" \
+  "![screenshot](x.png)" \
+  "![login page](login.png)"; do
+  cat > "$tmpdir/t20b.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders | PASS | $alt |
+EOF
+  run_stdin "$tmpdir/t20b.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "screenshot-only alt-text '$alt' rejected (exit 1)"
+  else
+    bad "expected exit 1 for screenshot-only alt-text '$alt', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
 # ---------- summary ----------
 echo ""
 echo "============================================================"

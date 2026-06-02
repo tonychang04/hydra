@@ -211,14 +211,26 @@ is_placeholder_evidence() {
 # correct — so a PASS backed by a screenshot ALONE is rejected exactly like an
 # empty cell. Any real assertion anywhere in the cell keeps the PASS valid.
 #
-# Method: remove the screenshot references (the token `screenshot`/`screencap`/
-# `screen-grab`, an image link `![alt](path)`, and bare image paths `*.png`/
-# `.jpg`/`.jpeg`/`.gif`/`.webp`), plus connective filler ("see", "of", "the",
-# "a", "an", "and", punctuation). If anything substantive remains -> NOT
-# screenshot-only (there's an assertion). If nothing remains -> screenshot-only.
+# Method (token-based, robust to surrounding whitespace/punctuation/URLs):
+#   1. Preserve markdown alt-text: `![alt](url)` -> keep `alt`, drop the link.
+#      An assertion can live ONLY in alt-text (`![HTTP 200](x.png)`); stripping
+#      it wholesale was a false-reject bug (#191 re-work BLOCKER 2).
+#   2. Tokenize on whitespace. For each token, strip surrounding punctuation,
+#      then DROP it if it is an image reference (its punctuation-stripped form
+#      contains an image extension — `name.png`, `foo@2x.png`, `*.png`,
+#      `x.png?raw=1`, a `http(s)://…/x.png` URL all collapse to a dropped token)
+#      or a screenshot keyword or pure connective filler. Tokenizing first means
+#      a space/quote/paren/comma/`*`/`@`/`?` adjacent to the filename can no
+#      longer strand a bare `png`/`jpg`/scheme/query token (#191 re-work
+#      BLOCKER 1) — the whole token goes.
+#   3. If anything substantive remains -> NOT screenshot-only (an assertion is
+#      present). If nothing remains -> screenshot-only.
+#
+# Portability: pure bash + `tr` (no GNU-only `sed` `\b`/`\s`/`\d`; BSD/macOS sed
+# lacks them). CI runs Linux; the dev host is macOS — this works on both.
 # -----------------------------------------------------------------------------
 is_screenshot_only_evidence() {
-  local cell residue lower
+  local cell lower residue
   cell="$(trim "$1")"
   cell="${cell//\`/}"              # drop backticks for content inspection
   lower="$(printf '%s' "$cell" | tr '[:upper:]' '[:lower:]')"
@@ -229,35 +241,63 @@ is_screenshot_only_evidence() {
     *.png*|*.jpg*|*.jpeg*|*.gif*|*.webp*|*"!["*) : ;;
     *) return 1 ;;
   esac
+
+  # Step 1: replace each markdown image `![alt](url)` with ` alt ` — preserve the
+  # alt-text (it may be the assertion), drop the link target. Loop handles
+  # multiple images. Non-greedy by construction: %%/## cut at the FIRST/LAST
+  # delimiter, so we slice exactly one `![ ... ]( ... )` per iteration.
   residue="$lower"
-  # Strip markdown image links: ![alt](path)
   while [[ "$residue" == *"!["*"]("*")"* ]]; do
-    residue="${residue%%"!["*}${residue#*"!["*")"}"
+    local before rest alt after
+    before="${residue%%"!["*}"        # text before the image
+    rest="${residue#*"!["}"           # everything after the leading ![
+    alt="${rest%%"]("*}"              # alt-text: between ![ and ](
+    after="${rest#*")"}"             # everything after the closing )
+    residue="$before $alt $after"
   done
-  # Strip bare image-file paths (a run of path chars ending in an image ext).
-  # sed is POSIX-standard (unlike `timeout`, it's always present); but BSD sed
-  # (macOS) does NOT support `\b`, so we tokenize for whole-word filtering below
-  # rather than relying on word boundaries.
-  residue="$(printf '%s' "$residue" \
-    | sed -E 's/[A-Za-z0-9._/~-]+\.(png|jpg|jpeg|gif|webp)//g')"
-  # Strip the screenshot keywords (substring match — no word boundary needed).
-  residue="${residue//screenshot/ }"
-  residue="${residue//screencap/ }"
-  residue="${residue//screen-grab/ }"
-  residue="${residue//screen grab/ }"
-  # Whole-word filler removal, tokenized (portable: no `\b`). Anything left that
-  # is NOT pure filler/punctuation is a real assertion -> not screenshot-only.
-  local tok out=""
+
+  # Step 2: tokenize on whitespace, classify each token.
+  local tok bare out=""
   for tok in $residue; do
-    # strip surrounding punctuation from the token
-    tok="$(printf '%s' "$tok" | tr -d '[:punct:]')"
-    [[ -z "$tok" ]] && continue
+    # `bare`: token with all surrounding/embedded punctuation removed, used to
+    # decide if what remains is a real word. Keep `tok` to test for an image ext.
+    bare="$(printf '%s' "$tok" | tr -d '[:punct:]')"
+    [[ -z "$bare" ]] && continue       # pure punctuation -> nothing
+    # Drop image references: any token mentioning an image extension. Tokenizing
+    # first means `foo@2x.png`, `*.png`, `x.png?raw=1`, `https://h/x.png`, and a
+    # bare `dash.png` ALL match here and are removed whole — no stranded token.
     case "$tok" in
-      see|of|the|a|an|and|in|attached|below|above|here|this|that|\
-      representative|one|single|page|result|view|is|its|shows|showing|show|\
-      rendered|render|renders|displayed|displays|display|captured|capture) ;;
-      *) out+="$tok" ;;
+      *.png*|*.jpg*|*.jpeg*|*.gif*|*.webp*) continue ;;
     esac
+    # Drop screenshot keywords.
+    case "$bare" in
+      screenshot|screenshots|screencap|screencaps|screengrab|screengrabs) continue ;;
+    esac
+    # Drop a date / time / clock fragment (pure digits after punctuation is
+    # removed). The macOS default screenshot name embeds a date + time
+    # (`Screenshot 2026-06-01 at 1.23.45 PM.png`); `2026-06-01` and `1.23.45`
+    # collapse to all-digit tokens here. A lone number is not a behavioral
+    # assertion — a real assertion always pairs its number with an anchor word
+    # or symbol (`HTTP 200`, `exit 0`, `count = 3`), and those anchors survive
+    # as their own tokens, so dropping the bare digits cannot erase an assertion.
+    case "$bare" in
+      *[!0-9]*) : ;;                  # has a non-digit -> keep evaluating
+      *) continue ;;                  # all digits -> date/time fragment, drop
+    esac
+    # Drop pure connective filler — articles, prepositions, screenshot verbs, and
+    # the descriptive UI nouns that label a screenshot ("dashboard", "login")
+    # without asserting any state. Alt-text labels of this kind must NOT keep a
+    # screenshot-only PASS alive.
+    case "$bare" in
+      see|of|the|a|an|and|in|at|to|on|for|with|attached|below|above|here|this|\
+      that|representative|one|single|page|pages|result|results|view|views|is|\
+      its|shows|showing|show|rendered|render|renders|displayed|displays|display|\
+      captured|capture|pm|am|grab|\
+      dashboard|login|logout|signup|signin|home|homepage|screen|panel|modal|\
+      dialog|form|list|table|chart|graph|map|menu|nav|navbar|sidebar|header|\
+      footer|button|tab|tabs|card|cards|item|items|ui|app) continue ;;
+    esac
+    out+="$bare"
   done
   [[ -z "$out" ]]
 }
