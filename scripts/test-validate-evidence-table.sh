@@ -429,12 +429,15 @@ EOF
   fi
 done
 
-# ---------- Test 20: markdown image ALT-TEXT carries a real assertion -> exit 0 ----------
-# An assertion can live ONLY in the alt-text of a markdown image: ![HTTP 200](x.png).
-# The previous code stripped the whole `![alt](url)` construct INCLUDING the
-# alt-text, wrongly REJECTING a real assertion. The alt-text must be PRESERVED
-# (keep `alt`, drop the link) so a PASS asserting state via alt-text passes.
-say "Test 20: assertion in markdown image alt-text -> exit 0 (alt-text preserved)"
+# ---------- Test 20: assertion text in markdown image alt-text -> exit 1 (#191 re-work) ----------
+# Amendment 3 (#191 re-work, BLOCKER 3): a markdown image `![alt](url)` is stripped
+# WHOLE — alt-text AND url — before scanning. Preserving alt-text was itself a
+# fail-open hole: `![assert all good](shot.png)` has only a screenshot, but its
+# alt-text matched an assertion signal and WRONGLY passed. Evidence belongs in the
+# cell text, not buried in an image's alt attribute. So an assertion that lives
+# ONLY in alt-text now FAILS like a screenshot-only cell. (This INVERTS the prior
+# amendment-2 "alt-text preserved -> PASS" behavior.)
+say "Test 20: assertion ONLY in markdown image alt-text -> exit 1 (alt-text dropped, #191 re-work)"
 for alt in \
   "![HTTP 200](x.png)" \
   "![exit 0](run.png)" \
@@ -447,15 +450,15 @@ Commander review of PR #42
 | 1 | Items list loads | PASS | $alt |
 EOF
   run_stdin "$tmpdir/t20.md"
-  if [[ "$EC" -eq 0 ]]; then
-    ok "alt-text assertion '$alt' preserved -> exit 0"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "alt-text-only assertion '$alt' rejected -> exit 1"
   else
-    bad "expected exit 0 for alt-text assertion '$alt', got $EC; out: $(cat "$tmpdir/out")"
+    bad "expected exit 1 for alt-text-only assertion '$alt', got $EC; out: $(cat "$tmpdir/out")"
   fi
 done
 
 # A markdown image whose alt-text is ITSELF just a screenshot label (no assertion)
-# must still be rejected — preserving alt-text must not become a new leak.
+# must still be rejected — dropping alt-text keeps this a FAIL too.
 say "Test 20b: markdown image with screenshot-only alt-text -> exit 1 (still no assertion)"
 for alt in \
   "![dashboard screenshot](shots/dash.png)" \
@@ -765,6 +768,156 @@ Commander review of PR #42
 EOF
 run_stdin "$tmpdir/t28d.md"
 if [[ "$EC" -eq 1 ]]; then ok "bare-claim only -> FAIL"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# =============================================================================
+# Amendment 3 (#191 re-work): close the four under-delivery defects.
+#   B1: broaden rows/count so an intervening noun no longer breaks the signal.
+#   B2: recognize a DOM-state / CSS-selector assertion.
+#   B3: STRIP image refs (markdown ![alt](url) whole — alt AND url — and bare
+#       name.ext tokens) BEFORE scanning, so an assertion-looking word hidden in
+#       a screenshot filename / alt-text can no longer manufacture a false PASS.
+#   C : tighten returned/equals to require an observed operand, not the bare verb.
+# =============================================================================
+
+# ---------- Test 29: advertised rows/count phrasings (B1) -> exit 0 ----------
+# All three docs advertise "N rows" as evidence. An intervening noun ("audit")
+# between the number and "rows" must NOT break the signal. count == N is also a
+# count assertion.
+say "Test 29: advertised rows/count phrasings (B1) -> exit 0"
+for ev in \
+  "2 audit rows" \
+  "5 rows returned" \
+  "rows: 5" \
+  "count == 3" \
+  "7 matching rows" \
+  "1 row"; do
+  cat > "$tmpdir/t29.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Query returns the expected rows | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t29.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "rows/count phrasing '$ev' accepted (exit 0)"
+  else
+    bad "expected exit 0 for rows/count '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 30: DOM-state / CSS-selector assertions (B2) -> exit 0 ----------
+# DOM state is a first-class advertised evidence category. A CSS selector or a
+# DOM-state phrase is a behavioral assertion.
+say "Test 30: DOM-state / CSS-selector assertions (B2) -> exit 0"
+for ev in \
+  "DOM shows .toast-success" \
+  "#main visible" \
+  "element .error-banner present" \
+  '[data-testid="row"] present' \
+  "text content matches 'Saved'"; do
+  cat > "$tmpdir/t30.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Toast renders on save | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t30.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "DOM assertion '$ev' accepted (exit 0)"
+  else
+    bad "expected exit 0 for DOM assertion '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 31: assertion-looking text HIDDEN in an image ref (B3) -> exit 1 ----------
+# Image references (markdown ![alt](url) — alt AND url — and bare name.ext tokens)
+# are stripped BEFORE scanning. So an HTTP status / exit code / assert word that
+# appears only inside a screenshot filename or its alt-text is NOT a real
+# assertion and the PASS must FAIL like a screenshot-only cell.
+say "Test 31: assertion text hidden in a screenshot filename / alt-text (B3) -> exit 1"
+for shot in \
+  "![dashboard](shots/HTTP 200.png)" \
+  "Screen Shot exit 0.png" \
+  "![assert all good](shot.png)" \
+  "![HTTP 200](x.png)" \
+  "200 OK render.png" \
+  "exit 0 capture.png"; do
+  cat > "$tmpdir/t31.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t31.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "image-hidden assertion '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for image-hidden assertion '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# A real assertion ALONGSIDE an image whose name contains assertion-y words still
+# PASSes — the strip removes only the image token, leaving the real assertion.
+say "Test 31b: real assertion next to an assertion-named screenshot -> exit 0"
+cat > "$tmpdir/t31b.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | `curl /items` -> 200; ![exit 0](shots/HTTP 200.png) |
+EOF
+run_stdin "$tmpdir/t31b.md"
+if [[ "$EC" -eq 0 ]]; then ok "real assertion survives image strip (exit 0)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 32: bare verb with no operand (CONCERN) -> exit 1 ----------
+# `returns home` / `values are equal in the UI` carry a stray verb but assert no
+# observed value. They must FAIL — the verb alone is not an assertion.
+say "Test 32: bare verb with no operand (returns/equals) -> exit 1"
+for claim in \
+  "values are equal in the UI" \
+  "returns home" \
+  "it equals the design" \
+  "the page returns"; do
+  cat > "$tmpdir/t32.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Some criterion | PASS | $claim |
+EOF
+  run_stdin "$tmpdir/t32.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "bare-verb claim '$claim' rejected (exit 1)"
+  else
+    bad "expected exit 1 for bare-verb claim '$claim', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# A verb WITH an observed operand still PASSes (regression: keep genuine cases).
+say "Test 32b: verb WITH an operand still PASSes -> exit 0"
+for ev in \
+  "returned 5 rows" \
+  "returned 200" \
+  "query returned rows" \
+  "equals 42" \
+  "x equals y"; do
+  cat > "$tmpdir/t32b.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Behavior asserted | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t32b.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "verb+operand '$ev' accepted (exit 0)"
+  else
+    bad "expected exit 0 for verb+operand '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
 
 # ---------- summary ----------
 echo ""
