@@ -98,6 +98,30 @@ write_qh "$tmp/disabled.json" '{
 assert_router "off-switch" "worker-implementation" -- \
   --repo-backend claude --quota-health "$tmp/disabled.json" --now "$now_before"
 
+# ---- 6b. SAFETY: malformed/partial fallback state must fail safe to claude --
+# These defend the "no silent permanent switch to codex" invariant: any state
+# that says codex but is missing/garbled the TTL must NOT pin codex forever.
+
+# codex active but NO expiry → claude (a fallback with no TTL is not honored).
+write_qh "$tmp/noexp.json" '{ "active_backend": "codex", "fallback_on_rate_limit": true }'
+assert_router "codex-active-no-ttl" "worker-implementation" -- \
+  --repo-backend claude --quota-health "$tmp/noexp.json" --now "$now_before"
+
+# unparseable expiry timestamp → claude (fail safe, not stuck on codex).
+write_qh "$tmp/badts.json" '{ "active_backend": "codex", "fallback_expires_at": "garbage", "fallback_on_rate_limit": true }'
+assert_router "codex-active-bad-ttl" "worker-implementation" -- \
+  --repo-backend claude --quota-health "$tmp/badts.json" --now "$now_before"
+
+# invalid manual_override value → ignored, fall through to default.
+write_qh "$tmp/badmo.json" '{ "manual_override": "codexx" }'
+assert_router "bad-manual-override" "worker-implementation" -- \
+  --repo-backend claude --quota-health "$tmp/badmo.json" --now "$now_before"
+
+# corrupt (non-JSON) quota-health file → treated as empty → default claude.
+printf 'not json at all{{{\n' > "$tmp/corrupt.json"
+assert_router "corrupt-file" "worker-implementation" -- \
+  --repo-backend claude --quota-health "$tmp/corrupt.json" --now "$now_before"
+
 # ---- 7. manual_override=codex, no fallback → codex -------------------------
 
 write_qh "$tmp/override-codex.json" '{ "manual_override": "codex" }'
