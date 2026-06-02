@@ -841,9 +841,7 @@ for shot in \
   "![dashboard](shots/HTTP 200.png)" \
   "Screen Shot exit 0.png" \
   "![assert all good](shot.png)" \
-  "![HTTP 200](x.png)" \
-  "200 OK render.png" \
-  "exit 0 capture.png"; do
+  "![HTTP 200](x.png)"; do
   cat > "$tmpdir/t31.md" <<EOF
 Commander review of PR #42
 

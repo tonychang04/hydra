@@ -271,15 +271,39 @@ ASSERTION_SIGNALS=(
   '\b(all +)?(tests? +)?(passed|passing)\b' # tests passed / all passing
   # --- comparison / operators on observed state ---
   '(==|===|!=|!==|>=|<=)'                  # == / === / != / >= / <=
-  '\breturn(s|ed)\b'                       # returned / returns
-  '\bequals?\b'                            # equals / equal
   '\b(count|len|length|size|total|rows?) *(==|===|=|:|>=|<=|>|<) *[0-9]' # count == 3 / rows: 5
+  # --- comparison verbs WITH an observed operand (#191 re-work CONCERN) ---
+  # A bare `returns` / `equals` is NOT an assertion (e.g. "returns home",
+  # "values are equal in the UI"). The old `\breturn(s|ed)\b` / `\bequals?\b`
+  # signals fired on the bare verb and were REMOVED. Require an observed operand
+  # adjacent to the verb: a number, a quoted/backticked value, a JSON-ish token,
+  # a literal, a status word, `rows`, or `ok`.
+  '\breturn(s|ed)? +(-?[0-9]|"|'\''|`|\{|\[|null|true|false|rows?\b|ok\b)' # returned 5 / returned "x" / returned 200 / returned rows
+  # `equals` (the comparison VERB, with the trailing s) flanked by operand-shaped
+  # tokens. Two accepted shapes (POSIX ERE — no lookahead):
+  #   - value operand:  `equals 42` / `equals "x"` / `equals {..}` / `equals true`
+  #   - symbolic A==B:  `x equals y` where the RHS is a SHORT (1-2 char) symbol
+  #     (x/y/id/n). Real comparison operands in evidence are short symbols;
+  #     English prose has a longer content word — so "it equals the design"
+  #     (RHS "the") carries no signal. Deliberately does NOT match the adjective
+  #     `equal` ("values are equal in the UI").
+  '\bequals +(-?[0-9]|"|'\''|`|\{|\[|true|false|null)' # equals 42 / equals "x" / equals {..} / x equals 3
+  '\b[a-z0-9_]{1,12} +equals +[a-z0-9_]{1,2}( |$|[^a-z0-9_])' # x equals y  (RHS 1-2 char symbol)
   # --- source / trace references ---
   '[a-z0-9_./-]+\.[a-z0-9]+:[0-9]+'        # file.ext:NN  (file:line)
   '\b(trace|session|req|request|resp|response|sha|commit):[a-z0-9_./-]' # trace:abc / sha:deadbee
   # --- DOM / SDK / REST observed state ---
-  '\b[0-9]+ +rows?\b'                      # 5 rows / 1 row
+  '\b[0-9]+ +([a-z][a-z0-9_-]* +)*rows?\b' # 5 rows / 2 audit rows / 7 matching rows (B1: noun(s) allowed between)
+  '\brows?\b *(==|===|=|:|>=|<=|>|<|returned|affected|matched)' # rows: 5 / rows == 3 / rows returned (B1)
   '\brows? +(returned|affected|matched)\b' # rows returned
+  # CSS selector / DOM-state assertion (B2). Image refs are stripped BEFORE this
+  # scan, so a bare `.png`/`#frag` from a filename can never reach here. A
+  # selector must be a CSS-identifier shape (class/id/attr), not any dotted token.
+  '(^|[^a-z0-9_.])[.#][a-z_-][a-z0-9_-]+'  # .toast-success / #main  (CSS class/id)
+  '\[[a-z-]+([~|^$*]?=|\])'                # [data-testid=..] / [disabled]  (attr selector)
+  '\b(element|node|el|selector|dom|css)\b[^|]*\b(visible|present|hidden|absent|rendered|displayed|shown|exists?)\b' # element ... visible/present
+  '\b(visible|present|rendered|displayed|shown)\b[^|]*\b(element|node|selector|on (the )?page|in (the )?dom)\b' # visible element / present on page
+  '\btext +content\b'                      # text content (matches "x") -> DOM assertion
   '(^|[^a-z0-9])\.ok\b'                    # .ok  (res.ok / .ok === true)
   '\bres(ponse)?\.ok\b'                    # res.ok / response.ok
   '\bverify_chain\b'                       # verify_chain (andb)
@@ -288,36 +312,114 @@ ASSERTION_SIGNALS=(
 )
 
 # -----------------------------------------------------------------------------
+# IMAGE_EXT_GLOB / token_is_image_ref / strip_image_refs (#191 re-work BLOCKER 3).
+#
+# Image references MUST be stripped from the cell BEFORE the assertion-signal
+# scan. Otherwise an HTTP status / exit code / `assert` word that appears only
+# INSIDE a screenshot filename or its markdown alt-text manufactures a false
+# assertion signal — `![dashboard](shots/HTTP 200.png)` and `Screen Shot exit
+# 0.png` both leaked a PASS. The script header and the spec (amendment 2) always
+# said strip-first; this restores it (the helper was wrongly deleted as "dead
+# code"). Amendment 3 strips the markdown image WHOLE — alt-text AND url — so a
+# real assertion buried in alt-text (`![assert all good](shot.png)`) is also gone:
+# evidence belongs in the cell text, not an image's alt attribute.
+#
+# IMAGE_EXT_GLOB is the single image-extension set; token_is_image_ref tests a
+# token by "ends in a known image ext after stripping query/fragment + trailing
+# punctuation" (principled, never a `*.png*` substring) so `app.png.ts:42` (ends
+# in `.ts`) survives as a real assertion while `capture.bmp` is dropped.
+# Pure bash + `tr` — BSD/macOS-portable.
+# -----------------------------------------------------------------------------
+IMAGE_EXT_GLOB='png|jpg|jpeg|gif|webp|bmp|svg|heic|tif|tiff|avif'
+
+token_is_image_ref() {
+  local t="$1"
+  # An assertion-scheme prefix (`trace:`, `sha:`, `file:`, etc.) glued onto the
+  # token means it is a REFERENCE, not a bare screenshot filename, even if the
+  # path ends in an image ext (`trace:shot.png`). Do NOT strip it — let the
+  # trace:/sha: signal match it. A web URL (`http://…/x.png`, with `//`) is still
+  # a screenshot link and IS stripped, so guard only the no-`//` scheme prefixes.
+  case "$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]')" in
+    trace:*|session:*|req:*|request:*|resp:*|response:*|sha:*|commit:*|file:*)
+      [[ "$t" != *"://"* ]] && return 1 ;;
+  esac
+  t="${t%%[?#]*}"                                  # strip ?query / #fragment
+  t="$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]')"
+  local prev=""
+  while [[ "$t" != "$prev" ]]; do                  # strip trailing punctuation
+    prev="$t"
+    case "$t" in
+      *[\).,\;\:\!\?\"\'\]\}\>\*\`]) t="${t%?}" ;;
+    esac
+  done
+  case "$t" in *.*) : ;; *) return 1 ;; esac       # no dot -> not an image
+  local ext="${t##*.}"
+  case "|$IMAGE_EXT_GLOB|" in
+    *"|$ext|"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# strip_image_refs — echo the cell with image references removed:
+#   1. markdown images `![alt](url)` removed WHOLE (alt AND url), incl. forms
+#      where the url itself contains spaces (`shots/HTTP 200.png`).
+#   2. each remaining whitespace token that is a bare image ref (name.ext) dropped.
+# What survives is the non-image text the signal scan then inspects.
+strip_image_refs() {
+  local s="$1"
+  # 1. Remove markdown images `![alt](url)` WHOLE — alt AND url. The url can
+  #    contain spaces (a real filename: `shots/HTTP 200.png`), and the alt can
+  #    contain `]` (a quoted JSON body). Match alt greedily up to the LAST `](`
+  #    before the url's closing `)`, since a well-formed image has exactly one
+  #    `](` separating alt from a url that itself has no `]`. Loop so multiple
+  #    images on one cell are each removed.
+  local re='!\[.*\]\([^)]*\)'
+  while [[ "$s" =~ $re ]]; do
+    s="${s/"${BASH_REMATCH[0]}"/ }"
+  done
+  # 2. Drop bare image tokens (whitespace-delimited).
+  local out="" tok
+  for tok in $s; do
+    if token_is_image_ref "$tok"; then continue; fi
+    out+="$tok "
+  done
+  printf '%s' "$out"
+}
+
+# -----------------------------------------------------------------------------
 # cell_has_assertion_signal — true (0) if the evidence cell carries at least one
 # behavioral-assertion signal. This is the POSITIVE test that replaced the
 # screenshot denylist. A cell with no signal (a screenshot alone, a bare prose
 # claim, filler) returns false (1) and is rejected like an empty cell.
 #
-# We scan the signal patterns against the WHOLE cell (lowercased, backticks
-# dropped) — no image-stripping needed. This is deliberate and is what makes the
-# `assertion + screenshot` case work AND keeps a `trace:`/`file:line` whose path
-# contains an image ext valid:
+# Image references are STRIPPED FIRST (strip_image_refs), then the signal
+# patterns are scanned against what remains (lowercased, backticks dropped). This
+# is what makes the `assertion + screenshot` case work AND closes the leak where
+# an assertion-looking word lives only inside a screenshot filename / alt-text:
 #
-#   - `curl /x -> 200; shot.png`  -> the `-> 200` HTTP signal matches; the
-#                                    adjacent `shot.png` matches NO signal, so it
-#                                    neither helps nor hurts. PASS.
-#   - `trace:shot.png`            -> matches the trace: signal directly (the image
-#                                    ext in the path is irrelevant to the scan).
-#                                    PASS — no special pre-stripping required.
-#   - `Screen Shot ... PM.png`    -> a screenshot filename matches NO assertion
-#                                    signal (its digits are a date/time, not an
-#                                    HTTP/exit/comparison context). FAIL.
+#   - `curl /x -> 200; shot.png`        -> `shot.png` is dropped; `-> 200` HTTP
+#                                          signal matches the remainder. PASS.
+#   - `![dashboard](shots/HTTP 200.png)`-> the whole markdown image (alt AND url)
+#                                          is dropped; nothing remains. FAIL.
+#   - `Screen Shot exit 0.png`          -> `exit 0.png` is a bare image token
+#                                          (ends in .png) -> dropped; nothing
+#                                          remains. FAIL (the `exit 0` was inside
+#                                          the filename, not a real assertion).
+#   - `trace:shot.png`                  -> NOT a whitespace-isolated image token
+#                                          (the `trace:` prefix is glued on), so
+#                                          it survives the strip and matches the
+#                                          trace: signal. PASS.
 #
-# So a screenshot filename can never manufacture a false signal: it only fails to
-# add one. Image references are inert to this scan by construction — which is why
-# the whole screenshot denylist (and its leak classes) is gone.
+# So a screenshot filename can never manufacture a false signal: its content is
+# removed before the scan ever sees it. (#191 re-work BLOCKER 3.)
 # -----------------------------------------------------------------------------
 cell_has_assertion_signal() {
   local cell lower pat
   cell="$(trim "$1")"
   cell="${cell//\`/}"                       # drop backticks for content inspection
+  cell="$(strip_image_refs "$cell")"        # remove image refs BEFORE scanning (#191)
   lower="$(printf '%s' "$cell" | tr '[:upper:]' '[:lower:]')"
-  [[ -z "$(trim "$lower")" ]] && return 1   # empty -> no signal
+  [[ -z "$(trim "$lower")" ]] && return 1   # empty after strip -> no signal
   for pat in "${ASSERTION_SIGNALS[@]}"; do
     if printf '%s' "$lower" | grep -Eiq -- "$pat"; then
       return 0

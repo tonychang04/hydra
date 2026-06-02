@@ -111,11 +111,16 @@ Coordinator-Implementor-Verifier pattern).
      - **test / assert construct** — `assert…`, `expect(x).toBe(3)`,
        `expect(r).toEqual(…)`, `3 passed`, `0 failed`, `all tests passing`
      - **comparison on observed state** — `==`, `===`, `>=`, `<=`, `!=`,
-       `returned`, `equals`, `count == 3`, `rows: 5`
+       `count == 3`, `rows: 5`. A verb (`returned`/`equals`) needs an **observed
+       operand**: `returned 200` / `returned 5 rows` / `x equals y` — NOT a bare
+       verb (`returns home`, `values are equal in the UI` carry no signal).
      - **source / trace reference** — `src/x.ts:42` (`file.ext:NN`),
        `trace:<id>` (and `session:`/`req:`/`resp:`/`sha:`/`commit:`)
-     - **observed REST / DOM / SDK state** — `5 rows`, `rows returned`, `.ok`,
-       `res.ok`, `verify_chain`, a quoted JSON body `[{"id":1}]` / `{"ok":true}`
+     - **observed REST / DOM / SDK state** — `5 rows`, `2 audit rows`,
+       `rows returned`, `.ok`, `res.ok`, `verify_chain`, a quoted JSON body
+       `[{"id":1}]` / `{"ok":true}`, **or a DOM-state assertion** — a CSS selector
+       (`.toast-success`, `#main`, `[data-testid=row]`) or a state phrase
+       (`element visible`, `#main visible`, `text content matches "Saved"`).
 
      A `PASS` whose evidence is a **screenshot alone**, or a **bare prose claim**
      ("it works", "renders correctly", "looks right"), carries NO assertion
@@ -123,6 +128,14 @@ Coordinator-Implementor-Verifier pattern).
      (inverted from a screenshot denylist to a positive allowlist — fails closed,
      see "Verification flexibility" below); it also closes the #196/#209
      bare-claim gap.
+
+     > **Put the assertion in the cell text, NOT in an image.** Image references
+     > are stripped before the signal scan (#191 re-work) — a markdown image
+     > `![alt](url)` is dropped WHOLE (alt-text AND url) and bare `name.ext`
+     > image tokens are dropped. So an assertion hidden in a screenshot's filename
+     > or alt-text (`![HTTP 200](x.png)`, `Screen Shot exit 0.png`,
+     > `![assert all good](shot.png)`) does NOT count and the `PASS` is rejected.
+     > Write the assertion as cell text; let the screenshot ride along beside it.
    - `FAIL` — the criterion is not met; say what's wrong (evidence optional).
    - `UNVERIFIED` — you could not verify it (no fixture, needs a live service,
      out of review scope); say why. **A criterion you can't verify is
