@@ -200,6 +200,60 @@ is_placeholder_evidence() {
 }
 
 # -----------------------------------------------------------------------------
+# IMAGE_EXT_GLOB — the ONE shared image-extension set, used by BOTH the fast-path
+# hint and the per-token image-reference test below. Keeping a single source of
+# truth is the whole point of the #191 re-work FINAL fix: the previous code had a
+# `*.png*` SUBSTRING rule (too broad -> false-rejected real `app.png.ts:42`
+# assertions) layered over a 5-extension allow-list `png|jpg|jpeg|gif|webp` (too
+# narrow -> false-accepted `capture.bmp` screenshots). Both halves were wrong in
+# opposite directions. This set is the broad, correct one; the matching is now
+# "token ENDS in one of these" (see token_is_image_ref), never substring.
+IMAGE_EXT_GLOB='png|jpg|jpeg|gif|webp|bmp|svg|heic|tif|tiff|avif'
+
+# -----------------------------------------------------------------------------
+# token_is_image_ref — true (0) if a SINGLE whitespace-delimited token is an
+# image reference, i.e. it ENDS in a known image extension after stripping a
+# trailing query string (`?...`) / fragment (`#...`) and trailing punctuation.
+# Case-insensitive. This is the principled rule that fixes both blockers:
+#
+#   `app.png.ts`      -> ends in `ts`  -> NOT an image (real source ref, kept)
+#   `shot.png`        -> ends in `png` -> image (dropped)
+#   `x.png?raw=1`     -> strip `?raw=1` -> ends in `png` -> image (dropped)
+#   `https://h/x.jpeg`-> ends in `jpeg` -> image (dropped)
+#   `a.png,`          -> strip trailing `,` -> ends in `png` -> image (dropped)
+#   `diagram.SVG.`    -> strip trailing `.` -> ends in `svg` -> image (dropped)
+#
+# Pure bash + `tr` — no GNU-only sed escapes; BSD/macOS-portable.
+# -----------------------------------------------------------------------------
+token_is_image_ref() {
+  local t="$1"
+  # Strip a trailing query string / fragment: everything from the first ? or #.
+  t="${t%%[?#]*}"
+  # Lowercase for case-insensitive extension match.
+  t="$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]')"
+  # Strip trailing punctuation (commas, periods, parens, quotes, etc.) so a glued
+  # `a.png,` or `diagram.svg.` still ends in its extension. Loop until stable.
+  local prev=""
+  while [[ "$t" != "$prev" ]]; do
+    prev="$t"
+    case "$t" in
+      *[\).,\;\:\!\?\"\'\]\}\>\*\`]) t="${t%?}" ;;
+    esac
+  done
+  # The extension is the substring after the LAST dot; no dot -> not an image.
+  case "$t" in
+    *.*) : ;;
+    *) return 1 ;;
+  esac
+  local ext="${t##*.}"
+  # Compare ext against the shared set (anchored: the WHOLE ext must match).
+  case "|$IMAGE_EXT_GLOB|" in
+    *"|$ext|"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# -----------------------------------------------------------------------------
 # is_screenshot_only_evidence — true (0) if the evidence cell is NOTHING BUT a
 # screenshot reference: a picture with no asserted state. (#191 amendment,
 # docs/specs/2026-05-21-evidence-based-review-gate.md.)
@@ -215,14 +269,15 @@ is_placeholder_evidence() {
 #   1. Preserve markdown alt-text: `![alt](url)` -> keep `alt`, drop the link.
 #      An assertion can live ONLY in alt-text (`![HTTP 200](x.png)`); stripping
 #      it wholesale was a false-reject bug (#191 re-work BLOCKER 2).
-#   2. Tokenize on whitespace. For each token, strip surrounding punctuation,
-#      then DROP it if it is an image reference (its punctuation-stripped form
-#      contains an image extension — `name.png`, `foo@2x.png`, `*.png`,
-#      `x.png?raw=1`, a `http(s)://…/x.png` URL all collapse to a dropped token)
-#      or a screenshot keyword or pure connective filler. Tokenizing first means
-#      a space/quote/paren/comma/`*`/`@`/`?` adjacent to the filename can no
-#      longer strand a bare `png`/`jpg`/scheme/query token (#191 re-work
-#      BLOCKER 1) — the whole token goes.
+#   2. Tokenize on whitespace. For each token, DROP it if it is an image
+#      reference per token_is_image_ref (token ENDS in a known image extension
+#      after stripping query/fragment + trailing punct — the principled rule that
+#      replaced the broken `*.png*` SUBSTRING test, #191 re-work FINAL), or a
+#      screenshot keyword, or a date/time fragment, or pure connective filler.
+#      A token like `app.png.ts:42` does NOT end in an image ext, so it survives
+#      as a real assertion (BLOCKER B fix); `capture.bmp` DOES, so it is dropped
+#      (BLOCKER A fix). Tokenizing first means a space/quote/paren/comma/`*`/`@`/
+#      `?` adjacent to the filename can no longer strand a bare token.
 #   3. If anything substantive remains -> NOT screenshot-only (an assertion is
 #      present). If nothing remains -> screenshot-only.
 #
@@ -235,12 +290,22 @@ is_screenshot_only_evidence() {
   cell="${cell//\`/}"              # drop backticks for content inspection
   lower="$(printf '%s' "$cell" | tr '[:upper:]' '[:lower:]')"
   # Fast path: a cell with no screenshot/image hint at all is never
-  # screenshot-only — leave it to the assertion checks.
+  # screenshot-only — leave it to the assertion checks. The image-extension hint
+  # here is a SUBSTRING (cheap over-trigger): it only decides whether to run the
+  # precise per-token analysis below, which is authoritative. So a `.png`
+  # anywhere (even mid-path in `app.png.ts`) routes into the token loop, where
+  # token_is_image_ref then correctly KEEPS the real assertion. Built from the
+  # shared IMAGE_EXT_GLOB so the fast-path and the token-drop can never drift.
+  local ext_hint=0 e
+  local _ifs="$IFS"; IFS='|'
+  for e in $IMAGE_EXT_GLOB; do
+    if [[ "$lower" == *".$e"* ]]; then ext_hint=1; break; fi
+  done
+  IFS="$_ifs"
   case "$lower" in
-    *screenshot*|*screencap*|*screen-grab*|*screen\ grab*|\
-    *.png*|*.jpg*|*.jpeg*|*.gif*|*.webp*|*"!["*) : ;;
-    *) return 1 ;;
+    *screenshot*|*screencap*|*screen-grab*|*screen\ grab*|*"!["*) ext_hint=1 ;;
   esac
+  [[ "$ext_hint" -eq 1 ]] || return 1
 
   # Step 1: replace each markdown image `![alt](url)` with ` alt ` — preserve the
   # alt-text (it may be the assertion), drop the link target. Loop handles
@@ -263,26 +328,60 @@ is_screenshot_only_evidence() {
     # decide if what remains is a real word. Keep `tok` to test for an image ext.
     bare="$(printf '%s' "$tok" | tr -d '[:punct:]')"
     [[ -z "$bare" ]] && continue       # pure punctuation -> nothing
-    # Drop image references: any token mentioning an image extension. Tokenizing
-    # first means `foo@2x.png`, `*.png`, `x.png?raw=1`, `https://h/x.png`, and a
-    # bare `dash.png` ALL match here and are removed whole — no stranded token.
+    # KEEP assertion-marker tokens BEFORE the image-ref drop. The spec enumerates
+    # `file:line` and `trace:<id>` as first-class evidence kinds. Such a token can
+    # legitimately carry an image extension in its PATH (`trace:shot.png`,
+    # `src/app.png.ts:42`) yet still be a behavioral/source reference, not a
+    # screenshot. We recognize two marker shapes (case-insensitive, on `lower`):
+    #   - a `<scheme>:` prefix from the assertion vocab (trace:/session:/req:/...)
+    #   - a `:<digits>` file:line suffix (`foo.ts:42`)
+    # This guard is why BLOCKER B passes: these are PRESERVED as assertions.
     case "$tok" in
-      *.png*|*.jpg*|*.jpeg*|*.gif*|*.webp*) continue ;;
+      trace:*|session:*|req:*|request:*|resp:*|response:*|sha:*|commit:*) out+="x"; continue ;;
+    esac
+    case "$tok" in
+      *:[0-9]) out+="x"; continue ;;       # file:line (single digit)
+      *:[0-9]*[0-9]) out+="x"; continue ;; # file:line (multi-digit)
+    esac
+    # Drop image references via the principled per-token test: a token that ENDS
+    # in a known image ext (after stripping query/fragment + trailing punct) is a
+    # screenshot ref and is removed whole. `foo@2x.png`, `*.png`, `x.png?raw=1`,
+    # `https://h/x.png`, `capture.bmp`, `diagram.svg`, `a.png,` all match here. A
+    # token like `app.png.ts:42` ends in `ts` (not an image), so it is KEPT as a
+    # real assertion — fixing both #191 re-work FINAL blockers in one rule.
+    if token_is_image_ref "$tok"; then continue; fi
+    # For a PATH-shaped token (no image ext, no assertion marker — e.g. the
+    # directory part `~/Desktop/Screen` that precedes a glued `Shot.png`), judge
+    # it by its final path segment, the meaningful leaf. `~/Desktop/Screen` ->
+    # `screen`, which the filler table below recognizes as a screenshot-path word.
+    # This cannot swallow a real assertion: `src/app.png.ts:42` is kept earlier by
+    # the file:line marker guard, never reaching here.
+    case "$tok" in
+      */*) bare="$(printf '%s' "${tok##*/}" | tr -d '[:punct:]')"
+           [[ -z "$bare" ]] && continue ;;
     esac
     # Drop screenshot keywords.
     case "$bare" in
       screenshot|screenshots|screencap|screencaps|screengrab|screengrabs) continue ;;
     esac
-    # Drop a date / time / clock fragment (pure digits after punctuation is
-    # removed). The macOS default screenshot name embeds a date + time
-    # (`Screenshot 2026-06-01 at 1.23.45 PM.png`); `2026-06-01` and `1.23.45`
-    # collapse to all-digit tokens here. A lone number is not a behavioral
-    # assertion — a real assertion always pairs its number with an anchor word
-    # or symbol (`HTTP 200`, `exit 0`, `count = 3`), and those anchors survive
-    # as their own tokens, so dropping the bare digits cannot erase an assertion.
+    # Drop a date / time / clock / RESOLUTION fragment. The macOS default
+    # screenshot name embeds a date + time (`Screenshot 2026-06-01 at 1.23.45
+    # PM.png`); `2026-06-01` and `1.23.45` collapse to all-digit `bare`. A
+    # resolution string (`1920x1080`) collapses to digits plus a lone `x`/`X`
+    # separator. None is a behavioral assertion — a real assertion always pairs
+    # its number with an anchor WORD or symbol (`HTTP 200`, `exit 0`, `count = 3`),
+    # and those anchors survive as their own tokens, so dropping these numeric
+    # fragments cannot erase an assertion.
     case "$bare" in
       *[!0-9]*) : ;;                  # has a non-digit -> keep evaluating
       *) continue ;;                  # all digits -> date/time fragment, drop
+    esac
+    # Resolution: digits separated by a single x/X (e.g. 1920x1080, 800X600).
+    case "$bare" in
+      [0-9]*[xX][0-9]*)
+        case "${bare//[0-9]/}" in
+          x|X) continue ;;            # only an x/X between the digit runs -> drop
+        esac ;;
     esac
     # Drop pure connective filler — articles, prepositions, screenshot verbs, and
     # the descriptive UI nouns that label a screenshot ("dashboard", "login")
