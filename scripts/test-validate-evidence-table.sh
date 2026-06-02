@@ -476,6 +476,96 @@ EOF
   fi
 done
 
+# ---------- Test 21: image types BEYOND png/jpg + adjacency forms -> exit 1 ----------
+# #191 re-work FINAL, BLOCKER A. The first leak fix hard-coded a 5-extension set
+# (png|jpg|jpeg|gif|webp) layered under a `*.png*` SUBSTRING rule. Image types
+# outside that set (bmp, svg, heic, tif, tiff, avif) were never recognized as
+# screenshots, so a screenshot-ONLY PASS using them was WRONGLY accepted. A couple
+# of adjacency forms (a trailing resolution string, a path glued to "Screen Shot")
+# also leaked. All of these are screenshots with NO behavioral assertion and MUST
+# be rejected (exit 1), exactly like an empty cell.
+say "Test 21: screenshot-only with broader image types + adjacency -> exit 1 (BLOCKER A)"
+for shot in \
+  "capture.bmp" \
+  "diagram.svg" \
+  "photo.heic" \
+  "grab.tif" \
+  "grab.tiff" \
+  "screenshots/login.avif" \
+  "shot.png (1920x1080)" \
+  "~/Desktop/Screen Shot.png"; do
+  cat > "$tmpdir/t21.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t21.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "screenshot-only (broad ext / adjacency) '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 22: file:line / trace: assertion whose PATH contains an image ext -> exit 0 ----------
+# #191 re-work FINAL, BLOCKER B (NEW false-reject introduced by the `*.png*`
+# SUBSTRING rule). A genuine `file:line` source reference or a `trace:` id can have
+# a path component that merely CONTAINS an image extension (`app.png.ts`,
+# `logo.png.tsx`, `shot.png` inside a trace id). The SUBSTRING rule dropped these
+# real assertions. The principled rule — a token is an image reference only when it
+# ENDS in a known image extension after stripping query/fragment + trailing punct —
+# keeps `app.png.ts` (ends in `.ts`, not an image) as a real assertion. These MUST
+# PASS (exit 0).
+say "Test 22: real assertion whose path CONTAINS (but does not end in) an image ext -> exit 0 (BLOCKER B)"
+for ev in \
+  "src/app.png.ts:42" \
+  "src/icons/logo.png.tsx:42" \
+  "trace:shot.png"; do
+  cat > "$tmpdir/t22.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Behavior asserted at source | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t22.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "assertion with image-ext-in-path '$ev' preserved (exit 0)"
+  else
+    bad "expected exit 0 for assertion '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 23: adversarial messy forms (uppercase ext / trailing comma / bare URL) ----------
+# Stress the principled "ends in a known image ext after stripping query/fragment +
+# trailing punctuation" rule with case + punctuation noise, so a reviewer cannot
+# find a 3rd leak class. Each of these is a screenshot-ONLY reference -> exit 1.
+say "Test 23: adversarial screenshot-only forms (uppercase / trailing comma / bare URL) -> exit 1"
+for shot in \
+  "evidence.PNG" \
+  "a.png," \
+  "https://example.com/path/to/shot.jpeg" \
+  "Capture.HEIC" \
+  "render.WEBP" \
+  "diagram.SVG." \
+  "shot.tiff?raw=1"; do
+  cat > "$tmpdir/t23.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t23.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "adversarial screenshot-only '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for adversarial screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
 # ---------- summary ----------
 echo ""
 echo "============================================================"
