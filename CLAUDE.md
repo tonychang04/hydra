@@ -40,17 +40,17 @@ Authoritative content lives below; CLAUDE.md only routes. Read the marked ones a
 | `worker-validator` | After `worker-review` — re-runs `validation-contract.md` for runtime TRUTH (UI leg `browse`/`verify`); `docs/specs/2026-06-07-worker-validator.md` | Code changes |
 | `worker-test-discovery` | Repo has no working documented test procedure | Source changes |
 | `worker-conflict-resolver` | ≥2 PRs with mutual conflicts — additive merges | Semantic judgments |
-| `worker-codex-implementation` | Code tickets on `preferred_backend: codex` repos. Dormant until #97; `docs/specs/2026-04-17-codex-worker-backend.md` | Write code directly / silent fallback |
+| `worker-codex-implementation` | Code tickets when the backend router (`scripts/select-worker-backend.sh`) picks codex — repo `preferred_backend: codex` OR an active Claude-rate-limit fallback. Specs: `docs/specs/2026-04-17-codex-worker-backend.md`, `2026-06-01-codex-auto-fallback.md` | Write code directly / silent fallback to Claude |
 
 Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", prompt=<ticket-context>)`.
 
 ## Operating loop
 
 1. **Parse intent** (commands table).
-2. **Preflight — ALL must pass before any spawn:** `commander/PAUSE` absent; `scripts/validate-state-all.sh` exits 0 (schema + size gate); `active.json` count < `budget.json:phase1_subscription_caps.max_concurrent_workers`; today's count < `daily_ticket_cap`; no recent rate-limit error in `quota-health.json` (auto-pause 1 hr).
+2. **Preflight — ALL must pass before any spawn:** `commander/PAUSE` absent; `scripts/validate-state-all.sh` exits 0 (schema + size gate); `active.json` count < `budget.json:phase1_subscription_caps.max_concurrent_workers`; today's count < `daily_ticket_cap`; on a recent rate-limit in `state/quota-health.json`, if `fallback_on_rate_limit` (default on) run `scripts/set-backend-fallback.sh --trigger <class>` and keep spawning routed to codex (don't freeze), else legacy 1-hr auto-pause (`docs/specs/2026-06-01-codex-auto-fallback.md`).
 3. **Pick** per `state/repos.json:ticket_trigger` — `assignee` (`@me`/`assignee_override`), `label` (`commander-ready`), or `linear` (`scripts/linear-pickup-dispatch.sh`). Skip `commander-working`/`commander-pause`/`commander-stuck`. Specs: `docs/specs/2026-04-17-assignee-override.md`, `2026-04-17-linear-ticket-trigger.md`.
 4. **Classify tier** per `policy.md`. T3 → skip. Unclear → ask.
-5. **Spawn** with the slim template (`docs/specs/2026-04-17-slim-worker-prompts.md`): ticket URL not body, repo+path, tier, Memory Brief, worker type, coordinate-with. Multi-ticket: first run report-only `scripts/plan-parallel-batch.sh` (`docs/specs/2026-06-07-anti-drift-parallelism.md`).
+5. **Spawn** with the slim template (`docs/specs/2026-04-17-slim-worker-prompts.md`): ticket URL not body, repo+path, tier, Memory Brief, worker type, coordinate-with. Pick `subagent_type` via `scripts/select-worker-backend.sh --repo-backend <repo preferred_backend>` (claude vs codex, applying any active rate-limit fallback). Multi-ticket: first run report-only `scripts/plan-parallel-batch.sh` (`docs/specs/2026-06-07-anti-drift-parallelism.md`).
 6. **Track** in `state/active.json` (pre-migration entries OK: `docs/specs/2026-04-17-active-schema-drift.md`). 7. **Report** one-line status.
 
 ## Auto-dispatch: worker-test-discovery on repeat "test procedure unclear"
@@ -95,6 +95,7 @@ Triggers + terse action below; **full semantics → `docs/specs/2026-06-07-comma
 | `merge #501` | Tier-aware via `scripts/merge-policy-lookup.sh`; `--queue` → merge-queue (`docs/specs/2026-04-17-merge-queue.md`); see Safety rules |
 | `reject #501 reason: ...` | `gh pr close`, label `commander-rejected` |
 | `quota` / `cost today` | Tickets done + wall-clock + rate-limit health |
+| `backend claude\|codex\|auto\|status` | `scripts/set-backend-fallback.sh --set <b>` (claude/codex pin until `auto`; auto re-enables rate-limit fallback) / `--status`. `docs/specs/2026-06-01-codex-auto-fallback.md` |
 | `repos` | Show `state/repos.json`; edit on request |
 | `answer #42: <guidance>` | `SendMessage` worker + append `escalation-faq.md` |
 | `compact memory` / `promote learnings` / `archive stale` | Memory hygiene on demand |

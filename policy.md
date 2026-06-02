@@ -71,3 +71,7 @@ For each ticket:
 ## Worker-side enforcement
 
 Worker re-checks tier once it has read the code. If the ticket description suggested T1 but the actual code touches auth/migration/infra, worker stops immediately, labels `commander-stuck`, and comments "escalated to Tier 3 after reading code".
+
+## Backend fallback on rate-limit
+
+`fallback_on_rate_limit` (in `state/quota-health.json`) defaults to **true**. When Claude hits a rate-limit (classes `claude-rate-limit` / `anthropic-api-429` / `session-token-exhausted`), Commander auto-switches new spawns to the Codex backend (`worker-codex-implementation`) instead of freezing for an hour. The switch is **TTL-bounded** (default 1 hr via `fallback_expires_at`) and **auto-recovers** read-side when the TTL lapses — the next spawn tries Claude again; if it's still limited, that spawn re-triggers the fallback (no quota-burning probe). The operator can disable the auto-switch (`fallback_on_rate_limit: false` → legacy 1-hr freeze) or pin a backend (`backend claude` / `backend codex`, cleared by `backend auto`). Non-rate-limit errors (schema/lock drift, network blips) never switch the backend. Full procedure: `docs/specs/2026-06-01-codex-auto-fallback.md`.

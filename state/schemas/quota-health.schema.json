@@ -1,17 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://hydra/state/schemas/quota-health.schema.json",
-  "title": "Hydra cost + quota health snapshot",
-  "description": "Operator-facing cost + quota rollup written by scripts/quota-watch.sh --write. Read-only telemetry / visibility — NOT a throttle or quota gate (v1 ship principle: hard cost-control + visibility only). The CLAUDE.md preflight and the quota_health block of hydra-status-output.schema.json reference state/quota-health.json; this schema gives it a durable, validated home (ticket #273). Aggregates today's counters from state/budget-used.json, consecutive-rate-limit state from state/autopickup.json, and cost from scripts/cost-per-pr.sh. Additive-friendly (additionalProperties:true) like the other Hydra state schemas. Spec: docs/specs/2026-06-07-quota-watch-cost-visibility.md.",
+  "title": "Hydra quota-health: cost/quota snapshot + backend-fallback state",
+  "description": "Commander's quota-health signal at state/quota-health.json. Two additive, independently-written concerns share this file: (1) the operator-facing cost + quota rollup written by scripts/quota-watch.sh --write — read-only telemetry / visibility, NOT a throttle or quota gate (v1 ship principle: hard cost-control + visibility only; ticket #273); (2) the codex auto-fallback router state — active_backend, fallback_reason, fallback_expires_at, fallback_on_rate_limit, manual_override (ticket #97), written by scripts/set-backend-fallback.sh as a JSON merge. Because either writer may produce the file alone, NO field is required: an absent file, an empty {}, a cost-only file, or a fallback-only file all validate, and a file with none of the backend fields routes safely to the Claude backend. additionalProperties is true so the cost writer, the fallback writer, and any future field coexist without breaking validation. Read by Commander preflight (CLAUDE.md step 2), the quota_health block of hydra-status-output.schema.json, and scripts/select-worker-backend.sh. Specs: docs/specs/2026-06-07-quota-watch-cost-visibility.md (cost #273), docs/specs/2026-06-01-codex-auto-fallback.md (fallback #97); primitive: docs/specs/2026-04-17-codex-worker-backend.md (#96).",
   "type": "object",
   "additionalProperties": true,
-  "required": [
-    "tickets_completed_today",
-    "tickets_failed_today",
-    "wall_clock_min_today",
-    "rate_limit_hits_today",
-    "consecutive_rate_limit_hits"
-  ],
   "properties": {
     "generated_at": {
       "type": ["string", "null"],
@@ -79,6 +72,40 @@
     "operator_line": {
       "type": "string",
       "description": "One-line operator health string consumed by the session greeting / autopickup tick."
+    },
+    "last_rate_limit_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}",
+      "description": "ISO-8601 UTC timestamp of the most recent rate-limit signal. Used by preflight's 'recent rate-limit' check and by `quota` reporting."
+    },
+    "rate_limit_class": {
+      "type": "string",
+      "enum": ["claude-rate-limit", "anthropic-api-429", "session-token-exhausted"],
+      "description": "Classification of the last rate-limit. Only these classes may trip the codex auto-fallback; a schema/lock/network error is NOT a rate-limit and must not appear here."
+    },
+    "active_backend": {
+      "type": "string",
+      "enum": ["claude", "codex"],
+      "description": "The backend the router currently serves. Set to 'codex' by scripts/set-backend-fallback.sh --trigger when a rate-limit fires; reverts (read-side, at TTL expiry) to the repo's preferred backend. Absent → claude."
+    },
+    "fallback_reason": {
+      "type": "string",
+      "enum": ["claude-rate-limit", "anthropic-api-429", "session-token-exhausted"],
+      "description": "Why the active fallback to codex was triggered (audit / operator visibility). Mirrors rate_limit_class at trigger time."
+    },
+    "fallback_expires_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}",
+      "description": "ISO-8601 UTC TTL for the active codex fallback (default now+1h). The router auto-recovers (drops back to the repo's preferred backend) once now >= this value. Read-time decision; no quota-burning probe."
+    },
+    "fallback_on_rate_limit": {
+      "type": "boolean",
+      "description": "Operator on/off switch for codex auto-fallback. Default true when absent. When false, a rate-limit records last_rate_limit_at/rate_limit_class but does NOT switch the backend (legacy 1-hr freeze behavior is retained by Commander)."
+    },
+    "manual_override": {
+      "type": "string",
+      "enum": ["claude", "codex", "auto"],
+      "description": "Operator's `backend <x>` command. 'claude'/'codex' pin the backend (beating any active auto-fallback) until 'backend auto'. 'auto' (or absent) re-enables auto-fallback. Set by scripts/set-backend-fallback.sh --set."
     }
   }
 }

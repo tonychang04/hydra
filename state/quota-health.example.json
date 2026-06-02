@@ -1,16 +1,24 @@
 {
+  "_comment": "EXAMPLE state/quota-health.json showing BOTH concerns the live file carries: the cost/quota rollup (ticket #273, written by scripts/quota-watch.sh --write) AND an ACTIVE codex auto-fallback (ticket #97, written by scripts/set-backend-fallback.sh). The live file is written on-demand by either writer (JSON merge), read by Commander preflight, the quota_health status block, and scripts/select-worker-backend.sh. Every field is optional: an absent file, an empty {}, a cost-only file, or a fallback-only file all validate, and a file with none of the backend fields routes safely to the Claude backend. Validated by state/schemas/quota-health.schema.json. Specs: docs/specs/2026-06-07-quota-watch-cost-visibility.md (#273), docs/specs/2026-06-01-codex-auto-fallback.md (#97).",
   "generated_at": "2026-06-08T00:00:00Z",
   "date": "2026-06-08",
   "tickets_completed_today": 6,
   "tickets_failed_today": 0,
   "wall_clock_min_today": 240,
-  "rate_limit_hits_today": 0,
-  "consecutive_rate_limit_hits": 0,
-  "github_rate_limit_ok": true,
+  "rate_limit_hits_today": 1,
+  "consecutive_rate_limit_hits": 1,
+  "github_rate_limit_ok": false,
   "linear_rate_limit_ok": true,
   "total_cost_usd": 0.6,
   "cost_per_merged_pr": 0.3,
   "tickets_counted": 2,
   "est_cost_per_ticket": 0.1,
-  "operator_line": "Quota: 6 done / 0 failed today · 240 min wall-clock · 0 rate-limit hits (0 consecutive) · $0.1/ticket est · $0.3/merged-PR"
+  "operator_line": "Quota: 6 done / 0 failed today · 240 min wall-clock · 1 rate-limit hit (1 consecutive) · $0.1/ticket est · $0.3/merged-PR",
+  "last_rate_limit_at": "2026-06-01T09:12:00Z",
+  "rate_limit_class": "claude-rate-limit",
+  "active_backend": "codex",
+  "fallback_reason": "claude-rate-limit",
+  "fallback_expires_at": "2026-06-01T10:12:00Z",
+  "fallback_on_rate_limit": true,
+  "manual_override": "auto"
 }
