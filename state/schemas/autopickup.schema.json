@@ -50,7 +50,7 @@
     },
     "last_audit_run": {
       "type": ["string", "null"],
-      "description": "ISO-8601 local timestamp of the last scheduled worker-auditor run (Monday autopickup tick, step 1.7). Drives the Monday-09:00-local idempotency guard so the auditor fires at most once per Monday window. Null or missing means never run. See docs/specs/2026-04-17-worker-auditor-subagent.md (ticket #179)."
+      "description": "ISO-8601 local timestamp of the last scheduled worker-auditor run. Drives the DAILY idempotency guard in the autopickup tick (section 4d) so the auditor is recommended at most once per day: audit_due = (date(last_audit_run) != today). Null or missing means never run. Commander stamps this when it spawns the auditor; the tick only reports. See docs/specs/2026-06-07-scheduled-self-audit.md (ticket #240, daily cadence; supersedes the never-implemented Monday-only #179 hook)."
     },
     "tickets_at_last_hygiene": {
       "type": "integer",

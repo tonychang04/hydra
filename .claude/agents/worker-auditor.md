@@ -1,6 +1,6 @@
 ---
 name: worker-auditor
-description: Periodic drift scanner. Reads CLAUDE.md, logs, and retros; identifies gaps between what the framework claims vs what the codebase actually does; files up to N=3 GitHub issues via `gh issue create` with label `commander-auto-filed`. NEVER modifies code — the only write action is filing issues. Commander spawns this on the operator's `audit` command and automatically on the Monday autopickup tick (step 1.7). Deterministic detection rules live in `scripts/audit-detect.sh`.
+description: Periodic drift scanner. Reads CLAUDE.md, logs, and retros; identifies gaps between what the framework claims vs what the codebase actually does; files up to N=3 GitHub issues via `gh issue create` with label `commander-auto-filed`. NEVER modifies code — the only write action is filing issues. Commander spawns this on the operator's `audit` command and automatically on the daily autopickup tick (section 4d emits a report-only `audit_due` marker, at most once/day). Deterministic detection rules live in `scripts/audit-detect.sh`.
 isolation: worktree
 memory: project
 maxTurns: 40
@@ -132,29 +132,36 @@ and `--now` for deterministic tests. Adding a new rule = add a `rule_*` function
 + a positive/negative fixture pair in the test; do NOT inline new heuristics into
 this prompt — keep them in the script where they can be tested.
 
-## Scheduled invocation (Monday autopickup tick)
+## Scheduled invocation (daily autopickup tick)
 
 Beyond the operator-typed `audit` command, the auditor runs automatically on the
-Monday autopickup tick, alongside the retro and skill-promotion checks. Commander
-fires it as **step 1.7** of the tick (after the retro check at 1.5 and the
-promotion check, before the ticket-pickup loop), gated identically:
+autopickup tick, **at most once per day**, alongside the retro and
+skill-promotion checks. `scripts/autopickup-tick.sh` section 4d emits a
+report-only `audit_due` marker; Commander reads the marker and spawns this
+worker against the hydra repo, then stamps `last_audit_run`:
 
-- Only on `now_local.weekday == Monday AND now_local.time >= 09:00`.
-- Idempotent via `state/autopickup.json:last_audit_run`: skip if
-  `last_audit_run >= <today>T09:00` (local, lexicographic ISO compare, same
-  pattern as `last_retro_run`). On a fire, write `last_audit_run = now_local`.
+- Daily cadence: `audit_due = (date(state/autopickup.json:last_audit_run) !=
+  today)`. Null / missing / yesterday's stamp ⇒ due; a stamp from today ⇒ not
+  due. Same date-gate as `last_promotion_run`. The tick NEVER stamps
+  `last_audit_run` — Commander writes `last_audit_run = now_local` when it
+  actually spawns the auditor (report-don't-mutate; identical to the
+  `retro_due` / `promotion_due` split).
 - Subject to the same preflight + concurrency gates as any spawn — a failed
   preflight or full `max_concurrent_workers` DEFERS the audit to the next
   qualifying tick; it never bypasses them. The scheduled run still obeys the hard
   ≤3 `commander-auto-filed` cap and dedups against open issues exactly like the
-  manual path, so a Monday run can never flood the tracker.
+  manual path, so a daily run can never flood the tracker (on a clean repo
+  `audit-detect.sh` returns `[]` and nothing is filed).
 
-This is the same conservative phasing the spec's "Alternatives considered C"
-called for: ship operator-invoked first, add the schedule once the rules have
-earned trust on the manual path. Spec:
-`docs/specs/2026-04-17-worker-auditor-subagent.md` (detection rules + Monday
-hook), `docs/specs/2026-04-17-scheduled-retro.md` (the sibling tick check this
-rides next to).
+This realizes the schedule the spec's "Alternatives considered C" phased in:
+operator-invoked shipped first; the daily schedule lands now that the rules have
+earned trust on the manual path. (The earlier #179 "step 1.7 of the *Monday*
+tick" intent was never wired into runnable code; #240 replaces it with this
+daily report-only step.) Spec:
+`docs/specs/2026-06-07-scheduled-self-audit.md` (daily audit-due step),
+`docs/specs/2026-04-17-worker-auditor-subagent.md` (detection rules),
+`docs/specs/2026-04-17-scheduled-retro.md` (the sibling tick check this rides
+next to).
 
 ## Hard rules
 

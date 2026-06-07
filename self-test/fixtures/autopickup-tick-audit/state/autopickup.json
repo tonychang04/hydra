@@ -1,0 +1,13 @@
+{
+  "_description": "Fixture autopickup.json for the scheduled-daily-self-audit self-test (#240). last_audit_run is null so the daily audit-due gate fires on a never-run repo; the smoke harness derives same-day and yesterday variants via jq to prove once/day-then-false idempotency. See docs/specs/2026-06-07-scheduled-self-audit.md.",
+  "enabled": true,
+  "interval_min": 30,
+  "auto_enable_on_session_start": true,
+  "last_run": "2026-06-07T08:00:00Z",
+  "last_picked_count": 0,
+  "consecutive_rate_limit_hits": 0,
+  "last_retro_run": "2026-06-07T09:00:00",
+  "last_promotion_run": "2026-06-07",
+  "last_audit_run": null,
+  "tickets_at_last_hygiene": 0
+}

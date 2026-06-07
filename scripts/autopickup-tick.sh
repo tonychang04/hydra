@@ -685,6 +685,56 @@ hygiene_json="$(jq -nc \
     hygiene_reason:$hygiene_reason}')"
 
 # =============================================================================
+# 4d. SCHEDULED SELF-AUDIT  (daily worker-auditor recommendation)
+# =============================================================================
+# REPORT-ONLY discipline (same as 4b/4c): this block detects whether a daily
+# Hydra self-audit is due and emits an `audit-due` marker. It NEVER spawns
+# worker-auditor, never files issues, never stamps last_audit_run — Commander
+# actuates (spawns the auditor) and stamps last_audit_run when it does, the same
+# split as retro (retro_due) and promotion (promotion_due).
+#
+# Idempotency is DAILY (at most once/day), mirroring last_promotion_run's date
+# gate: audit_due = (date(last_audit_run) != today). Null/missing/malformed
+# last_audit_run => never run => due. Test seam: --today <YYYY-MM-DD> fixes
+# "today"; default reads the live clock (date +%F).
+#
+# The dedupe rail (worker-auditor caps at <=3 issues/run and dedupes by title
+# against open commander-auto-filed issues) is carried as a hint in the report,
+# not enforced here — the issue enumeration + cap live in the auditor/Commander
+# where the gh budget is. Spec: docs/specs/2026-06-07-scheduled-self-audit.md.
+audit_today="${today_override:-$(date +%F)}"
+
+last_audit_run=""
+if [[ -f "$AUTOPICKUP_FILE" ]]; then
+  last_audit_run="$(jq -r '.last_audit_run // ""' "$AUTOPICKUP_FILE" 2>/dev/null || echo "")"
+fi
+# Date portion of last_audit_run (accept an ISO timestamp or a bare date).
+last_audit_date="${last_audit_run%%T*}"
+
+audit_due=true
+audit_marker="audit-due"
+audit_reason=""
+audit_dedupe_hint="worker-auditor caps at <=3 issues/run; dedupe by title vs open commander-auto-filed issues"
+
+if [[ "$last_audit_date" == "$audit_today" ]]; then
+  audit_due=false
+  audit_marker=""
+  audit_reason="already ran today"
+fi
+
+audit_json="$(jq -nc \
+  --arg today "$audit_today" \
+  --arg last_audit_run "$last_audit_run" \
+  --argjson audit_due "$audit_due" \
+  --arg audit_marker "$audit_marker" \
+  --arg audit_reason "$audit_reason" \
+  --arg dedupe_hint "$audit_dedupe_hint" \
+  '{today:$today,
+    last_audit_run:(if $last_audit_run == "" then null else $last_audit_run end),
+    audit_due:$audit_due, audit_marker:$audit_marker, audit_reason:$audit_reason,
+    dedupe_hint:$dedupe_hint}')"
+
+# =============================================================================
 # 5. ACTIONS ROLL-UP
 # =============================================================================
 actions_json="$(jq -nc \
@@ -693,6 +743,7 @@ actions_json="$(jq -nc \
   --argjson shepherd "$shepherd_json" \
   --argjson scheduled "$scheduled_json" \
   --argjson hygiene "$hygiene_json" \
+  --argjson audit "$audit_json" \
   '{
     needs_rescue:        ($rescue | map(select(.action == "needs-rescue")) | length),
     live_wait:           ($rescue | map(select(.action == "live-wait")) | length),
@@ -703,7 +754,8 @@ actions_json="$(jq -nc \
     orphaned:            (($shepherd.summary.orphaned) // 0),
     retro_due:           ($scheduled.retro_due),
     promotion_due:       ($scheduled.promotion_due),
-    hygiene_due:         ($hygiene.hygiene_due)
+    hygiene_due:         ($hygiene.hygiene_due),
+    audit_due:           ($audit.audit_due)
   }')"
 
 # =============================================================================
@@ -719,10 +771,11 @@ if [[ "$json_mode" -eq 1 ]]; then
     --argjson merge_surface "$merge_array" \
     --argjson scheduled "$scheduled_json" \
     --argjson hygiene "$hygiene_json" \
+    --argjson audit "$audit_json" \
     --argjson actions "$actions_json" \
     '{generated_at:$generated_at, repo:$repo, preflight:$preflight,
       shepherd:$shepherd, rescue:$rescue, merge_surface:$merge_surface,
-      scheduled:$scheduled, hygiene:$hygiene, actions:$actions}'
+      scheduled:$scheduled, hygiene:$hygiene, audit:$audit, actions:$actions}'
   exit 0
 fi
 
@@ -790,6 +843,15 @@ printf '%s' "$hygiene_json" | jq -r '
 '
 echo
 
+# Daily self-audit
+echo "Audit (daily self-audit):"
+printf '%s' "$audit_json" | jq -r '
+  "  today \(.today) · last audit run \(.last_audit_run // "never")" ,
+  "  audit: \(if .audit_due then "DUE — spawn worker-auditor on the hydra repo" else "not due" end)\(if (.audit_reason // "") != "" then " (" + .audit_reason + ")" else "" end)" ,
+  (if .audit_due then "         dedupe: \(.dedupe_hint)" else empty end)
+'
+echo
+
 # Actions roll-up
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 printf '%s' "$actions_json" | jq -r '
@@ -805,4 +867,6 @@ printf '%s' "$actions_json" | jq -r '
   && echo "  ↳ Retro DUE but unwritten — Commander: run the retro procedure, then it auto-files proposed edits."
 [[ "$(printf '%s' "$hygiene_json" | jq -r '.hygiene_due')" == "true" ]] \
   && echo "  ↳ Memory hygiene DUE — Commander: compact memory + reset tickets_at_last_hygiene to the current total."
+[[ "$(printf '%s' "$audit_json" | jq -r '.audit_due')" == "true" ]] \
+  && echo "  ↳ Audit DUE — Commander: spawn worker-auditor on the hydra repo (<=3 issues, dedupe vs open commander-auto-filed), then stamp last_audit_run."
 exit 0

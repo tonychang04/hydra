@@ -1,0 +1,15 @@
+{
+  "_description": "Fixture repos.json for the scheduled-daily-self-audit self-test (#240). Single hydra repo (T2=human) is enough — the audit step only reads state/autopickup.json:last_audit_run; the merge-surface block is exercised by the other tick fixtures. See docs/specs/2026-06-07-scheduled-self-audit.md.",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "tonychang04",
+      "name": "hydra",
+      "local_path": "/fixture/hydra",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "tier_default": "T2",
+      "merge_policy": { "T1": "human", "T2": "human", "T3": "never" }
+    }
+  ]
+}
