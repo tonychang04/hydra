@@ -3206,6 +3206,18 @@
           "cmd": "self-test/fixtures/autopickup-tick-audit/run-smoke.sh",
           "expected_exit": 0,
           "expected_stdout_contains": "SMOKE_OK"
+        },
+        {
+          "name": "gc-stale-worktrees.sh bash -n clean",
+          "cmd": "bash -n scripts/gc-stale-worktrees.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "gc-stale-worktrees + tick stall-robustness smoke (#242: gc dry-run lists only stale non-active dirs, --apply removes only those, fail-closed on missing active.json, interval-guard WARN at interval_min=30 not at 10, tick gc section + human stanza render)",
+          "cmd": "self-test/fixtures/gc-stale-worktrees/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
         }
       ],
       "last_run": null,
