@@ -55,7 +55,7 @@
             "description": "Optional. GitHub username (or `foo[bot]` app handle) to use with `gh issue list --assignee` instead of `@me`. Bot-account mode — lets the operator route tickets Hydra should take to a dedicated service account so they're unambiguous vs. tickets the operator is actively working on themselves. Only honored when ticket_trigger is 'assignee'. Additive: absent means fall back to @me (today's behavior). See docs/specs/2026-04-17-assignee-override.md (ticket #26)."
           },
           "merge_policy": {
-            "description": "Optional per-repo override. Absent = defer to global policy.md defaults (T1 auto, T2 human, T3 refused). Two accepted shapes:\n\n1. Object form (preferred, per ticket #20): `{\"T1\": \"auto|auto_if_review_clean|human\", \"T2\": \"auto|auto_if_review_clean|human\"}`. A `T3` key is tolerated for documentation but ignored — T3 is hardcoded `never` regardless.\n2. Legacy string form (still accepted for back-compat): `\"auto-t1\" | \"human-all\" | \"refuse-all\"` — pre-#20 shape, maps to the object form at lookup time.\n\nAuthoritative lookup lives in `scripts/merge-policy-lookup.sh`. See `docs/specs/2026-04-17-per-repo-merge-policy.md`.",
+            "description": "Optional per-repo override. Absent = defer to global policy.md defaults (T1 auto, T2 human, T3 refused). Three accepted shapes:\n\n1. Object form (preferred, per ticket #20): `{\"T1\": \"auto|auto_if_review_clean|human\", \"T2\": \"auto|auto_if_review_clean|human\"}`. A `T3` key is tolerated for documentation but ignored — T3 is hardcoded `never` regardless.\n2. Bare directive string (ticket #245): `\"auto\" | \"auto_if_review_clean\" | \"human\"` — applies the directive uniformly to T1 and T2 (T3 still `never`). Operator shorthand for \"this whole repo merges this way\".\n3. Legacy tier-conflating string (still accepted for back-compat): `\"auto-t1\" | \"human-all\" | \"refuse-all\"` — pre-#20 shape, maps to per-tier values at lookup time.\n\nAuthoritative lookup lives in `scripts/merge-policy-lookup.sh`. See `docs/specs/2026-04-17-per-repo-merge-policy.md` and `docs/specs/2026-06-07-merge-policy-auto-if-review-clean.md`.",
             "oneOf": [
               {
                 "type": "object",
@@ -78,7 +78,7 @@
               },
               {
                 "type": "string",
-                "enum": ["auto-t1", "human-all", "refuse-all"]
+                "enum": ["auto", "auto_if_review_clean", "human", "auto-t1", "human-all", "refuse-all"]
               }
             ]
           },

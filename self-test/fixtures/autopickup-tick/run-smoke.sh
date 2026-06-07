@@ -23,6 +23,10 @@
 #   #304  human-repo T2 policy=human                 → surface-for-human (policy-human)
 #   #307  team-repo  T2 policy=auto* (orphaned)      → auto-merge-eligible (orphan flagged)
 #   #308  team-repo  T2 policy=auto* but NO file data → surface-for-human (safety-rail, fail-closed)
+#   #309  team-repo  T2 policy=auto* touches state/repos.json (merge authority)
+#                                                     → surface-for-human (safety-rail)  [ticket #245 review]
+#   #310  team-repo  T2 policy=auto* touches state/schemas/repos.schema.json
+#                                                     → surface-for-human (safety-rail)  [ticket #245 review]
 #   (#305 ci-red, #306 needs-review-gate — not merge-ready, excluded from merge surfacing)
 #
 # Exits 0 on PASS (prints SMOKE_OK), non-zero on the first failed assertion.
@@ -76,11 +80,11 @@ echo "$json_out" | jq -e '
   (.preflight.concurrency_headroom <= 0) == .preflight.spawn_blocked
 ' >/dev/null || fail "preflight.spawn_blocked must track headroom honestly" "$json_out"
 
-# --- Shepherd summary carried through (8 PRs total from the mock).
-echo "$json_out" | jq -e '.shepherd.summary.total == 8' >/dev/null \
-  || fail "shepherd.summary.total != 8" "$json_out"
-echo "$json_out" | jq -e '.shepherd.summary.merge_ready == 6' >/dev/null \
-  || fail "shepherd.summary.merge_ready != 6 (#301-304,307,308)" "$json_out"
+# --- Shepherd summary carried through (10 PRs total from the mock).
+echo "$json_out" | jq -e '.shepherd.summary.total == 10' >/dev/null \
+  || fail "shepherd.summary.total != 10" "$json_out"
+echo "$json_out" | jq -e '.shepherd.summary.merge_ready == 8' >/dev/null \
+  || fail "shepherd.summary.merge_ready != 8 (#301-304,307,308,309,310)" "$json_out"
 
 # --- Rescue scan: rescuable verdicts → needs-rescue; healthy → ok; live → surfaced.
 rescue_for() { echo "$json_out" | jq -r --arg b "$1" '.rescue[] | select(.branch == $b)'; }
@@ -126,10 +130,17 @@ assert_ms 303 surface-for-human   safety-rail
 assert_ms 304 surface-for-human   policy-human
 assert_ms 307 auto-merge-eligible
 assert_ms 308 surface-for-human   safety-rail
+# --- Ticket #245 review blocker: a config-only diff that edits a repo's OWN
+#     merge authority must NEVER auto-merge. Even on an auto* policy + clean
+#     review, a PR touching only state/repos.json (or the schema that governs
+#     it) is a safety-rail path → surface-for-human. Without the rail fix these
+#     classify as auto-merge-eligible (the vulnerability).
+assert_ms 309 surface-for-human   safety-rail
+assert_ms 310 surface-for-human   safety-rail
 
-# Only the merge-ready PRs are surfaced (6 rows).
-echo "$json_out" | jq -e '.merge_surface | length == 6' >/dev/null \
-  || fail "merge_surface should have exactly 6 rows (the merge-ready PRs)" "$json_out"
+# Only the merge-ready PRs are surfaced (8 rows).
+echo "$json_out" | jq -e '.merge_surface | length == 8' >/dev/null \
+  || fail "merge_surface should have exactly 8 rows (the merge-ready PRs)" "$json_out"
 # Exactly 2 auto-merge-eligible (#302, #307); the rest surface.
 echo "$json_out" | jq -e '[.merge_surface[] | select(.classification == "auto-merge-eligible")] | length == 2' >/dev/null \
   || fail "expected exactly 2 auto-merge-eligible PRs" "$json_out"
@@ -141,7 +152,7 @@ echo "$json_out" | jq -e '
 # actions roll-up present.
 echo "$json_out" | jq -e '.actions | has("needs_rescue") and has("auto_merge_eligible") and has("surface_for_human")' >/dev/null \
   || fail "actions roll-up missing keys" "$json_out"
-echo "$json_out" | jq -e '.actions.auto_merge_eligible == 2 and .actions.surface_for_human == 4 and .actions.needs_rescue == 2' >/dev/null \
+echo "$json_out" | jq -e '.actions.auto_merge_eligible == 2 and .actions.surface_for_human == 6 and .actions.needs_rescue == 2' >/dev/null \
   || fail "actions roll-up counts wrong" "$json_out"
 
 # -----------------------------------------------------------------------------
@@ -166,7 +177,7 @@ pause_out="$(NO_COLOR=1 "$SCRIPT" --repo tonychang04/hydra --gh-mock "$GH_MOCK" 
 echo "$pause_out" | jq -e '.preflight.pause_present == true and .preflight.spawn_blocked == true' >/dev/null \
   || fail "PAUSE marker should set pause_present + spawn_blocked true" "$pause_out"
 # Read-only scans still ran.
-echo "$pause_out" | jq -e '.shepherd.summary.total == 8' >/dev/null \
+echo "$pause_out" | jq -e '.shepherd.summary.total == 10' >/dev/null \
   || fail "shepherd scan must still run under PAUSE" "$pause_out"
 echo "$pause_out" | jq -e '.rescue | length >= 1' >/dev/null \
   || fail "rescue scan must still run under PAUSE" "$pause_out"
