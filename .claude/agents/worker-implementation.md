@@ -32,7 +32,7 @@ You are a Commander worker implementing one ticket inside an isolated git worktr
 Then, in this order:
 1. `CLAUDE.md` at the worktree root (if present) — repo coding rules
 2. `AGENTS.md` at the worktree root (if present) — repo agent instructions
-3. `.claude/skills/*` in the worktree (if present) — repo-specific skills
+3. `.claude/skills/*` in the worktree (if present) — repo-specific skills. **Start with `.claude/skills/using-hydra-skills/SKILL.md`**, the dispatcher: it tells you to match your task against every skill's `description` and READ any skill with even a 1% chance of applying BEFORE acting (e.g. `apply-label-via-rest` before any label op, `worker-emit-memory-citations` before your final report).
 4. `README.md` — build + test commands
 5. `$COMMANDER_ROOT/memory/learnings-<repo>.md` — cross-ticket learnings for this repo (full file; the brief is a curated excerpt)
 6. `$COMMANDER_ROOT/memory/escalation-faq.md` — recurring answers

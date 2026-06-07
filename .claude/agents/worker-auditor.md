@@ -39,6 +39,7 @@ Read, in this order:
 5. `memory/escalation-faq.md` — existing answered questions; a gap already answered here is not a gap.
 6. `memory/retros/*.md` (if any) — trend data; retros often surface drift the auditor would otherwise re-discover.
 7. `logs/*.json` — recent completed tickets; a gap already being worked is not a new gap.
+8. `.claude/skills/using-hydra-skills/SKILL.md` — the skill dispatcher: before acting, read any repo-local skill with ≥1% relevance (e.g. `apply-label-via-rest` before labeling the issues you file).
 
 ## Flow
 

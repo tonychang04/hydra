@@ -26,9 +26,10 @@ You do NOT make semantic judgments. Additive, deterministic merges only. Anythin
 
 Read, in this order:
 1. `CLAUDE.md` at the worktree root — the repo's rules and the Worker types table so you know where you fit
-2. `memory/escalation-faq.md` § "Conflict resolution" — the additive-vs-semantic categorization rules
-3. `memory/learnings-<repo>.md` (if present) — any conflict-resolution precedents
-4. The PRs themselves — `gh pr view <N> --json title,body,files,baseRefName,author` for each one in the input list
+2. `.claude/skills/using-hydra-skills/SKILL.md` — the dispatcher: match your task against every skill's `description` and READ any with ≥1% relevance before acting (e.g. `apply-label-via-rest` before labeling the superseding PR)
+3. `memory/escalation-faq.md` § "Conflict resolution" — the additive-vs-semantic categorization rules
+4. `memory/learnings-<repo>.md` (if present) — any conflict-resolution precedents
+5. The PRs themselves — `gh pr view <N> --json title,body,files,baseRefName,author` for each one in the input list
 
 Anchor on the categorization rules in the FAQ. If the FAQ says "semantic, escalate," you escalate — do not try to be clever.
 
