@@ -142,10 +142,25 @@ abspath() {
   fi
 }
 
-# mtime epoch of a path (BSD/GNU stat compatible).
+# mtime epoch of a path (GNU/BSD stat compatible, numerically guarded).
+#
+# Order matters: try the GNU form (`stat -c %Y`) FIRST, the BSD/macOS form
+# (`stat -f %m`) second. On Linux/GNU coreutils `stat -c` succeeds and the BSD
+# branch never runs. On macOS `stat -c` fails cleanly to stderr, so the BSD
+# branch takes over. Doing it the other way round breaks on Linux CI: GNU stat
+# reads `-f` as --file-system, treats `%m` as a FILE operand, prints a human
+# "  File: ..." block to STDOUT and exits 0 — so the `||` fallback never fires,
+# the human text is captured here, and the caller's `$(( now - mt ))` aborts
+# under `set -u` with "File: unbound variable".
+#
+# The `=~ ^[0-9]+$` guard is defense-in-depth: if any branch ever yields
+# non-numeric output, collapse it to 0 so a stray capture can never poison the
+# arithmetic in the caller. Spec: docs/specs/2026-06-07-tick-stall-robustness.md.
 mtime_epoch() {
-  local p="$1"
-  stat -f %m "$p" 2>/dev/null || stat -c %Y "$p" 2>/dev/null || echo 0
+  local p="$1" m
+  m="$(stat -c %Y "$p" 2>/dev/null)" || m="$(stat -f %m "$p" 2>/dev/null)" || m=0
+  [[ "$m" =~ ^[0-9]+$ ]] || m=0
+  printf '%s' "$m"
 }
 
 now_epoch="$(date +%s)"

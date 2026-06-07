@@ -261,4 +261,84 @@ unrun_tick="$(NO_COLOR=1 "$TICK" "${tick_common[@]}" --state-dir "$UNRUN_TICK_ST
 echo "$unrun_tick" | jq -e '.gc.scan_ok == false' >/dev/null \
   || fail "tick gc.scan_ok must be false when the gc script could not run" "$unrun_tick"
 
+# =============================================================================
+# 8. LINUX-CI REGRESSION: mtime_epoch must survive GNU-coreutils stat (#254)
+# =============================================================================
+# CI-only crash root cause: mtime_epoch() tried `stat -f %m` (BSD/macOS) FIRST.
+# On the Linux GNU-coreutils runner, `stat -f` means --file-system and the `%m`
+# is taken as a FILE OPERAND, so GNU stat prints a human "  File: ..." block to
+# STDOUT and exits 0 — the `||` fallback never fired. That human text was
+# captured into `mt`, then the caller's `age=$(( now_epoch - mt ))` evaluated
+# the bareword `File` and, under `set -u`, aborted with "File: unbound
+# variable" (exit 1). Invisible on macOS because BSD `stat -f %m` works there.
+#
+# This case reproduces the Linux path on ANY dev machine by putting a GNU-style
+# `stat` shim FIRST on PATH: it rejects `-f %m` with a human block + exit 0 and
+# serves `-c %Y`. It then runs the gc script under `bash -u` and asserts it
+# exits 0, never prints "unbound variable", and STILL lists the stale dir — i.e.
+# the arithmetic never sees non-numeric input. Guards against re-ordering the
+# stat fallbacks or dropping the numeric guard in mtime_epoch.
+LINUX_SHIM_DIR="$TMP/gnu-stat-shim"
+mkdir -p "$LINUX_SHIM_DIR"
+REAL_STAT="$(command -v stat)"
+cat > "$LINUX_SHIM_DIR/stat" <<SHIM
+#!/usr/bin/env bash
+# GNU-coreutils-style \`stat\` shim mimicking a Linux CI runner.
+#   -c FORMAT FILE...  : GNU format mode. For %Y, emit the file's mtime epoch
+#                        (delegating to the REAL stat captured at fixture-build
+#                        time, so ages stay correct on a BSD or GNU host).
+#   -f FORMAT FILE...  : GNU treats -f as --file-system; the FORMAT (e.g. %m)
+#                        becomes a FILE operand, so GNU prints a human
+#                        "  File: ..." block to STDOUT and exits 0 — exactly the
+#                        behavior that poisoned \$mt before the fix.
+if [[ "\$1" == "-c" ]]; then
+  fmt="\$2"; shift 2
+  for f in "\$@"; do
+    if [[ "\$fmt" == "%Y" ]]; then
+      "$REAL_STAT" -f %m "\$f" 2>/dev/null || "$REAL_STAT" -c %Y "\$f" 2>/dev/null || echo 0
+    fi
+  done
+  exit 0
+elif [[ "\$1" == "-f" ]]; then
+  shift; fmt="\$1"; shift
+  for f in "\$fmt" "\$@"; do
+    [[ "\$f" == %* ]] && continue
+    printf '%s\n' "  File: \"\$f\"" "    Type: ext2/ext3" "Block size: 4096"
+  done
+  exit 0
+fi
+exit 1
+SHIM
+chmod +x "$LINUX_SHIM_DIR/stat"
+
+# Confirm the shim actually mimics Linux: `-f %m` must print a human File: block
+# and exit 0 (otherwise the regression would silently pass without exercising
+# the bug path).
+shim_probe="$(PATH="$LINUX_SHIM_DIR:$PATH" stat -f %m "$WT_DIR" 2>&1)"; shim_rc=$?
+[[ "$shim_rc" -eq 0 ]] || fail "GNU-stat shim sanity: -f %m should exit 0 (got $shim_rc)" "$shim_probe"
+grep -qi "File:" <<<"$shim_probe" \
+  || fail "GNU-stat shim sanity: -f %m should emit a human File: block" "$shim_probe"
+
+# Fresh state + a stale, non-active agent dir for this isolated run.
+LINUX_STATE="$TMP/linux-state"; mkdir -p "$LINUX_STATE"
+cat > "$LINUX_STATE/active.json" <<'JSON'
+{ "workers": [], "last_updated": "2026-06-06T00:00:00Z" }
+JSON
+mk_dir agent-LINUXSTALE
+touch -t "$old_ts" "$WT_DIR/agent-LINUXSTALE"
+
+set +e
+linux_out="$(PATH="$LINUX_SHIM_DIR:$PATH" bash -u "$GC" \
+  --root "$TMP" --state-dir "$LINUX_STATE" --worktrees-dir "$WT_DIR" --json --dry-run 2>&1)"
+linux_rc=$?
+set -e
+[[ "$linux_rc" -eq 0 ]] \
+  || fail "gc under GNU-style stat shim must exit 0 (no set -u crash); got $linux_rc" "$linux_out"
+grep -qi "unbound variable" <<<"$linux_out" \
+  && fail "gc under GNU-style stat shim hit the set -u unbound-variable crash" "$linux_out"
+echo "$linux_out" | jq -e '.fail_closed == false' >/dev/null \
+  || fail "GNU-shim run should not be fail-closed (active.json valid)" "$linux_out"
+echo "$linux_out" | jq -e '[.candidates[].path | endswith("/agent-LINUXSTALE")] | any' >/dev/null \
+  || fail "GNU-shim run must still list the stale dir as a candidate" "$linux_out"
+
 echo "SMOKE_OK"
