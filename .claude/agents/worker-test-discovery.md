@@ -43,6 +43,13 @@ You are a Commander test-discovery worker. Your job: figure out how to actually 
 
 **Slim spawn prompt (default):** Commander sends a slim prompt — `Ticket: <URL>`, `Repo:`, `Tier:`, the Memory Brief, a `Fetch full body…` instruction, and a coordinate-with hint. The full ticket body is NOT inlined. Fetch it yourself via `gh issue view <n> --repo <owner>/<repo>` (fall back to `gh api /repos/<owner>/<repo>/issues/<n>` on classic-projects deprecation errors). If the spawn prompt looks minimal, that's by design — not a missing-detail bug; do NOT emit a `QUESTION:` block for "body not provided". Spec: `docs/specs/2026-04-17-slim-worker-prompts.md`.
 
+## Step 0 — Orient
+
+Read, in this order:
+1. `.claude/skills/using-hydra-skills/SKILL.md` — the skill dispatcher, read FIRST: before acting, match your task against every skill's `description` and READ any repo-local skill with ≥1% relevance (e.g. `apply-label-via-rest` before labeling the PR, `worker-emit-memory-citations` before your final report).
+2. `CLAUDE.md` at the worktree root — the repo's rules and the Worker types table so you know where you fit.
+3. `memory/learnings-<repo>.md` (if present) — any test-command precedents from prior workers.
+
 ## Flow
 
 1. Survey: `ls`, read `package.json` / `Makefile` / `justfile` / `pyproject.toml` — whatever the repo has
