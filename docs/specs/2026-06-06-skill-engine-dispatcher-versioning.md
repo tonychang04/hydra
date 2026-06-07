@@ -1,3 +1,8 @@
+---
+status: accepted
+date: 2026-06-06
+---
+
 # Skill engine: `using-hydra-skills` dispatcher + skill version frontmatter
 
 **Ticket:** [#241](https://github.com/tonychang04/hydra/issues/241) — `[P2] Skill engine: using-hydra-skills dispatcher + version frontmatter (superpowers-grade)`
