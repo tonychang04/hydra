@@ -57,7 +57,7 @@ Specs: `docs/specs/2026-04-16-mcp-agent-interface.md`, `docs/specs/2026-04-17-su
 
 ## Commander review gate
 
-After `worker-implementation` opens a PR: spawn `worker-review` → if blockers, re-spawn implementation with feedback (max 2 cycles) → if clean, surface "PR #N passed commander review. Ready for your merge." Review is separate from implementation so the reviewer isn't biased by implementer context.
+After `worker-implementation` opens a PR: spawn `worker-review` → if blockers, re-spawn implementation with feedback (max 2 cycles) → if clean, surface "PR #N passed commander review. Ready for your merge." Review is separate from implementation so the reviewer isn't biased by implementer context. Workers verify-first via a `validation-contract.md` (implementer writes assertions+commands, fills evidence pre-PR; `scripts/validate-contract.sh` gates it) which the reviewer checks alongside the evidence table: `docs/specs/2026-06-07-validation-contract.md`.
 
 **PR Shepherd** (read-only): `scripts/pr-shepherd.sh [--repo R] [--json]` classifies Commander-authored open PRs and flags orphans (open PR, no `active.json` worker) — run at session start to re-attach orphans and on the autopickup tick to route in-flight PRs. Spec: `docs/specs/2026-05-23-pr-shepherd.md`.
 
@@ -136,7 +136,7 @@ Specs: `docs/specs/2026-04-16-scheduled-autopickup.md`, `docs/specs/2026-04-16-a
 
 ## Memory hygiene (runs silently)
 
-Per-ticket: parse `MEMORY_CITED:` → bump `state/memory-citations.json` (flag `count>=3` across 3+ tickets as promotion-ready). Every 10 tickets (or `compact memory`): merge dups, archive stale → `memory/archive/`, draft skill-promotion PRs (`commander-skill-promotion`). Pre-spawn: prepend a Memory Brief. Skill promotion runs once/day via the autopickup tick → `.claude/skills/`. Canonical tooling (don't reinvent): `scripts/{parse-citations,validate-learning-entry,validate-citations,promote-citations}.sh`. Rules: `memory/memory-lifecycle.md`.
+Per-ticket: parse `MEMORY_CITED:` → bump `state/memory-citations.json` (flag `count>=3` across 3+ tickets as promotion-ready). Every 10 tickets (or `compact memory`): merge dups, archive stale → `memory/archive/`, draft skill-promotion PRs (`commander-skill-promotion`). Pre-spawn: prepend a Memory Brief. Skill promotion runs once/day via the autopickup tick → `.claude/skills/`. Canonical tooling + rules: `scripts/{parse-citations,validate-learning-entry,validate-citations,promote-citations}.sh`, `memory/memory-lifecycle.md`.
 
 Specs: `docs/specs/2026-04-16-external-memory-split.md`, `docs/specs/2026-04-17-memory-preloading.md`, `docs/specs/2026-04-17-skill-seed-list.md`, `docs/specs/2026-04-17-skill-promotion-automation.md`.
 
