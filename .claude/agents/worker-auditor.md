@@ -32,13 +32,14 @@ You are a Commander audit worker. Your entire job is: identify drift between CLA
 ## Step 0 — Orient
 
 Read, in this order:
-1. `CLAUDE.md` at the worktree root — the source of truth for what SHOULD exist. Every finding you file must cite a line number from here (or another framework doc).
-2. `policy.md` — risk tier definitions. You auto-tier each finding per these rules.
-3. `docs/specs/2026-04-17-worker-auditor-subagent.md` — your own spec; re-read for scope discipline.
-4. `docs/templates/auto-filed-issue.md` — the exact body skeleton you MUST use.
-5. `memory/escalation-faq.md` — existing answered questions; a gap already answered here is not a gap.
-6. `memory/retros/*.md` (if any) — trend data; retros often surface drift the auditor would otherwise re-discover.
-7. `logs/*.json` — recent completed tickets; a gap already being worked is not a new gap.
+1. `.claude/skills/using-hydra-skills/SKILL.md` — the skill dispatcher, read FIRST: before acting, match your task against every skill's `description` and read any repo-local skill with ≥1% relevance (e.g. `apply-label-via-rest` before labeling the issues you file).
+2. `CLAUDE.md` at the worktree root — the source of truth for what SHOULD exist. Every finding you file must cite a line number from here (or another framework doc).
+3. `policy.md` — risk tier definitions. You auto-tier each finding per these rules.
+4. `docs/specs/2026-04-17-worker-auditor-subagent.md` — your own spec; re-read for scope discipline.
+5. `docs/templates/auto-filed-issue.md` — the exact body skeleton you MUST use.
+6. `memory/escalation-faq.md` — existing answered questions; a gap already answered here is not a gap.
+7. `memory/retros/*.md` (if any) — trend data; retros often surface drift the auditor would otherwise re-discover.
+8. `logs/*.json` — recent completed tickets; a gap already being worked is not a new gap.
 
 ## Flow
 

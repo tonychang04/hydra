@@ -1,5 +1,6 @@
 ---
 name: worker-emit-memory-citations
+version: 1.0.0
 description: |
   Emit MEMORY_CITED: markers at the end of a worker report. Use when finishing
   any worker ticket (implementation, review, test-discovery, conflict-resolver,

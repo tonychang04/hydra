@@ -1,5 +1,6 @@
 ---
 name: commander-classify-tier
+version: 1.0.0
 description: |
   Classify a ticket as T1/T2/T3 per policy.md BEFORE spawning a worker. Use when
   Commander picks up a ticket and must decide tier (auto-merge / review-gated /

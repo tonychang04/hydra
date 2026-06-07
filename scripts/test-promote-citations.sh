@@ -583,6 +583,90 @@ else
   bad "backticks not rendered literally"
 fi
 
+# --- Test 19: version frontmatter + provenance section (#241) -------------
+# Invariant under test: a freshly-promoted skill carries `version: 1.0.0` in
+# its frontmatter and a `## Promoted from memory` provenance section naming the
+# source file, quote, citation count, and promotion date. We extract
+# build_skill_body and call it directly (same pattern as Test 18) so we don't
+# need a full git/gh non-dry-run path.
+say "Test 19: build_skill_body emits version: 1.0.0 + '## Promoted from memory'"
+emit_out="$tmpdir/emit.out"
+emit_harness="$tmpdir/emit-harness.sh"
+cat > "$emit_harness" <<'HARNESS'
+set -euo pipefail
+PROMOTE="$1"
+CITATIONS_START="<!-- hydra:citations-start -->"
+CITATIONS_END="<!-- hydra:citations-end -->"
+today="2026-06-06"
+eval "$(awk '/^build_skill_body\(\) \{/{p=1} p{print} p&&/^\}$/{exit}' "$PROMOTE")"
+build_skill_body "my-skill" "a description" "the load-bearing quote" \
+  "learnings-hydra.md" "some context" "cite block" 7
+HARNESS
+set +e
+bash "$emit_harness" "$PROMOTE" > "$emit_out" 2>/dev/null
+ec=$?
+set -e
+if [[ "$ec" -eq 0 ]]; then
+  ok "build_skill_body ran cleanly"
+else
+  bad "build_skill_body exited $ec"
+fi
+if grep -qE '^version: 1\.0\.0$' "$emit_out"; then
+  ok "frontmatter carries version: 1.0.0"
+else
+  bad "expected 'version: 1.0.0' in frontmatter; output:"
+  sed 's/^/    /' "$emit_out"
+fi
+if grep -qF '## Promoted from memory' "$emit_out"; then
+  ok "'## Promoted from memory' provenance section present"
+else
+  bad "expected '## Promoted from memory' section; output:"
+  sed 's/^/    /' "$emit_out"
+fi
+if grep -qF 'Citations at promotion:** 7' "$emit_out"; then
+  ok "provenance records the citation count (7)"
+else
+  bad "expected 'Citations at promotion:** 7' in provenance"
+fi
+if grep -qF 'Promoted:** 2026-06-06' "$emit_out"; then
+  ok "provenance records the promotion date"
+else
+  bad "expected 'Promoted:** 2026-06-06' in provenance"
+fi
+# The version: line must come BEFORE the description: block (valid frontmatter
+# ordering: name → version → description).
+if awk '/^version: 1\.0\.0$/{v=NR} /^description:/{d=NR} END{exit !(v>0 && d>0 && v<d)}' "$emit_out"; then
+  ok "version: precedes description: in frontmatter"
+else
+  bad "version: must come before description: in frontmatter"
+fi
+
+# --- Test 20: every existing skill carries version: frontmatter (#241) ----
+# The skill-shape contract requires version: on every .claude/skills/*/SKILL.md.
+# This test runs against the real repo tree (one dir up from scripts/).
+say "Test 20: all .claude/skills/*/SKILL.md carry a version: field"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+skills_dir="$REPO_ROOT/.claude/skills"
+if [[ -d "$skills_dir" ]]; then
+  missing=0
+  total=0
+  while IFS= read -r skill_md; do
+    total=$((total + 1))
+    # version: must appear inside the leading frontmatter block (first ~15 lines).
+    if ! head -n 15 "$skill_md" | grep -qE '^version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+'; then
+      bad "missing version: in $skill_md"
+      missing=$((missing + 1))
+    fi
+  done < <(find "$skills_dir" -name SKILL.md | sort)
+  if [[ "$missing" -eq 0 && "$total" -gt 0 ]]; then
+    ok "all $total skill(s) carry a semver version: field"
+  elif [[ "$total" -eq 0 ]]; then
+    bad "found no SKILL.md files under $skills_dir"
+  fi
+else
+  ok "no .claude/skills dir at $skills_dir (skipping — not a Hydra checkout)"
+fi
+
 # --- Summary -------------------------------------------------------------
 
 echo ""
