@@ -3142,6 +3142,35 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "local-syntax-check-parity",
+      "_description": "Script-only self-test for local parity with the CI Syntax (bash -n + jq + frontmatter) job (spec: docs/specs/2026-06-07-local-syntax-check-in-self-test.md, ticket #246). Closes the gap that let PRs #243/#244 pass local self-test yet fail CI on missing docs/specs frontmatter. Asserts scripts/preflight-syntax.sh is bash -n clean and execs the CI script verbatim (single source of truth), runs the local-syntax-check fixture (which proves RED: a frontmatter-less spec and a status-less spec each fail with exit 1 + the canonical CI message; GREEN: a well-formed spec passes), and confirms the wrapper passes on the current branch. No network, no docker, no Claude auth.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "preflight-syntax.sh bash -n clean",
+          "cmd": "bash -n scripts/preflight-syntax.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "local-syntax-check fixture red->green roundtrip",
+          "cmd": "self-test/fixtures/local-syntax-check/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ALL TESTS PASS"
+        },
+        {
+          "name": "preflight-syntax.sh passes on the current branch",
+          "cmd": "scripts/preflight-syntax.sh >/dev/null && echo PARITY_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "PARITY_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
