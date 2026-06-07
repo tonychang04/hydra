@@ -1,0 +1,33 @@
+{
+  "_description": "Fixture repos.json for the autopickup-tick self-test. Mixed merge policies so the merge-surface block exercises auto-merge-eligible vs surface-for-human. team-repo T2=auto_if_review_clean (auto-eligible path), hydra + human-repo T2=human (surface). See docs/specs/2026-05-24-self-driving-autopickup-tick.md.",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "tonychang04",
+      "name": "hydra",
+      "local_path": "/fixture/hydra",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "tier_default": "T2",
+      "merge_policy": { "T1": "human", "T2": "human", "T3": "never" }
+    },
+    {
+      "owner": "fixture-org",
+      "name": "team-repo",
+      "local_path": "/fixture/team-repo",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "tier_default": "T2",
+      "merge_policy": { "T1": "auto", "T2": "auto_if_review_clean" }
+    },
+    {
+      "owner": "fixture-org",
+      "name": "human-repo",
+      "local_path": "/fixture/human-repo",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "tier_default": "T2",
+      "merge_policy": { "T1": "human", "T2": "human" }
+    }
+  ]
+}

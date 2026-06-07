@@ -8,5 +8,6 @@
   "consecutive_rate_limit_hits": 0,
   "last_retro_run": null,
   "last_promotion_run": null,
-  "last_audit_run": null
+  "last_audit_run": null,
+  "tickets_at_last_hygiene": 0
 }

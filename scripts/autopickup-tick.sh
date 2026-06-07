@@ -85,6 +85,17 @@ Options:
                          rescue-worker.sh --probe verdicts.
   --no-rescue            Skip the rescue scan (report an empty rescue list).
   --no-merge-surface     Skip the merge-surface block (report an empty list).
+  --weekday <1-7>        Test-only: override local ISO weekday (1=Mon..7=Sun)
+                         for Monday-retro detection. Default: live clock.
+  --hour <0-23>          Test-only: override local hour for the >=09:00 retro gate.
+  --week <YYYY-WW>       Test-only: override the current ISO week tag (date +%G-%V).
+  --today <YYYY-MM-DD>   Test-only: passed to promote-citations.sh --check-due.
+  --retros-dir <path>    Override memory/retros (retro file lookup + filer).
+  --retro-file-cmd <cmd> Test-only: stub for retro-file-proposed-edits.sh; run
+                         with the ISO week as $1.
+  --tickets-total <n>    Cumulative ticket count for the memory-hygiene counter.
+                         Default: budget-used.json:tickets_completed_today.
+  --hygiene-threshold <n> Compact-memory threshold (default 10).
   -h, --help             Show this help.
 
 AUTO-MERGE SAFETY RAILS:
@@ -111,6 +122,17 @@ gh_mock="${HYDRA_PR_SHEPHERD_GH_MOCK:-}"
 rescue_mock=""
 do_rescue=1
 do_merge_surface=1
+# scheduled-checks + memory-hygiene seams (ticket #239). All optional; defaults
+# read the live clock / state so a bare invocation Just Works, while the flags
+# make the smoke test deterministic and offline.
+weekday_override=""        # --weekday <1-7> (ISO; 1=Mon..7=Sun)
+hour_override=""           # --hour <0-23>
+week_override=""           # --week <YYYY-WW> (ISO week tag, date +%G-%V)
+today_override=""          # --today <YYYY-MM-DD> (passed to promote-citations --check-due)
+retros_dir_override=""     # --retros-dir <path> (default memory/retros)
+retro_file_cmd=""          # --retro-file-cmd <cmd> (test stub for the filer)
+tickets_total_override=""  # --tickets-total <n> (cumulative ticket count)
+hygiene_threshold=10       # --hygiene-threshold <n>
 
 need_val() {
   if [[ $# -lt 2 ]]; then
@@ -138,6 +160,22 @@ while [[ $# -gt 0 ]]; do
     --json)               json_mode=1; shift ;;
     --no-rescue)          do_rescue=0; shift ;;
     --no-merge-surface)   do_merge_surface=0; shift ;;
+    --weekday)            need_val "$@"; weekday_override="$2"; shift 2 ;;
+    --weekday=*)          weekday_override="${1#--weekday=}"; shift ;;
+    --hour)               need_val "$@"; hour_override="$2"; shift 2 ;;
+    --hour=*)             hour_override="${1#--hour=}"; shift ;;
+    --week)               need_val "$@"; week_override="$2"; shift 2 ;;
+    --week=*)             week_override="${1#--week=}"; shift ;;
+    --today)              need_val "$@"; today_override="$2"; shift 2 ;;
+    --today=*)            today_override="${1#--today=}"; shift ;;
+    --retros-dir)         need_val "$@"; retros_dir_override="$2"; shift 2 ;;
+    --retros-dir=*)       retros_dir_override="${1#--retros-dir=}"; shift ;;
+    --retro-file-cmd)     need_val "$@"; retro_file_cmd="$2"; shift 2 ;;
+    --retro-file-cmd=*)   retro_file_cmd="${1#--retro-file-cmd=}"; shift ;;
+    --tickets-total)      need_val "$@"; tickets_total_override="$2"; shift 2 ;;
+    --tickets-total=*)    tickets_total_override="${1#--tickets-total=}"; shift ;;
+    --hygiene-threshold)  need_val "$@"; hygiene_threshold="$2"; shift 2 ;;
+    --hygiene-threshold=*) hygiene_threshold="${1#--hygiene-threshold=}"; shift ;;
     *) echo "autopickup-tick: unknown arg '$1'" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -149,6 +187,20 @@ if [[ -n "$tier" ]]; then
   esac
 fi
 
+# Validate the numeric scheduled/hygiene seams when supplied.
+if [[ -n "$weekday_override" && ! "$weekday_override" =~ ^[1-7]$ ]]; then
+  echo "autopickup-tick: --weekday must be 1-7 (ISO; 1=Mon), got '$weekday_override'" >&2; exit 2
+fi
+if [[ -n "$hour_override" && ! "$hour_override" =~ ^([0-9]|1[0-9]|2[0-3])$ ]]; then
+  echo "autopickup-tick: --hour must be 0-23, got '$hour_override'" >&2; exit 2
+fi
+if [[ -n "$tickets_total_override" && ! "$tickets_total_override" =~ ^[0-9]+$ ]]; then
+  echo "autopickup-tick: --tickets-total must be a non-negative integer, got '$tickets_total_override'" >&2; exit 2
+fi
+if [[ ! "$hygiene_threshold" =~ ^[0-9]+$ ]]; then
+  echo "autopickup-tick: --hygiene-threshold must be a non-negative integer, got '$hygiene_threshold'" >&2; exit 2
+fi
+
 command -v jq >/dev/null 2>&1 || { echo "autopickup-tick: jq not found on PATH" >&2; exit 1; }
 
 STATE_DIR="${state_dir_override:-$ROOT_DIR/state}"
@@ -156,11 +208,16 @@ ACTIVE_FILE="$STATE_DIR/active.json"
 PAUSE_FILE="$STATE_DIR/PAUSE"
 REPOS_FILE="${repos_file_override:-$STATE_DIR/repos.json}"
 BUDGET_FILE="$ROOT_DIR/budget.json"
+AUTOPICKUP_FILE="$STATE_DIR/autopickup.json"
+BUDGET_USED_FILE="$STATE_DIR/budget-used.json"
+RETROS_DIR="${retros_dir_override:-$ROOT_DIR/memory/retros}"
 
 SHEPHERD="$ROOT_DIR/scripts/pr-shepherd.sh"
 RESCUE="$ROOT_DIR/scripts/rescue-worker.sh"
 MERGE_POLICY="$ROOT_DIR/scripts/merge-policy-lookup.sh"
 VALIDATE_ALL="$ROOT_DIR/scripts/validate-state-all.sh"
+RETRO_FILER="$ROOT_DIR/scripts/retro-file-proposed-edits.sh"
+PROMOTE="$ROOT_DIR/scripts/promote-citations.sh"
 
 GEN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -456,12 +513,153 @@ else
 fi
 
 # =============================================================================
+# 4b. SCHEDULED CHECKS  (Monday-retro + once/day skill-promotion)
+# =============================================================================
+# REPORT-ONLY discipline: this block detects what is DUE and, for the retro,
+# files the proposed-edits issues from an ALREADY-WRITTEN retro file (idempotent
+# via retro-file-proposed-edits.sh). It NEVER writes the retro markdown, never
+# spawns, never stamps last_retro_run/last_promotion_run — those mutations stay
+# Commander's job (same split as promote-citations.sh --check-due).
+#
+# Test seams: --weekday/--hour fix "now"; --week fixes the ISO week tag;
+# --retros-dir + --retro-file-cmd stub retro-file presence + the filer.
+
+# Resolve "now": local weekday (ISO 1-7) + hour, with overrides for tests.
+now_weekday="${weekday_override:-$(date +%u)}"   # %u = ISO weekday, 1=Mon..7=Sun
+now_hour="${hour_override:-$(date +%H)}"
+now_hour=$((10#$now_hour))                        # strip leading zero (08 -> 8)
+now_week="${week_override:-$(date +%G-%V)}"       # ISO year-week, e.g. 2026-23
+
+# last_retro_run from autopickup.json (empty if file/field absent).
+last_retro_run=""
+if [[ -f "$AUTOPICKUP_FILE" ]]; then
+  last_retro_run="$(jq -r '.last_retro_run // ""' "$AUTOPICKUP_FILE" 2>/dev/null || echo "")"
+fi
+# Map a last_retro_run timestamp to its ISO week tag for the idempotency guard.
+# Accept either an ISO timestamp (YYYY-MM-DDTHH:MM:SS) or a bare date.
+last_retro_week=""
+if [[ -n "$last_retro_run" ]]; then
+  ld="${last_retro_run%%T*}"   # date portion
+  if [[ "$ld" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    # GNU date and BSD date differ; try both, fall back to empty (treat as stale).
+    last_retro_week="$(date -d "$ld" +%G-%V 2>/dev/null \
+      || date -j -f %Y-%m-%d "$ld" +%G-%V 2>/dev/null || echo "")"
+  fi
+fi
+
+# Retro is due: Monday (weekday 1) at/after 09:00 local, and not already run
+# this ISO week.
+retro_due=false
+if [[ "$now_weekday" == "1" && "$now_hour" -ge 9 && "$last_retro_week" != "$now_week" ]]; then
+  retro_due=true
+fi
+
+retro_marker=""
+retro_file_present=false
+retro_file_result=""
+if [[ "$retro_due" == true ]]; then
+  retro_path="$RETROS_DIR/${now_week}.md"
+  if [[ -f "$retro_path" ]]; then
+    retro_file_present=true
+    # File the proposed-edits issues from the already-written retro. The filer
+    # is idempotent (skips duplicate titles). A failure is reported, never fatal.
+    set +e
+    if [[ -n "$retro_file_cmd" ]]; then
+      retro_file_result="$(bash -c "$retro_file_cmd" _ "$now_week" 2>&1)"
+    elif [[ -x "$RETRO_FILER" ]]; then
+      retro_file_result="$("$RETRO_FILER" "$now_week" --retros-dir "$RETROS_DIR" 2>&1)"
+    else
+      retro_file_result="retro-file-proposed-edits.sh not found"
+    fi
+    set -e
+    retro_marker="retro-filed"
+  else
+    # Retro is due but Commander hasn't written it yet — it must write first.
+    retro_marker="retro-due-write-first"
+  fi
+fi
+
+# Skill-promotion due: delegate to promote-citations.sh --check-due
+# (exit 0 = due, exit 10 = already ran today). No side effects, no stamping.
+promotion_due=false
+if [[ -x "$PROMOTE" ]]; then
+  promote_due_args=(--check-due --state-dir "$STATE_DIR")
+  [[ -n "$today_override" ]] && promote_due_args+=(--now "$today_override")
+  set +e
+  "$PROMOTE" "${promote_due_args[@]}" >/dev/null 2>&1
+  promote_rc=$?
+  set -e
+  [[ "$promote_rc" -eq 0 ]] && promotion_due=true
+fi
+
+scheduled_json="$(jq -nc \
+  --argjson weekday "$now_weekday" \
+  --argjson hour "$now_hour" \
+  --arg week "$now_week" \
+  --argjson retro_due "$retro_due" \
+  --arg retro_marker "$retro_marker" \
+  --argjson retro_file_present "$retro_file_present" \
+  --arg retro_file_result "$retro_file_result" \
+  --argjson promotion_due "$promotion_due" \
+  '{weekday:$weekday, hour:$hour, week:$week,
+    retro_due:$retro_due, retro_marker:$retro_marker,
+    retro_file_present:$retro_file_present, retro_file_result:$retro_file_result,
+    promotion_due:$promotion_due}')"
+
+# =============================================================================
+# 4c. MEMORY-HYGIENE COUNTER  (compact every N tickets)
+# =============================================================================
+# Tracks a monotonic baseline (tickets_at_last_hygiene) against a cumulative
+# ticket total. When tickets_since reaches the threshold (default 10), emit a
+# compact-memory marker. The tick does NOT reset the baseline — Commander resets
+# it after running the compaction (report-don't-mutate).
+tickets_at_last_hygiene=0
+if [[ -f "$AUTOPICKUP_FILE" ]]; then
+  tickets_at_last_hygiene="$(jq -r '.tickets_at_last_hygiene // 0' "$AUTOPICKUP_FILE" 2>/dev/null || echo 0)"
+fi
+[[ "$tickets_at_last_hygiene" =~ ^[0-9]+$ ]] || tickets_at_last_hygiene=0
+
+# Cumulative ticket total: --tickets-total wins; else best-effort from
+# budget-used.json:tickets_completed_today (a partial signal when Commander did
+# not pass its running count).
+tickets_total=""
+if [[ -n "$tickets_total_override" ]]; then
+  tickets_total="$tickets_total_override"
+elif [[ -f "$BUDGET_USED_FILE" ]]; then
+  tickets_total="$(jq -r '.tickets_completed_today // 0' "$BUDGET_USED_FILE" 2>/dev/null || echo 0)"
+fi
+[[ "$tickets_total" =~ ^[0-9]+$ ]] || tickets_total=0
+
+tickets_since=$(( tickets_total - tickets_at_last_hygiene ))
+(( tickets_since < 0 )) && tickets_since=0
+
+hygiene_due=false
+hygiene_marker=""
+if (( tickets_since >= hygiene_threshold )); then
+  hygiene_due=true
+  hygiene_marker="compact-memory"
+fi
+
+hygiene_json="$(jq -nc \
+  --argjson tickets_total "$tickets_total" \
+  --argjson tickets_at_last_hygiene "$tickets_at_last_hygiene" \
+  --argjson tickets_since "$tickets_since" \
+  --argjson threshold "$hygiene_threshold" \
+  --argjson hygiene_due "$hygiene_due" \
+  --arg hygiene_marker "$hygiene_marker" \
+  '{tickets_total:$tickets_total, tickets_at_last_hygiene:$tickets_at_last_hygiene,
+    tickets_since:$tickets_since, threshold:$threshold,
+    hygiene_due:$hygiene_due, hygiene_marker:$hygiene_marker}')"
+
+# =============================================================================
 # 5. ACTIONS ROLL-UP
 # =============================================================================
 actions_json="$(jq -nc \
   --argjson rescue "$rescue_array" \
   --argjson merge "$merge_array" \
   --argjson shepherd "$shepherd_json" \
+  --argjson scheduled "$scheduled_json" \
+  --argjson hygiene "$hygiene_json" \
   '{
     needs_rescue:        ($rescue | map(select(.action == "needs-rescue")) | length),
     live_wait:           ($rescue | map(select(.action == "live-wait")) | length),
@@ -469,7 +667,10 @@ actions_json="$(jq -nc \
     surface_for_human:   ($merge  | map(select(.classification == "surface-for-human")) | length),
     needs_review_gate:   (($shepherd.summary.needs_review_gate) // 0),
     needs_fix:           (($shepherd.summary.needs_fix) // 0),
-    orphaned:            (($shepherd.summary.orphaned) // 0)
+    orphaned:            (($shepherd.summary.orphaned) // 0),
+    retro_due:           ($scheduled.retro_due),
+    promotion_due:       ($scheduled.promotion_due),
+    hygiene_due:         ($hygiene.hygiene_due)
   }')"
 
 # =============================================================================
@@ -483,10 +684,12 @@ if [[ "$json_mode" -eq 1 ]]; then
     --argjson shepherd "$shepherd_json" \
     --argjson rescue "$rescue_array" \
     --argjson merge_surface "$merge_array" \
+    --argjson scheduled "$scheduled_json" \
+    --argjson hygiene "$hygiene_json" \
     --argjson actions "$actions_json" \
     '{generated_at:$generated_at, repo:$repo, preflight:$preflight,
       shepherd:$shepherd, rescue:$rescue, merge_surface:$merge_surface,
-      actions:$actions}'
+      scheduled:$scheduled, hygiene:$hygiene, actions:$actions}'
   exit 0
 fi
 
@@ -536,6 +739,24 @@ else
 fi
 echo
 
+# Scheduled checks
+echo "Scheduled checks (retro / promotion):"
+printf '%s' "$scheduled_json" | jq -r '
+  "  now: weekday \(.weekday) hour \(.hour) · week \(.week)" ,
+  "  retro: \(if .retro_due then "DUE" else "not due" end)\(if .retro_marker != "" then " (" + .retro_marker + ")" else "" end)" ,
+  (if .retro_file_result != "" then "         filer: \(.retro_file_result | gsub("\n"; " "))" else empty end) ,
+  "  promotion: \(if .promotion_due then "DUE (run promote-citations.sh)" else "not due (ran today)" end)"
+'
+echo
+
+# Memory hygiene
+echo "Memory hygiene (compact every $(printf '%s' "$hygiene_json" | jq -r '.threshold') tickets):"
+printf '%s' "$hygiene_json" | jq -r '
+  "  tickets since last hygiene: \(.tickets_since) (total \(.tickets_total) - baseline \(.tickets_at_last_hygiene)) / threshold \(.threshold)" ,
+  "  hygiene: \(if .hygiene_due then "DUE — compact memory + run promote-citations.sh" else "not due" end)"
+'
+echo
+
 # Actions roll-up
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 printf '%s' "$actions_json" | jq -r '
@@ -547,4 +768,8 @@ printf '%s' "$actions_json" | jq -r '
   && echo "  ↳ Commander: verify CI green + obey merge-policy-lookup before merging eligible PRs."
 [[ "$(printf '%s' "$preflight_json" | jq -r '.spawn_blocked')" == "true" ]] \
   && echo "  ↳ Spawn BLOCKED this tick (see Preflight) — read-only scans above are still valid."
+[[ "$(printf '%s' "$scheduled_json" | jq -r '.retro_marker')" == "retro-due-write-first" ]] \
+  && echo "  ↳ Retro DUE but unwritten — Commander: run the retro procedure, then it auto-files proposed edits."
+[[ "$(printf '%s' "$hygiene_json" | jq -r '.hygiene_due')" == "true" ]] \
+  && echo "  ↳ Memory hygiene DUE — Commander: compact memory + reset tickets_at_last_hygiene to the current total."
 exit 0
