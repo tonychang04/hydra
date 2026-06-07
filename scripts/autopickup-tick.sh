@@ -103,6 +103,8 @@ Options:
                          check (reported as not-due, reason "hygiene-threshold is 0").
   --worktrees-dir <path> Test-only: override the worktrees root the gc-stale-
                          worktrees scan inspects (default $ROOT/.claude/worktrees).
+  --gc-script <path>     Test-only: override the gc-stale-worktrees.sh the gc
+                         safety scan shells out to (default $ROOT/scripts/...).
   -h, --help             Show this help.
 
 AUTO-MERGE SAFETY RAILS:
@@ -142,6 +144,7 @@ tickets_total_override=""  # --tickets-total <n> (cumulative ticket count)
 hygiene_threshold=10       # --hygiene-threshold <n>
 # stall-robustness seams (ticket #242). Optional; default reads live state/tree.
 worktrees_dir_override=""  # --worktrees-dir <path> (gc-stale-worktrees scan root)
+gc_script_override=""       # --gc-script <path> Test-only: override gc-stale-worktrees.sh
 
 need_val() {
   if [[ $# -lt 2 ]]; then
@@ -187,6 +190,8 @@ while [[ $# -gt 0 ]]; do
     --hygiene-threshold=*) hygiene_threshold="${1#--hygiene-threshold=}"; shift ;;
     --worktrees-dir)      need_val "$@"; worktrees_dir_override="$2"; shift 2 ;;
     --worktrees-dir=*)    worktrees_dir_override="${1#--worktrees-dir=}"; shift ;;
+    --gc-script)          need_val "$@"; gc_script_override="$2"; shift 2 ;;
+    --gc-script=*)        gc_script_override="${1#--gc-script=}"; shift ;;
     *) echo "autopickup-tick: unknown arg '$1'" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -229,7 +234,7 @@ MERGE_POLICY="$ROOT_DIR/scripts/merge-policy-lookup.sh"
 VALIDATE_ALL="$ROOT_DIR/scripts/validate-state-all.sh"
 RETRO_FILER="$ROOT_DIR/scripts/retro-file-proposed-edits.sh"
 PROMOTE="$ROOT_DIR/scripts/promote-citations.sh"
-GC_WORKTREES="$ROOT_DIR/scripts/gc-stale-worktrees.sh"
+GC_WORKTREES="${gc_script_override:-$ROOT_DIR/scripts/gc-stale-worktrees.sh}"
 WORKTREES_DIR="${worktrees_dir_override:-$ROOT_DIR/.claude/worktrees}"
 
 GEN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -770,9 +775,16 @@ audit_json="$(jq -nc \
 # gc-stale-worktrees.sh --dry-run (read-only) and reports the zombie worktree
 # CANDIDATES. It NEVER deletes — actuation is `gc-stale-worktrees.sh --apply`,
 # run by Commander/operator. A gc failure is reported, never fatal (set +e).
-# gc-stale-worktrees itself fails closed when active.json is missing, so the tick
-# inherits that safety. Spec: docs/specs/2026-06-07-tick-stall-robustness.md.
-gc_json='{"candidates_count":0,"candidates":[]}'
+# gc-stale-worktrees itself fails closed when active.json is missing/corrupt, so
+# the tick inherits that safety. Spec: docs/specs/2026-06-07-tick-stall-robustness.md.
+#
+# SURFACE A FAILED SAFETY SCAN (never report it as clean). `scan_ok` is true ONLY
+# when the gc script actually ran and returned parseable JSON. If the binary is
+# missing/unexecutable, exits non-zero, or emits unparseable output, scan_ok=false
+# with a reason — the output then says "scan-skipped", NOT "(none)". A failed
+# safety scan must look distinct from a clean one so an operator never mistakes a
+# broken gc for "no stale worktrees".
+gc_json='{"candidates_count":0,"candidates":[],"scan_ok":false,"scan_skipped_reason":"gc-script-not-executable"}'
 if [[ -x "$GC_WORKTREES" ]]; then
   set +e
   gc_raw="$("$GC_WORKTREES" --root "$ROOT_DIR" --state-dir "$STATE_DIR" \
@@ -782,7 +794,11 @@ if [[ -x "$GC_WORKTREES" ]]; then
   if [[ "$gc_rc" -eq 0 ]] && printf '%s' "$gc_raw" | jq empty 2>/dev/null; then
     gc_json="$(printf '%s' "$gc_raw" | jq -c \
       '{candidates_count:(.candidates|length), candidates:.candidates,
-        fail_closed:.fail_closed}')"
+        fail_closed:.fail_closed, scan_ok:true, scan_skipped_reason:null}')"
+  else
+    gc_json="$(jq -nc --argjson rc "${gc_rc:-1}" \
+      '{candidates_count:0, candidates:[], scan_ok:false,
+        scan_skipped_reason:("gc-scan-failed(exit \($rc))")}')"
   fi
 fi
 
@@ -909,14 +925,19 @@ printf '%s' "$audit_json" | jq -r '
 '
 echo
 
-# Stale-worktree gc
+# Stale-worktree gc. A failed/fail-closed safety scan must look DISTINCT from a
+# clean one — never silently "(none)".
 echo "Stale worktrees (gc candidates):"
-if [[ "$(printf '%s' "$gc_json" | jq '.candidates_count')" -eq 0 ]]; then
-  if [[ "$(printf '%s' "$gc_json" | jq -r '.fail_closed // false')" == "true" ]]; then
-    echo "  (gc fail-closed — state/active.json missing; run gc-stale-worktrees.sh directly)"
-  else
-    echo "  (none)"
-  fi
+gc_scan_ok="$(printf '%s' "$gc_json" | jq -r '.scan_ok // false')"
+gc_fail_closed="$(printf '%s' "$gc_json" | jq -r '.fail_closed // false')"
+gc_cand_count="$(printf '%s' "$gc_json" | jq '.candidates_count')"
+if [[ "$gc_scan_ok" != "true" ]]; then
+  gc_reason="$(printf '%s' "$gc_json" | jq -r '.scan_skipped_reason // "unknown"')"
+  echo "  (gc scan-skipped — safety scan could not run: ${gc_reason}; run gc-stale-worktrees.sh directly)"
+elif [[ "$gc_fail_closed" == "true" ]]; then
+  echo "  (gc fail-closed — state/active.json missing/unreadable/corrupt; run gc-stale-worktrees.sh directly)"
+elif [[ "$gc_cand_count" -eq 0 ]]; then
+  echo "  (none)"
 else
   printf '%s' "$gc_json" | jq -r '.candidates[] | "  \(.path)  (age \(.age_s)s)"'
 fi

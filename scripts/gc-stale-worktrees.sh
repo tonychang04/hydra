@@ -12,11 +12,14 @@
 #       state/active.json, AND
 #   (b) older than 24h — its mtime is more than --max-age-s seconds in the past.
 #
-# FAIL-CLOSED on a missing/unreadable state/active.json: the not-active half of
-# the predicate is load-bearing, so without it the script removes NOTHING
-# (--apply exits 1; --dry-run reports zero candidates with a note). state/
-# active.json is gitignored runtime state, so it is legitimately absent in a
-# fresh checkout — failing closed is the safe default there too.
+# FAIL-CLOSED on a missing/unreadable/CORRUPT state/active.json: the not-active
+# half of the predicate is load-bearing, so without a TRUSTWORTHY file the script
+# removes NOTHING (--apply exits 1; --dry-run reports zero candidates with a
+# note). "Corrupt" means present + readable but not valid JSON — e.g. truncated by
+# a crash mid-rewrite; treating it as empty would expose LIVE worktrees to
+# deletion, so it fails closed exactly like missing/unreadable. state/active.json
+# is gitignored runtime state, so it is also legitimately absent in a fresh
+# checkout — failing closed is the safe default there too.
 #
 # It REPORTS by default; it only deletes under --apply, and only dirs under the
 # worktrees root that match agent-* and pass BOTH gates. Removal prefers
@@ -60,7 +63,8 @@ Usage: gc-stale-worktrees.sh [options]
 
 Reclaim zombie worker worktrees: list (--dry-run, default) or remove (--apply)
 .claude/worktrees/agent-* dirs that are BOTH not referenced by state/active.json
-AND older than 24h. Fails closed (removes nothing) if active.json is missing.
+AND older than 24h. Fails closed (removes nothing) if active.json is missing,
+unreadable, or corrupt (present but not valid JSON).
 
 Options:
   --dry-run             List stale candidates without removing (DEFAULT).
@@ -74,7 +78,7 @@ Options:
   -h, --help            Show this help.
 
 Exit codes:
-  0 ran · 1 I/O error (missing active.json under --apply, jq missing) · 2 usage error
+  0 ran · 1 I/O error (missing/corrupt active.json under --apply, jq missing) · 2 usage error
 
 Spec: docs/specs/2026-06-07-tick-stall-robustness.md (ticket #242)
 EOF
@@ -147,13 +151,23 @@ mtime_epoch() {
 now_epoch="$(date +%s)"
 
 # -----------------------------------------------------------------------------
-# FAIL-CLOSED: the not-active predicate needs active.json. Without it, removing
-# would be unsafe (we couldn't tell which dirs are live). Report + refuse.
+# FAIL-CLOSED: the not-active predicate needs a TRUSTWORTHY active.json. Without
+# one, removing would be unsafe (we couldn't tell which dirs are live). Report +
+# refuse. We fail closed on THREE conditions:
+#   - missing             (-f false)
+#   - unreadable          (-r false)
+#   - present but CORRUPT  (does not parse as JSON)
+# The corrupt case is the data-loss trap: a crash mid-rewrite leaves active.json
+# present + readable but truncated. If we only guarded missing/unreadable, the
+# in-loop `jq ... 2>/dev/null` would swallow the parse error, yield an EMPTY
+# active set with fail_closed=false, and then every >24h agent-* dir — INCLUDING
+# live workers whose entries were in the now-corrupt file — would become a
+# deletion candidate. Validating the parse up front closes that hole.
 # -----------------------------------------------------------------------------
 fail_closed=false
 active_paths=""   # newline-separated absolute paths of active worktrees
 active_count=0
-if [[ -f "$ACTIVE_FILE" && -r "$ACTIVE_FILE" ]]; then
+if [[ -f "$ACTIVE_FILE" && -r "$ACTIVE_FILE" ]] && jq empty "$ACTIVE_FILE" >/dev/null 2>&1; then
   # Collect each worker's .worktree (absolute, resolved). Branchless/worktree-less
   # entries contribute nothing.
   while IFS= read -r wt; do
@@ -218,7 +232,7 @@ fi
 removed_jsonl=""
 if [[ "$apply" -eq 1 ]]; then
   if [[ "$fail_closed" == true ]]; then
-    echo "gc-stale-worktrees: refusing to --apply — $ACTIVE_FILE missing/unreadable (fail-closed)" >&2
+    echo "gc-stale-worktrees: refusing to --apply — $ACTIVE_FILE missing/unreadable/corrupt (fail-closed)" >&2
     exit 1
   fi
   while IFS= read -r c; do
@@ -281,7 +295,7 @@ fi
 echo "▸ gc-stale-worktrees — ${WORKTREES_DIR}"
 echo "  mode: $([[ "$apply" -eq 1 ]] && echo apply || echo dry-run) · max-age ${max_age_s}s · active workers ${active_count}"
 if [[ "$fail_closed" == true ]]; then
-  echo "  FAIL-CLOSED: $ACTIVE_FILE missing/unreadable — removing nothing."
+  echo "  FAIL-CLOSED: $ACTIVE_FILE missing/unreadable/corrupt — removing nothing."
   exit 0
 fi
 ncand="$(printf '%s' "$candidates_array" | jq 'length')"

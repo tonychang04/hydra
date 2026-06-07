@@ -190,4 +190,75 @@ human_tick="$(NO_COLOR=1 "$TICK" --repo tonychang04/hydra --gh-mock "$GH_MOCK" \
 grep -qi "Stale worktrees" <<<"$human_tick" || fail "human output missing Stale worktrees section" "$human_tick"
 grep -qi "interval" <<<"$human_tick" || fail "human output missing interval WARN line" "$human_tick"
 
+# =============================================================================
+# 6. FAIL-CLOSED when active.json is PRESENT but CORRUPT/TRUNCATED (#254 review)
+# =============================================================================
+# Data-loss blocker: a mid-write crash can leave active.json present + readable
+# but unparseable. Without parse validation, the active set comes back empty,
+# fail_closed stays false, and every >24h agent-* dir — INCLUDING live workers —
+# becomes a deletion candidate. The script MUST treat a corrupt active.json the
+# same as a missing one: fail closed, delete nothing.
+CORRUPT_STATE="$TMP/corrupt-state"
+mkdir -p "$CORRUPT_STATE"
+# Truncated/partial JSON — exactly what a crash mid-rewrite leaves behind.
+printf '%s' '{ "workers": [ { "id": "w-live", "worktree": "' > "$CORRUPT_STATE/active.json"
+
+# Re-create a stale dir that a VALID file would have protected as a live worker,
+# proving the corrupt file does NOT expose it to deletion.
+mk_dir agent-STALE3
+touch -t "$old_ts" "$WT_DIR/agent-STALE3"
+
+corrupt_dry="$("$GC" --root "$TMP" --state-dir "$CORRUPT_STATE" --worktrees-dir "$WT_DIR" --json --dry-run)"
+echo "$corrupt_dry" | jq -e '.fail_closed == true' >/dev/null \
+  || fail "corrupt active.json should report fail_closed=true" "$corrupt_dry"
+echo "$corrupt_dry" | jq -e '.candidates == []' >/dev/null \
+  || fail "corrupt active.json dry-run must report ZERO candidates" "$corrupt_dry"
+
+set +e
+"$GC" --root "$TMP" --state-dir "$CORRUPT_STATE" --worktrees-dir "$WT_DIR" --apply >/dev/null 2>&1
+corrupt_rc=$?
+set -e
+[[ "$corrupt_rc" -eq 1 ]] || fail "corrupt active.json --apply must exit 1 (got $corrupt_rc)"
+[[ -d "$WT_DIR/agent-STALE3" ]] || fail "corrupt active.json --apply must delete NOTHING"
+
+# =============================================================================
+# 7. TICK SURFACES a failed gc safety scan (never reports it as "(none)")
+# =============================================================================
+# Concern #2: a failed gc scan must be VISIBLE, never look like "clean". With a
+# corrupt active.json the gc script reports fail_closed=true (exit 0), so the tick
+# must surface the fail-closed state in both JSON and human output rather than
+# printing "(none)".
+CORRUPT_TICK_STATE="$TMP/corrupt-tick-state"
+mkdir -p "$CORRUPT_TICK_STATE"
+cp "$CORRUPT_STATE/active.json" "$CORRUPT_TICK_STATE/active.json"
+mk_autopickup 10 "$CORRUPT_TICK_STATE"
+
+corrupt_tick="$(NO_COLOR=1 "$TICK" "${tick_common[@]}" --state-dir "$CORRUPT_TICK_STATE")"
+echo "$corrupt_tick" | jq -e '.gc.fail_closed == true' >/dev/null \
+  || fail "tick gc must surface fail_closed=true on corrupt active.json" "$corrupt_tick"
+echo "$corrupt_tick" | jq -e '.gc.scan_ok == true' >/dev/null \
+  || fail "tick gc.scan_ok should be true when the script ran (even fail-closed)" "$corrupt_tick"
+
+corrupt_human="$(NO_COLOR=1 "$TICK" --repo tonychang04/hydra --gh-mock "$GH_MOCK" \
+  --repos-file "$REPOS" --worktrees-dir "$WT_DIR" --today "2026-06-07" \
+  --state-dir "$CORRUPT_TICK_STATE")"
+grep -qi "fail-closed\|scan-skipped" <<<"$corrupt_human" \
+  || fail "human output must surface gc fail-closed/scan-skipped, not (none)" "$corrupt_human"
+# The gc section itself must NOT print "(none)" when fail-closed.
+gc_section="$(awk '/Stale worktrees/{f=1;next} f&&/^$/{exit} f' <<<"$corrupt_human")"
+grep -qi "(none)" <<<"$gc_section" \
+  && fail "gc section must NOT print (none) when the safety scan is fail-closed" "$corrupt_human"
+
+# 7b. Tick surfaces a gc scan that could NOT run at all (binary missing) as
+# scan_ok=false — distinct from a clean "(none)".
+UNRUN_TICK_STATE="$TMP/unrun-tick-state"
+mkdir -p "$UNRUN_TICK_STATE"
+cp "$WARN_STATE/active.json" "$UNRUN_TICK_STATE/active.json"
+mk_autopickup 10 "$UNRUN_TICK_STATE"
+# Point the tick at a gc script path that does not exist / is not executable.
+unrun_tick="$(NO_COLOR=1 "$TICK" "${tick_common[@]}" --state-dir "$UNRUN_TICK_STATE" \
+  --gc-script "$TMP/no-such-gc.sh")"
+echo "$unrun_tick" | jq -e '.gc.scan_ok == false' >/dev/null \
+  || fail "tick gc.scan_ok must be false when the gc script could not run" "$unrun_tick"
+
 echo "SMOKE_OK"

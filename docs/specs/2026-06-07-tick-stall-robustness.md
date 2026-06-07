@@ -231,6 +231,43 @@ Run: `bash self-test/fixtures/gc-stale-worktrees/run-smoke.sh`;
 `bash scripts/validate-state-all.sh`; `bash scripts/preflight-syntax.sh`;
 `bash self-test/run.sh --kind script`.
 
+## Addendum — fail-closed on CORRUPT active.json (#254 review)
+
+**Problem found in review (data-loss blocker).** The original fail-closed gate
+keyed only on `[[ -f && -r ]]` — present + readable. A crash mid-rewrite of
+`state/active.json` leaves it present + readable but **truncated/unparseable**.
+The in-loop `jq … 2>/dev/null` swallowed the parse error, so the active set came
+back EMPTY with `fail_closed=false`. Every `agent-*` dir >24h then became a
+deletion candidate — **including live worker worktrees** whose entries lived in
+the now-corrupt file. Confirmed: with a corrupt active.json, the pre-fix script
+listed a live worktree as a candidate and `--apply` deleted it (`exit 0`).
+
+**Fix.** Validate the parse BEFORE building the active set: the gate is now
+`[[ -f && -r ]] && jq empty "$ACTIVE_FILE"`. A corrupt file fails the `jq empty`
+check and falls into the same `fail_closed=true` branch as missing/unreadable —
+the script removes NOTHING (`--apply` exits 1; `--dry-run` reports zero
+candidates with the fail-closed note). The existing missing/unreadable gate is
+unchanged; this only adds the corrupt case.
+
+**Concern #2 — surface a failed gc safety scan in the tick.** Section 4e
+previously left `gc_json` at a default `candidates_count:0` whenever the gc scan
+could not produce parseable JSON, so a broken scan rendered as `(none)` —
+indistinguishable from "clean". The tick now carries `scan_ok` (true only when
+the gc script ran AND returned parseable JSON) plus `scan_skipped_reason`. Human
+output prints `(gc scan-skipped — safety scan could not run: <reason>…)` when
+`scan_ok=false` and `(gc fail-closed — …missing/unreadable/corrupt…)` when the
+scan ran but fail-closed — never `(none)` for either. A test-only `--gc-script`
+seam lets the smoke harness point the scan at a non-existent binary to assert
+`scan_ok=false`.
+
+**New test cases (RED→GREEN).** Added to
+`self-test/fixtures/gc-stale-worktrees/run-smoke.sh`:
+6. corrupt active.json ⇒ `fail_closed=true`, zero candidates, `--apply` exits 1,
+   the stale dir a valid file would have protected is NOT deleted.
+7. tick on corrupt active.json ⇒ `.gc.fail_closed==true`, `.gc.scan_ok==true`,
+   human output surfaces fail-closed (not `(none)`); 7b: `--gc-script` pointed at
+   a missing binary ⇒ `.gc.scan_ok==false`.
+
 ## Risks / rollback
 
 - **Risk: gc deletes a live worktree.** → Mitigated by the AND predicate (must be
