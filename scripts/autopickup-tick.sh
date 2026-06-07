@@ -101,6 +101,8 @@ Options:
                          baseline and silently suppresses hygiene).
   --hygiene-threshold <n> Compact-memory threshold (default 10). 0 disables the
                          check (reported as not-due, reason "hygiene-threshold is 0").
+  --worktrees-dir <path> Test-only: override the worktrees root the gc-stale-
+                         worktrees scan inspects (default $ROOT/.claude/worktrees).
   -h, --help             Show this help.
 
 AUTO-MERGE SAFETY RAILS:
@@ -138,6 +140,8 @@ retros_dir_override=""     # --retros-dir <path> (default memory/retros)
 retro_file_cmd=""          # --retro-file-cmd <cmd> (test stub for the filer)
 tickets_total_override=""  # --tickets-total <n> (cumulative ticket count)
 hygiene_threshold=10       # --hygiene-threshold <n>
+# stall-robustness seams (ticket #242). Optional; default reads live state/tree.
+worktrees_dir_override=""  # --worktrees-dir <path> (gc-stale-worktrees scan root)
 
 need_val() {
   if [[ $# -lt 2 ]]; then
@@ -181,6 +185,8 @@ while [[ $# -gt 0 ]]; do
     --tickets-total=*)    tickets_total_override="${1#--tickets-total=}"; shift ;;
     --hygiene-threshold)  need_val "$@"; hygiene_threshold="$2"; shift 2 ;;
     --hygiene-threshold=*) hygiene_threshold="${1#--hygiene-threshold=}"; shift ;;
+    --worktrees-dir)      need_val "$@"; worktrees_dir_override="$2"; shift 2 ;;
+    --worktrees-dir=*)    worktrees_dir_override="${1#--worktrees-dir=}"; shift ;;
     *) echo "autopickup-tick: unknown arg '$1'" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -223,6 +229,8 @@ MERGE_POLICY="$ROOT_DIR/scripts/merge-policy-lookup.sh"
 VALIDATE_ALL="$ROOT_DIR/scripts/validate-state-all.sh"
 RETRO_FILER="$ROOT_DIR/scripts/retro-file-proposed-edits.sh"
 PROMOTE="$ROOT_DIR/scripts/promote-citations.sh"
+GC_WORKTREES="$ROOT_DIR/scripts/gc-stale-worktrees.sh"
+WORKTREES_DIR="${worktrees_dir_override:-$ROOT_DIR/.claude/worktrees}"
 
 GEN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -261,6 +269,22 @@ fi
 concurrency_headroom=$(( max_workers - active_workers ))
 (( concurrency_headroom < 0 )) && concurrency_headroom=0
 
+# Interval guard (ticket #242): the rescue watchdog only helps if a tick fires
+# while a stalling worker is still recoverable. If interval_min is at or above
+# the ~18-min stream-idle ceiling, workers can time out BEFORE any tick runs to
+# probe them. WARN (report-only; does not block spawn or rewrite the interval).
+interval_min=0
+if [[ -f "$AUTOPICKUP_FILE" ]]; then
+  interval_min="$(jq -r '.interval_min // 0' "$AUTOPICKUP_FILE" 2>/dev/null || echo 0)"
+fi
+[[ "$interval_min" =~ ^[0-9]+$ ]] || interval_min=0
+interval_warn=false
+interval_warn_text=""
+if (( interval_min >= 18 )); then
+  interval_warn=true
+  interval_warn_text="interval_min=${interval_min} will miss the ~18min stream-idle ceiling; set <15"
+fi
+
 # spawn_blocked: any preflight failure means Commander must NOT spawn this tick.
 spawn_blocked=false
 if [[ "$pause_present" == true || "$state_valid" == false || "$concurrency_headroom" -le 0 ]]; then
@@ -275,10 +299,15 @@ preflight_json="$(jq -nc \
   --argjson active_workers "$active_workers" \
   --argjson concurrency_headroom "$concurrency_headroom" \
   --argjson spawn_blocked "$spawn_blocked" \
+  --argjson interval_min "$interval_min" \
+  --argjson interval_warn "$interval_warn" \
+  --arg interval_warn_text "$interval_warn_text" \
   '{pause_present:$pause_present, state_valid:$state_valid,
     state_validation_note:$state_validation_note,
     max_workers:$max_workers, active_workers:$active_workers,
-    concurrency_headroom:$concurrency_headroom, spawn_blocked:$spawn_blocked}')"
+    concurrency_headroom:$concurrency_headroom, spawn_blocked:$spawn_blocked,
+    interval_min:$interval_min, interval_warn:$interval_warn,
+    interval_warn_text:$interval_warn_text}')"
 
 # =============================================================================
 # 2. PR-SHEPHERD RECONCILE
@@ -735,6 +764,29 @@ audit_json="$(jq -nc \
     dedupe_hint:$dedupe_hint}')"
 
 # =============================================================================
+# 4e. STALE-WORKTREE GC  (report-only candidate scan)
+# =============================================================================
+# REPORT-ONLY discipline (same as 4b/4c/4d): this block shells out to
+# gc-stale-worktrees.sh --dry-run (read-only) and reports the zombie worktree
+# CANDIDATES. It NEVER deletes — actuation is `gc-stale-worktrees.sh --apply`,
+# run by Commander/operator. A gc failure is reported, never fatal (set +e).
+# gc-stale-worktrees itself fails closed when active.json is missing, so the tick
+# inherits that safety. Spec: docs/specs/2026-06-07-tick-stall-robustness.md.
+gc_json='{"candidates_count":0,"candidates":[]}'
+if [[ -x "$GC_WORKTREES" ]]; then
+  set +e
+  gc_raw="$("$GC_WORKTREES" --root "$ROOT_DIR" --state-dir "$STATE_DIR" \
+    --worktrees-dir "$WORKTREES_DIR" --dry-run --json 2>/dev/null)"
+  gc_rc=$?
+  set -e
+  if [[ "$gc_rc" -eq 0 ]] && printf '%s' "$gc_raw" | jq empty 2>/dev/null; then
+    gc_json="$(printf '%s' "$gc_raw" | jq -c \
+      '{candidates_count:(.candidates|length), candidates:.candidates,
+        fail_closed:.fail_closed}')"
+  fi
+fi
+
+# =============================================================================
 # 5. ACTIONS ROLL-UP
 # =============================================================================
 actions_json="$(jq -nc \
@@ -744,6 +796,7 @@ actions_json="$(jq -nc \
   --argjson scheduled "$scheduled_json" \
   --argjson hygiene "$hygiene_json" \
   --argjson audit "$audit_json" \
+  --argjson gc "$gc_json" \
   '{
     needs_rescue:        ($rescue | map(select(.action == "needs-rescue")) | length),
     live_wait:           ($rescue | map(select(.action == "live-wait")) | length),
@@ -755,7 +808,8 @@ actions_json="$(jq -nc \
     retro_due:           ($scheduled.retro_due),
     promotion_due:       ($scheduled.promotion_due),
     hygiene_due:         ($hygiene.hygiene_due),
-    audit_due:           ($audit.audit_due)
+    audit_due:           ($audit.audit_due),
+    gc_stale_worktrees:  ($gc.candidates_count)
   }')"
 
 # =============================================================================
@@ -772,10 +826,12 @@ if [[ "$json_mode" -eq 1 ]]; then
     --argjson scheduled "$scheduled_json" \
     --argjson hygiene "$hygiene_json" \
     --argjson audit "$audit_json" \
+    --argjson gc "$gc_json" \
     --argjson actions "$actions_json" \
     '{generated_at:$generated_at, repo:$repo, preflight:$preflight,
       shepherd:$shepherd, rescue:$rescue, merge_surface:$merge_surface,
-      scheduled:$scheduled, hygiene:$hygiene, audit:$audit, actions:$actions}'
+      scheduled:$scheduled, hygiene:$hygiene, audit:$audit, gc:$gc,
+      actions:$actions}'
   exit 0
 fi
 
@@ -789,6 +845,7 @@ printf '%s' "$preflight_json" | jq -r '
   "  PAUSE: \(if .pause_present then "PRESENT ⛔" else "absent" end)" ,
   "  state valid: \(.state_valid)\(if .state_validation_note != "" then " (" + .state_validation_note + ")" else "" end)" ,
   "  concurrency: \(.active_workers)/\(.max_workers) active · headroom \(.concurrency_headroom)" ,
+  "  interval: \(.interval_min)min\(if .interval_warn then "  ⚠ WARN: " + .interval_warn_text else "" end)" ,
   "  spawn: \(if .spawn_blocked then "BLOCKED — do not spawn this tick" else "OK — Commander may spawn up to headroom" end)"
 '
 echo
@@ -852,6 +909,19 @@ printf '%s' "$audit_json" | jq -r '
 '
 echo
 
+# Stale-worktree gc
+echo "Stale worktrees (gc candidates):"
+if [[ "$(printf '%s' "$gc_json" | jq '.candidates_count')" -eq 0 ]]; then
+  if [[ "$(printf '%s' "$gc_json" | jq -r '.fail_closed // false')" == "true" ]]; then
+    echo "  (gc fail-closed — state/active.json missing; run gc-stale-worktrees.sh directly)"
+  else
+    echo "  (none)"
+  fi
+else
+  printf '%s' "$gc_json" | jq -r '.candidates[] | "  \(.path)  (age \(.age_s)s)"'
+fi
+echo
+
 # Actions roll-up
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 printf '%s' "$actions_json" | jq -r '
@@ -869,4 +939,8 @@ printf '%s' "$actions_json" | jq -r '
   && echo "  ↳ Memory hygiene DUE — Commander: compact memory + reset tickets_at_last_hygiene to the current total."
 [[ "$(printf '%s' "$audit_json" | jq -r '.audit_due')" == "true" ]] \
   && echo "  ↳ Audit DUE — Commander: spawn worker-auditor on the hydra repo (<=3 issues, dedupe vs open commander-auto-filed), then stamp last_audit_run."
+[[ "$(printf '%s' "$gc_json" | jq '.candidates_count')" -gt 0 ]] \
+  && echo "  ↳ Stale worktrees: run scripts/gc-stale-worktrees.sh --apply to reclaim."
+[[ "$(printf '%s' "$preflight_json" | jq -r '.interval_warn')" == "true" ]] \
+  && echo "  ↳ Autopickup interval at/above the stream-idle ceiling — lower interval_min to <15 so the rescue probe can fire before workers time out."
 exit 0
