@@ -1,3 +1,8 @@
+---
+status: accepted
+date: 2026-06-06
+---
+
 # Autopickup tick orchestrator — scheduled-checks + memory-hygiene steps
 
 **Ticket:** #239 ([P1/keystone] Runnable autopickup tick orchestrator — wire the
