@@ -22,10 +22,13 @@
 #   1. T3 → always `never` (safety rail, no override).
 #   2. Look up <owner>/<name> in repos[]. Exit 1 if not found.
 #   3. If `merge_policy` is an object and the tier key exists, use it.
-#   4. If `merge_policy` is the legacy string:
-#        auto-t1    → T1: auto, T2: human
-#        human-all  → T1: human, T2: human
-#        refuse-all → T1: never, T2: never (T3 already handled above)
+#   4. If `merge_policy` is a string:
+#        a. Bare DIRECTIVE form (ticket #245) — applies uniformly to T1/T2:
+#             auto | auto_if_review_clean | human → returned verbatim.
+#        b. Legacy tier-conflating form:
+#             auto-t1    → T1: auto, T2: human
+#             human-all  → T1: human, T2: human
+#             refuse-all → T1: never, T2: never (T3 already handled above)
 #   5. Otherwise fall through to policy.md defaults: T1 auto, T2 human.
 #
 # Exit codes:
@@ -206,6 +209,17 @@ case "$mp_type" in
   string)
     legacy="$(jq -r '.merge_policy' <<<"$entry")"
     case "$legacy" in
+      auto|auto_if_review_clean|human)
+        # Ticket #245: bare-string DIRECTIVE form. The operator may set
+        # merge_policy to a single directive (auto / auto_if_review_clean /
+        # human) as shorthand for "this whole repo merges this way". It applies
+        # uniformly to T1 and T2 (T3 is hardcoded `never`, handled above). The
+        # directive is returned verbatim so Commander can obey it the same as
+        # the object-form per-tier values. `never` is intentionally NOT a bare
+        # directive — `refuse-all` already spells that. See
+        # docs/specs/2026-06-07-merge-policy-auto-if-review-clean.md.
+        emit "$legacy" "$mq_enabled"; exit 0
+        ;;
       auto-t1)
         # Pre-#20 "allow T1 auto-merge, everything else human". T3 is handled above.
         if [[ "$tier" == "T1" ]]; then

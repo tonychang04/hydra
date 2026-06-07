@@ -1,0 +1,30 @@
+{
+  "_description": "Fixture: bare-string directive merge_policy (ticket #245). The operator's live repos.json sets the hydra self-entry to the bare string \"auto_if_review_clean\" (a directive applied uniformly to T1/T2, T3 always 'never'). This fixture exercises each bare directive — auto, auto_if_review_clean, human — so the lookup recognizes them instead of erroring 'unknown legacy merge_policy'. See docs/specs/2026-06-07-merge-policy-auto-if-review-clean.md.",
+  "default_ticket_trigger": "assignee",
+  "repos": [
+    {
+      "owner": "fixture-org",
+      "name": "bare-auto",
+      "local_path": "/fixture/bare-auto",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": "auto"
+    },
+    {
+      "owner": "fixture-org",
+      "name": "bare-review-clean",
+      "local_path": "/fixture/bare-review-clean",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": "auto_if_review_clean"
+    },
+    {
+      "owner": "fixture-org",
+      "name": "bare-human",
+      "local_path": "/fixture/bare-human",
+      "enabled": true,
+      "ticket_trigger": "assignee",
+      "merge_policy": "human"
+    }
+  ]
+}
