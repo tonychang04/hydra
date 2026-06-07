@@ -3200,6 +3200,12 @@
           "cmd": "self-test/fixtures/autopickup-tick-scheduled/run-smoke.sh",
           "expected_exit": 0,
           "expected_stdout_contains": "SMOKE_OK"
+        },
+        {
+          "name": "autopickup-tick daily self-audit smoke (#240: audit-due fires once/day then false same-day, yesterday stamp re-fires, dedupe hint present, human stanza renders)",
+          "cmd": "self-test/fixtures/autopickup-tick-audit/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
         }
       ],
       "last_run": null,
