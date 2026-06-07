@@ -55,6 +55,7 @@
       "name": "infra-repo",
       "local_path": "/absolute/path/to/infra",
       "enabled": false,
+      "ticket_trigger": "assignee",
       "disabled_reason": "Tier 3 always — infra changes refused"
     },
     {

@@ -51,6 +51,59 @@ jobs:
       - name: Run self-test (script kind)
         run: ./self-test/run.sh --kind=script
 
+  state-validation-strict:
+    name: State validation (ajv strict — authoritative)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    # WHY this job exists (ticket #249): scripts/validate-state.sh has two paths —
+    # ajv-cli strict (full Draft-07: enums, oneOf, patterns) and a bash+jq fallback
+    # that checks required top-level keys ONLY. ajv is an optional dep, so locally and
+    # in the self-test job the weak fallback runs and a schema-invalid state file (e.g.
+    # an out-of-enum merge_policy) passes preflight unnoticed. This job INSTALLS ajv and
+    # runs the authoritative strict validation so the strong check always runs somewhere
+    # in the loop. If ajv can't be installed, --strict exits 2 and this job fails loudly
+    # rather than silently downgrading. Spec: docs/specs/2026-06-07-strict-state-validation.md
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+      - name: Install ajv-cli (authoritative Draft-07 validator)
+        run: npm install -g ajv-cli ajv-formats
+      - name: Assert ajv is on PATH (fail loudly if the install silently no-op'd)
+        run: command -v ajv
+      - name: Strict-validate committed state templates (state/*.example.json)
+        # Live state/*.json are gitignored / absent in a fresh checkout, so the
+        # committed *.example.json templates are the authoritative schema-conformant
+        # instances. Validate each against its <base>.schema.json under --strict.
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in state/*.example.json; do
+            base="$(basename "$f" .example.json)"
+            schema="state/schemas/${base}.schema.json"
+            if [[ ! -f "$schema" ]]; then
+              echo "::warning::no schema for $f (expected $schema) — skipping"
+              continue
+            fi
+            echo "==> strict-validating $f against $schema"
+            if ! scripts/validate-state.sh --strict --schema "$schema" "$f"; then
+              echo "::error::$f failed strict (ajv) validation against $schema"
+              fail=1
+            fi
+          done
+          [[ "$fail" -eq 0 ]] || exit 1
+      - name: Prove the strict path REJECTS an out-of-enum fixture (regression guard)
+        # If this ever exits 0, the strict path has regressed to the weak fallback —
+        # exactly the #249 bug. The fixture has merge_policy:"totally-bogus" (fails oneOf).
+        run: |
+          set -euo pipefail
+          if scripts/validate-state.sh --strict --schema-dir state/schemas \
+               self-test/fixtures/state-schemas/invalid-strict/repos.json; then
+            echo "::error::strict validation ACCEPTED an out-of-enum merge_policy — validator regressed to the weak path (#249)"
+            exit 1
+          fi
+          echo "OK — strict path correctly rejected the out-of-enum fixture"
+
   no-conflict-markers:
     name: No merge conflict markers
     runs-on: ubuntu-latest

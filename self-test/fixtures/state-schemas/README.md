@@ -23,7 +23,8 @@ invalid/                 one file per schema — all MUST fail the minimal (bash
 
 invalid-strict/          one file per schema — fails ONLY the strict (ajv-cli) check
 ├── active.json          has 'tier': 'T4' — not in the enum, accepted by bash+jq
-└── autopickup.json      interval_min: 1 — violates minimum: 5, accepted by bash+jq
+├── autopickup.json      interval_min: 1 — violates minimum: 5, accepted by bash+jq
+└── repos.json           merge_policy: 'totally-bogus' — fails oneOf/enum, accepted by bash+jq (ticket #249)
 ```
 
 The `invalid/` fixtures intentionally trip the `required` top-level check so the

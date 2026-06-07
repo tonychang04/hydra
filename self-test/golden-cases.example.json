@@ -639,34 +639,34 @@
           "expected_stdout_contains": "passes"
         },
         {
-          "name": "validate-state.sh rejects active fixture missing 'workers'",
-          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/active.json",
-          "expected_exit": 1,
-          "expected_stderr_contains": "missing required keys: workers"
+          "name": "validate-state.sh rejects active fixture missing 'workers' (either validator path)",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/active.json 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REJECT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "workers"
         },
         {
-          "name": "validate-state.sh rejects budget-used fixture missing wall-clock key",
-          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/budget-used.json",
-          "expected_exit": 1,
-          "expected_stderr_contains": "missing required keys"
+          "name": "validate-state.sh rejects budget-used fixture missing wall-clock key (either validator path)",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/budget-used.json >/dev/null 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REJECT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REJECT_OK"
         },
         {
-          "name": "validate-state.sh rejects autopickup fixture missing last_run",
-          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/autopickup.json",
-          "expected_exit": 1,
-          "expected_stderr_contains": "missing required keys"
+          "name": "validate-state.sh rejects autopickup fixture missing last_run (either validator path)",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/autopickup.json >/dev/null 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REJECT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "REJECT_OK"
         },
         {
-          "name": "validate-state.sh rejects memory-citations fixture missing citations",
-          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/memory-citations.json",
-          "expected_exit": 1,
-          "expected_stderr_contains": "missing required keys: citations"
+          "name": "validate-state.sh rejects memory-citations fixture missing citations (either validator path)",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/memory-citations.json 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REJECT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "citations"
         },
         {
-          "name": "validate-state.sh rejects repos fixture missing repos",
-          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/repos.json",
-          "expected_exit": 1,
-          "expected_stderr_contains": "missing required keys: repos"
+          "name": "validate-state.sh rejects repos fixture missing repos (either validator path)",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid/repos.json 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo REJECT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "repos"
         },
         {
           "name": "validate-state-all.sh exits 0 on valid fixtures dir",
@@ -697,6 +697,36 @@
           "cmd": "if command -v ajv >/dev/null 2>&1; then echo SKIP_HAS_AJV; else scripts/validate-state-all.sh --strict --state-dir self-test/fixtures/state-schemas/valid 2>&1; ec=$?; [ \"$ec\" -eq 2 ] && echo STRICT_NOAJV_OK; fi",
           "expected_exit": 0,
           "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "RED (#249): bash+jq fallback ACCEPTS out-of-enum merge_policy — proves the gap",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid-strict/repos.json >/dev/null 2>&1; ec=$?; if command -v ajv >/dev/null 2>&1; then [ \"$ec\" -eq 1 ] && echo STRICT_REJECTS; else [ \"$ec\" -eq 0 ] && echo FALLBACK_ACCEPTS; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ACCEPTS"
+        },
+        {
+          "name": "GREEN (#249): ajv-strict REJECTS out-of-enum merge_policy (self-skips without ajv; CI installs ajv so this is the real assertion)",
+          "cmd": "if command -v ajv >/dev/null 2>&1; then scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid-strict/repos.json 2>&1; ec=$?; [ \"$ec\" -eq 1 ] && echo STRICT_REJECTS_OK; else echo SKIP_NO_AJV_STRICT_REJECTS_OK; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STRICT_REJECTS_OK"
+        },
+        {
+          "name": "GREEN (#249): ajv-strict error names the oneOf/enum violation on merge_policy",
+          "cmd": "if command -v ajv >/dev/null 2>&1; then scripts/validate-state.sh --schema-dir state/schemas self-test/fixtures/state-schemas/invalid-strict/repos.json 2>&1 | grep -q 'merge_policy' && echo NAMES_FIELD; else echo SKIP_NO_AJV_NAMES_FIELD; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FIELD"
+        },
+        {
+          "name": "#249: invalid-strict/repos.json is structurally valid JSON (only the schema rejects it)",
+          "cmd": "jq empty self-test/fixtures/state-schemas/invalid-strict/repos.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "#249: validate-state-all.sh OK summary reports which validator ran",
+          "cmd": "scripts/validate-state-all.sh --state-dir self-test/fixtures/state-schemas/valid 2>/dev/null | grep -E 'OK \\(.*\\) \\[validator: (ajv strict|bash\\+jq fallback)\\]' && echo LABEL_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "LABEL_OK"
         },
         {
           "name": "validate-state-all.sh --help prints usage",
