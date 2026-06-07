@@ -20,4 +20,3 @@
 | 3 | the command prints the expected token | `sh -c 'echo READY'` | exit 0 / `READY` | PASS | ran it -> exit 0; stdout `READY` |
 | 4 | a known-broken path is observed broken | `sh -c 'exit 3'` | nonzero | FAIL | observed exit 3 |
 | 5 | needs production data, not run in worker scope | `psql -f down.sql` | clean rollback | UNVERIFIED | no live DB in worker scope |
-</content>

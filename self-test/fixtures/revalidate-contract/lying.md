@@ -13,4 +13,3 @@
 |---|---|---|---|---|---|
 | 1 | the feature works | `sh -c 'exit 1'` | exit 0 | PASS | works -- ran it, all green |
 | 2 | this one is honest | `sh -c 'exit 0'` | exit 0 | PASS | ran it -> exit 0 |
-</content>

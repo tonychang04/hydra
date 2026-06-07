@@ -54,9 +54,13 @@
 #     fail the gate.
 #
 # Exit codes:
-#   0 = every re-runnable claimed-PASS row reproduced its expectation
-#       (UNVERIFIED/SKIPPED + WARN-only rows do not fail the gate).
-#   1 = at least one claimed-PASS row did NOT reproduce (lying / stale evidence).
+#   0 = at least one command re-ran AND every re-runnable claimed-PASS row
+#       reproduced its expectation (UNVERIFIED/SKIPPED + WARN-only rows do not
+#       fail the gate).
+#   1 = at least one claimed-PASS row did NOT reproduce (lying / stale evidence),
+#       OR zero commands re-ran at all (all rows UNVERIFIED/prose-only — the gate
+#       ran nothing, so it emits NO-RUNS/UNVALIDATED and refuses to certify; a
+#       truth-checker that ran nothing must never report success).
 #   2 = usage / parse error (no contract table, unreadable file, bad header).
 
 set -euo pipefail
@@ -106,7 +110,9 @@ Re-run rules:
   - A claimed-PASS row that does not reproduce is a MISMATCH.
 
 Exit codes:
-  0 = all claimed-PASS rows reproduced   1 = a claimed-PASS row did not reproduce
+  0 = >=1 command re-ran AND all claimed-PASS rows reproduced
+  1 = a claimed-PASS row did not reproduce, OR zero commands re-ran
+      (all rows UNVERIFIED/prose-only -> NO-RUNS/UNVALIDATED, never certified)
   2 = usage / parse error (no table found, bad header, unreadable file)
 
 Spec: docs/specs/2026-06-07-worker-validator.md
@@ -358,15 +364,24 @@ expected_exit() {
 }
 
 # -----------------------------------------------------------------------------
-# expected_says_nonzero — true (0) if Expected indicates a nonzero/failure
-# outcome without a specific number ("nonzero", "non-zero", "fails", "error").
+# expected_says_nonzero — true (0) ONLY when Expected CLEARLY specifies a
+# nonzero/failure *exit code* without a specific number ("exits nonzero",
+# "nonzero exit", "non-zero exit code"). Tightened in the #256 review: matching
+# bare prose words like "fails" / "rejects" anywhere in the Expected cell caused
+# spurious MISMATCHes (a claimed-PASS row whose Expected merely *describes*
+# rejecting bad input — "rejects malformed input and fails gracefully" — but
+# whose command legitimately exits 0 would be flagged, wrongly paging
+# commander-stuck). The heuristic must only fire on exit-coupled phrasing; all
+# other prose falls back to the verdict (see the call site). The token must be
+# adjacent to "exit"/"exit code" so arbitrary prose never trips it.
 # -----------------------------------------------------------------------------
 expected_says_nonzero() {
   local lower
   lower="$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
-  case "$lower" in
-    *nonzero*|*non-zero*|*"fails"*|*"failure"*|*"rejects"*) return 0 ;;
-  esac
+  # "exits nonzero", "exit nonzero", "exits non-zero", "exit non-zero"
+  if [[ "$lower" =~ exit[s]?[[:space:]]+non-?zero ]]; then return 0; fi
+  # "nonzero exit", "non-zero exit", "nonzero exit code"
+  if [[ "$lower" =~ non-?zero[[:space:]]+exit ]]; then return 0; fi
   return 1
 }
 
@@ -532,6 +547,22 @@ echo ""
 if [[ "$mismatches" -gt 0 ]]; then
   echo "${C_RED}${C_BOLD}revalidate-contract: FAIL${C_RESET} ($mismatches mismatch(es); $ran re-run, $skipped skipped, $warns warn) over $row_count row(s)" >&2
   echo "${C_DIM}  A claimed-PASS assertion did not reproduce when re-run — the pasted evidence is stale or false.${C_RESET}" >&2
+  exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# zero-run guard (correctness hole, #256 review): a truth gate that re-ran NO
+# command must NEVER certify VALIDATED. If every row was SKIPPED (all UNVERIFIED
+# / prose-only / placeholder-command), nothing was actually verified — exiting 0
+# would falsely claim runtime truth on the strength of zero evidence. Emit an
+# explicit no-runs verdict and exit nonzero so the validator surfaces it instead
+# of green-lighting the PR. (mismatches == 0 here because we passed the check
+# above; the distinction we draw is "0 reproduced because 0 ran" vs "N reproduced".)
+# -----------------------------------------------------------------------------
+if [[ "$ran" -eq 0 ]]; then
+  echo "${C_RED}${C_BOLD}revalidate-contract: UNVALIDATED${C_RESET} (NO-RUNS: 0 commands re-run; $skipped skipped, $warns warn) over $row_count row(s)" >&2
+  echo "${C_DIM}  Every row was UNVERIFIED / prose-only — the truth gate ran nothing, so it cannot certify success.${C_RESET}" >&2
+  echo "${C_DIM}  At least one claimed-PASS assertion must carry a runnable Command. See docs/specs/2026-06-07-worker-validator.md${C_RESET}" >&2
   exit 1
 fi
 

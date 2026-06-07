@@ -285,5 +285,3 @@ Also run + paste into the PR:
   + the fixture dir + the golden case + the CLAUDE.md row/clause + the
   worker-review cross-reference note. The #255 contract + presence gate keep
   working unchanged; removal is clean (nothing else calls `revalidate-contract.sh`).
-</content>
-</invoke>

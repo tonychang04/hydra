@@ -139,11 +139,15 @@ run --file "$tmpdir/t5.md"
 if [[ "$EC" -eq 1 ]]; then ok "exit-code disagreement caught"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
 
 # ---------- Test 6: UNVERIFIED rows are SKIPPED, not run ----------
+# Includes one real PASS row so the contract has a re-run (>=1) and is not
+# rejected by the zero-run guard (#256 review); the assertion under test is that
+# the UNVERIFIED row's command is never executed and never fails the gate.
 say "Test 6: UNVERIFIED row is SKIPPED (command never run) -> exit 0"
 cat > "$tmpdir/t6.md" <<'EOF'
 | # | Assertion | Command | Expected | Verdict | Evidence |
 |---|---|---|---|---|---|
-| 1 | needs prod data | `sh -c 'echo SHOULD_NOT_RUN; exit 7'` | rollback | UNVERIFIED | no live DB |
+| 1 | a real check runs | `sh -c 'exit 0'` | exit 0 | PASS | ran it -> exit 0 |
+| 2 | needs prod data | `sh -c 'echo SHOULD_NOT_RUN; exit 7'` | rollback | UNVERIFIED | no live DB |
 EOF
 run --file "$tmpdir/t6.md"
 if [[ "$EC" -eq 0 ]]; then ok "UNVERIFIED does not fail the gate"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
@@ -274,6 +278,64 @@ EOF
 run_utf8_ctype --file "$tmpdir/t15c.md" --cwd "$tmpdir"
 if [[ "$EC" -eq 0 ]]; then ok "raw 0xff byte in output -> exit 0 (no crash)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
 if grep -qi "Illegal byte sequence" "$tmpdir/out"; then bad "tr threw 'Illegal byte sequence' on raw 0xff byte"; else ok "no 'Illegal byte sequence' on raw 0xff byte"; fi
+
+# ---------- Test 16: ZERO re-runs must NOT certify (correctness hole #256 review) ----------
+# A truth-checker that ran nothing must never report success. A contract whose
+# rows are all UNVERIFIED / prose-only (no claimed-PASS command actually runs)
+# has ran == 0. Exiting 0/VALIDATED there is a lie: nothing was verified. The
+# gate must reject it (nonzero) with an explicit no-runs verdict.
+say "Test 16: all-UNVERIFIED contract (zero re-runs) is NOT certified -> nonzero"
+cat > "$tmpdir/t16.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | needs prod data | `psql -f up.sql` | clean apply | UNVERIFIED | no live DB in worker scope |
+| 2 | needs prod data | `psql -f down.sql` | clean rollback | UNVERIFIED | no live DB in worker scope |
+EOF
+run --file "$tmpdir/t16.md"
+if [[ "$EC" -ne 0 ]]; then ok "zero-run contract rejected (exit $EC, not 0)"; else bad "zero-run contract WRONGLY certified (exit 0); out: $(cat "$tmpdir/out")"; fi
+if grep -qiE "no.?runs?|nothing|unvalidated|zero" "$tmpdir/out"; then ok "emits an explicit no-runs verdict"; else bad "expected an explicit no-runs/UNVALIDATED verdict; out: $(cat "$tmpdir/out")"; fi
+
+# 16b: a single prose-only row with no parseable command verdict still counts as
+# zero re-runs when SKIPPED — but a normal PASS row that DID run must keep exit 0
+# (guard: the zero-run rule must not regress an honest single-PASS contract).
+say "Test 16b: a single real PASS row (one re-run) still certifies -> exit 0"
+cat > "$tmpdir/t16b.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | one honest run | `sh -c 'exit 0'` | exit 0 | PASS | ran it -> exit 0 |
+| 2 | needs prod data | `psql -f down.sql` | rollback | UNVERIFIED | no live DB |
+EOF
+run --file "$tmpdir/t16b.md"
+if [[ "$EC" -eq 0 ]]; then ok "one real re-run + one skip still certifies (exit 0)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 17: prose Expected must NOT trigger a false MISMATCH (#256 review) ----------
+# Operational-risk fix: the exit-heuristic must only treat a row as an
+# exit-expectation when Expected CLEARLY names an exit code (`exit <n>` /
+# `exits nonzero`). Arbitrary prose in Expected (e.g. "rejects bad input and
+# returns a clean state") must NOT be read as "expects nonzero exit" — for a
+# claimed-PASS row whose command legitimately exits 0, that would be a spurious
+# MISMATCH that wrongly pages commander-stuck. Fall back to the verdict: PASS +
+# exit 0 = reproduced.
+say "Test 17: prose-Expected PASS row, command exits 0 -> NOT a false MISMATCH (exit 0)"
+cat > "$tmpdir/t17.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | validates and rejects malformed input, returns clean | `sh -c 'exit 0'` | rejects bad input and the handler fails gracefully | PASS | ran it -> exit 0; behaves |
+EOF
+run --file "$tmpdir/t17.md"
+if [[ "$EC" -eq 0 ]]; then ok "prose with 'rejects'/'fails' words + exit 0 PASS -> exit 0 (no false mismatch)"; else bad "FALSE MISMATCH on prose Expected; expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qiE "mismatch" "$tmpdir/out"; then bad "wrongly reported MISMATCH on prose Expected"; else ok "no spurious MISMATCH reported"; fi
+
+# 17b: but an explicit `exits nonzero` Expected on a command that exits 0 IS still
+# a real mismatch (we tightened the heuristic, we did not remove it).
+say "Test 17b: explicit 'exits nonzero' Expected, command exits 0 -> still MISMATCH (exit 1)"
+cat > "$tmpdir/t17b.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | the guard exits nonzero on bad input | `sh -c 'exit 0'` | exits nonzero | PASS | claimed it rejects |
+EOF
+run --file "$tmpdir/t17b.md"
+if [[ "$EC" -eq 1 ]]; then ok "explicit 'exits nonzero' disagreement still caught"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
 
 # ---------- summary ----------
 echo ""
