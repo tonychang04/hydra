@@ -1,0 +1,13 @@
+{
+  "_description": "Fixture autopickup.json for the scheduled-checks + memory-hygiene self-test (#239). last_retro_run is stale (a prior ISO week) so Monday-09:00 detection fires; last_promotion_run is null so promotion is due; tickets_at_last_hygiene is 0 so the hygiene counter trips at threshold.",
+  "enabled": true,
+  "interval_min": 30,
+  "auto_enable_on_session_start": true,
+  "last_run": "2026-06-06T08:00:00Z",
+  "last_picked_count": 0,
+  "consecutive_rate_limit_hits": 0,
+  "last_retro_run": "2026-05-25T09:00:00",
+  "last_promotion_run": null,
+  "last_audit_run": null,
+  "tickets_at_last_hygiene": 0
+}

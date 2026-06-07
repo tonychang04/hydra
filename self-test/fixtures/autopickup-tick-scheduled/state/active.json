@@ -1,0 +1,6 @@
+{
+  "workers": [
+    {"id": "w-401", "ticket": "tonychang04/hydra#401", "repo": "tonychang04/hydra", "tier": "T2", "started_at": "2026-06-06T10:00:00Z", "subagent_type": "worker-implementation", "status": "running", "worktree": "/fixture/wt-401", "branch": "hydra/commander/401"}
+  ],
+  "last_updated": "2026-06-06T10:00:00Z"
+}

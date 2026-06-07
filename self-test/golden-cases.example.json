@@ -3138,6 +3138,12 @@
           "cmd": "self-test/fixtures/autopickup-tick/run-smoke.sh",
           "expected_exit": 0,
           "expected_stdout_contains": "SMOKE_OK"
+        },
+        {
+          "name": "autopickup-tick scheduled-checks + memory-hygiene smoke (#239: Monday-retro detection + idempotency, hygiene trip at 10, rescue-probe on a stale worker, promotion-due delegation)",
+          "cmd": "self-test/fixtures/autopickup-tick-scheduled/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
         }
       ],
       "last_run": null,
