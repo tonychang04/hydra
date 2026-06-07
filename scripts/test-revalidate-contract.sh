@@ -71,6 +71,21 @@ run() {
   set -e
 }
 
+# run_utf8_ctype <args...> -> like run(), but forces a UTF-8 LC_CTYPE so the
+# byte-wise-tr regression (Test 15) reproduces deterministically regardless of
+# the CI runner's ambient locale. On a UTF-8 LC_CTYPE, BSD/macOS `tr` throws
+# "Illegal byte sequence" on bytes that are not valid in that encoding — which
+# arbitrary command output routinely contains (e.g. a multibyte char truncated
+# at the head -c 200 boundary). Picks the first available UTF-8 locale; sets
+# UTF8_LOCALE="" if none exists (caller skips the strict leg).
+UTF8_LOCALE="$(locale -a 2>/dev/null | grep -iE '\.UTF-?8$' | head -1 || true)"
+run_utf8_ctype() {
+  set +e
+  LC_ALL="$UTF8_LOCALE" NO_COLOR=1 bash "$CHECK" "$@" > "$tmpdir/out" 2>&1
+  EC=$?
+  set -e
+}
+
 # ---------- Test 1: LYING fixture passes the #255 PRESENCE gate (the gap) ----------
 say "Test 1: LYING fixture passes #255 presence gate (validate-contract.sh exit 0)"
 if [[ -f "$PRESENCE" && -f "$FIXDIR/lying.md" ]]; then
@@ -215,6 +230,50 @@ NO_COLOR=1 bash "$CHECK" --help > "$tmpdir/out" 2>&1
 EC=$?
 set -e
 if [[ "$EC" -eq 0 ]] && grep -qi "usage" "$tmpdir/out"; then ok "--help exits 0 with usage"; else bad "expected 0 + usage, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 15: UTF-8 command output does not crash the snippet capture ----------
+# Regression for the LC_ALL=C / "Illegal byte sequence" bug (#256): the re-run's
+# ACTUAL output is arbitrary and may contain multibyte UTF-8 (e.g. the self-test's
+# ━ / ✓ glyphs). The snippet capture `head -c 200 | tr '\n' ' '` runs `tr` under
+# the worker's ambient (UTF-8) LC_CTYPE; BSD/macOS `tr` then throws
+# "Illegal byte sequence" on bytes invalid in that encoding — including a
+# multibyte char truncated at the 200-byte boundary — and pipefail+set -e crash
+# the whole gate with a false FAIL on a valid PASS row. The 19-case suite missed
+# this because every fixture emits only ASCII. Fix: prefix `LC_ALL=C` so `tr`
+# operates byte-wise and never errors. This test is RED before the fix, GREEN after.
+say "Test 15: assertion command emits UTF-8 -> correct verdict, no 'Illegal byte sequence' crash"
+# 15a: short UTF-8 line (glyphs sit well inside the 200-byte snippet window).
+cat > "$tmpdir/t15a.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | emits a utf8 banner | `printf '%s\n' '━ ✓ done'` | exit 0 | PASS | ran it -> ━ ✓ done |
+EOF
+run_utf8_ctype --file "$tmpdir/t15a.md" --cwd "$tmpdir"
+if [[ "$EC" -eq 0 ]]; then ok "UTF-8 output (short) -> exit 0 (PASS reproduced)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qi "Illegal byte sequence" "$tmpdir/out"; then bad "tr threw 'Illegal byte sequence' on UTF-8 output"; else ok "no 'Illegal byte sequence' in output"; fi
+
+# 15b: a multibyte char straddling the head -c 200 truncation boundary — the
+# deterministic trigger. 199 'a's + '━' (3 bytes e2 94 80): head -c 200 keeps
+# 199 'a's + lone 0xe2, an invalid UTF-8 sequence that makes a locale-aware `tr` error.
+cat > "$tmpdir/t15b.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | utf8 char on the 200-byte boundary | `sh -c 'for i in $(seq 1 199); do printf a; done; printf "━ done\n"'` | exit 0 | PASS | ran it -> done |
+EOF
+run_utf8_ctype --file "$tmpdir/t15b.md" --cwd "$tmpdir"
+if [[ "$EC" -eq 0 ]]; then ok "UTF-8 char on truncation boundary -> exit 0 (no crash)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qi "Illegal byte sequence" "$tmpdir/out"; then bad "tr threw 'Illegal byte sequence' on boundary-truncated multibyte"; else ok "no 'Illegal byte sequence' on boundary-truncated multibyte"; fi
+
+# 15c: raw non-UTF-8 byte (0xff) in output — arbitrary binary always trips a
+# locale-aware tr; byte-wise tr must pass it through unharmed.
+cat > "$tmpdir/t15c.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | emits a raw non-utf8 byte | `printf 'a\377b\n'` | exit 0 | PASS | ran it |
+EOF
+run_utf8_ctype --file "$tmpdir/t15c.md" --cwd "$tmpdir"
+if [[ "$EC" -eq 0 ]]; then ok "raw 0xff byte in output -> exit 0 (no crash)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qi "Illegal byte sequence" "$tmpdir/out"; then bad "tr threw 'Illegal byte sequence' on raw 0xff byte"; else ok "no 'Illegal byte sequence' on raw 0xff byte"; fi
 
 # ---------- summary ----------
 echo ""

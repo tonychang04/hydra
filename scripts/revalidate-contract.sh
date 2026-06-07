@@ -206,7 +206,7 @@ is_placeholder() {
     "-"|"--"|"---"|"—"|"–") return 0 ;;
   esac
   local lower
-  lower="$(printf '%s' "$stripped" | tr '[:upper:]' '[:lower:]')"
+  lower="$(printf '%s' "$stripped" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   case "$lower" in
     "n/a"|"na"|"none"|"tbd"|"todo"|"pending"|"?") return 0 ;;
   esac
@@ -265,12 +265,12 @@ is_header_row() {
   cells="$(split_row "$line")"
   IFS=$'\x1f' read -r c0 c1 c2 c3 c4 c5 _rest <<< "$cells"
   local l0 l1 l2 l3 l4 l5
-  l0="$(printf '%s' "$c0" | tr '[:upper:]' '[:lower:]')"
-  l1="$(printf '%s' "$c1" | tr '[:upper:]' '[:lower:]')"
-  l2="$(printf '%s' "$c2" | tr '[:upper:]' '[:lower:]')"
-  l3="$(printf '%s' "$c3" | tr '[:upper:]' '[:lower:]')"
-  l4="$(printf '%s' "$c4" | tr '[:upper:]' '[:lower:]')"
-  l5="$(printf '%s' "$c5" | tr '[:upper:]' '[:lower:]')"
+  l0="$(printf '%s' "$c0" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  l1="$(printf '%s' "$c1" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  l2="$(printf '%s' "$c2" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  l3="$(printf '%s' "$c3" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  l4="$(printf '%s' "$c4" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  l5="$(printf '%s' "$c5" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   [[ "$l0" == "#" && "$l1" == "assertion" && "$l2" == "command" \
      && "$l3" == "expected" && "$l4" == "verdict" && "$l5" == "evidence" ]]
 }
@@ -351,7 +351,7 @@ run_bounded() {
 expected_exit() {
   local exp lower
   exp="$(trim "$1")"
-  lower="$(printf '%s' "$exp" | tr '[:upper:]' '[:lower:]')"
+  lower="$(printf '%s' "$exp" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   if [[ "$lower" =~ exit[s]?[[:space:]]+([0-9]+) ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
   fi
@@ -363,7 +363,7 @@ expected_exit() {
 # -----------------------------------------------------------------------------
 expected_says_nonzero() {
   local lower
-  lower="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  lower="$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   case "$lower" in
     *nonzero*|*non-zero*|*"fails"*|*"failure"*|*"rejects"*) return 0 ;;
   esac
@@ -429,7 +429,7 @@ for ((ln = data_start; ln <= ${#LINES[@]}; ln++)); do
   rownum="$(trim "$num")"
   [[ -n "$rownum" ]] || rownum="$row_count"
 
-  norm_verdict="$(printf '%s' "$(trim "$verdict")" | tr '[:lower:]' '[:upper:]')"
+  norm_verdict="$(printf '%s' "$(trim "$verdict")" | LC_ALL=C tr '[:lower:]' '[:upper:]')"
   cmd_str="$(unwrap_code "$command")"
   exp_cell="$(trim "$expected")"
 
@@ -447,7 +447,11 @@ for ((ln = data_start; ln <= ${#LINES[@]}; ln++)); do
   run_bounded "$cmd_str" "$tmp_out"
   actual_rc=$?
   set -e
-  snippet="$(head -c 200 "$tmp_out" | tr '\n' ' ')"
+  # $tmp_out is the re-run's ACTUAL output — arbitrary bytes (UTF-8, raw binary,
+  # a multibyte char truncated at the head -c 200 boundary). Prefix LC_ALL=C so
+  # `tr` operates byte-wise and never throws "Illegal byte sequence" (BSD/macOS
+  # tr does so under a UTF-8 LC_CTYPE on invalid sequences). See #256.
+  snippet="$(head -c 200 "$tmp_out" | LC_ALL=C tr '\n' ' ')"
 
   want_exit="$(expected_exit "$exp_cell")"
   want_sub="$(expected_substring "$exp_cell")"
