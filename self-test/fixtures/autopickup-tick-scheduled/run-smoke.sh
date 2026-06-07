@@ -131,6 +131,41 @@ echo "$hy_not" | jq -e '.hygiene.hygiene_due == false' >/dev/null \
 echo "$hy_not" | jq -e '.hygiene.hygiene_marker == ""' >/dev/null \
   || fail "hygiene_marker should be empty when not due" "$hy_not"
 
+# --- Fallback coherence (the #244 review fix) -----------------------------------
+# When --tickets-total is ABSENT, the tick MUST NOT compute from the daily-
+# resetting budget counter (subtracting a cumulative baseline from a daily count
+# clamps negative and silently suppresses hygiene forever). It must report
+# not-due with an explicit reason. Build a state where the OLD math would have
+# misbehaved: cumulative baseline 8, but only 2 tickets "today".
+FB_STATE="$(mktemp -d)"
+cp "$STATE_DIR/active.json" "$FB_STATE/active.json"
+jq '.tickets_at_last_hygiene = 8' \
+  "$STATE_DIR/autopickup.json" > "$FB_STATE/autopickup.json"
+# A daily-resetting counter the OLD code would have (wrongly) consumed.
+printf '{"tickets_completed_today": 2}\n' > "$FB_STATE/budget-used.json"
+fb_out="$(NO_COLOR=1 "$SCRIPT" --repo tonychang04/hydra --gh-mock "$GH_MOCK" \
+  --state-dir "$FB_STATE" --repos-file "$REPOS" --rescue-mock "$RESCUE_MOCK" --json \
+  --weekday 2 --hour 9 --week "$RETRO_WEEK")"
+rm -rf "$FB_STATE"
+echo "$fb_out" | jq -e '.hygiene.hygiene_due == false' >/dev/null \
+  || fail "hygiene must be not-due when --tickets-total is absent" "$fb_out"
+echo "$fb_out" | jq -e '.hygiene.hygiene_reason == "tickets-total not provided"' >/dev/null \
+  || fail "absent --tickets-total must report reason 'tickets-total not provided'" "$fb_out"
+echo "$fb_out" | jq -e '.hygiene.hygiene_marker == ""' >/dev/null \
+  || fail "hygiene_marker must be empty when total not provided" "$fb_out"
+# tickets_since must be 0, never the incoherent clamped (2-8) value.
+echo "$fb_out" | jq -e '.hygiene.tickets_since == 0' >/dev/null \
+  || fail "tickets_since must be 0 (not computed) when total absent" "$fb_out"
+
+# --hygiene-threshold 0 disables the check (reported, not tripped every tick).
+thr0_out="$(NO_COLOR=1 "$SCRIPT" "${common_args[@]}" \
+  --weekday 2 --hour 9 --week "$RETRO_WEEK" \
+  --tickets-total 50 --hygiene-threshold 0)"
+echo "$thr0_out" | jq -e '.hygiene.hygiene_due == false' >/dev/null \
+  || fail "threshold 0 must NOT trip hygiene every tick" "$thr0_out"
+echo "$thr0_out" | jq -e '.hygiene.hygiene_reason == "hygiene-threshold is 0 (disabled)"' >/dev/null \
+  || fail "threshold 0 must report the disabled reason" "$thr0_out"
+
 # =============================================================================
 # 3. RESCUE-PROBE invoked for a stale fixture worker
 # =============================================================================

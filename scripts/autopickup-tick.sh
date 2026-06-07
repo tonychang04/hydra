@@ -93,9 +93,14 @@ Options:
   --retros-dir <path>    Override memory/retros (retro file lookup + filer).
   --retro-file-cmd <cmd> Test-only: stub for retro-file-proposed-edits.sh; run
                          with the ISO week as $1.
-  --tickets-total <n>    Cumulative ticket count for the memory-hygiene counter.
-                         Default: budget-used.json:tickets_completed_today.
-  --hygiene-threshold <n> Compact-memory threshold (default 10).
+  --tickets-total <n>    CUMULATIVE ticket count for the memory-hygiene counter.
+                         When omitted, the hygiene check reports not-due with
+                         reason "tickets-total not provided" — it does NOT fall
+                         back to the daily-resetting budget-used counter (that
+                         math is dimensionally incoherent against the cumulative
+                         baseline and silently suppresses hygiene).
+  --hygiene-threshold <n> Compact-memory threshold (default 10). 0 disables the
+                         check (reported as not-due, reason "hygiene-threshold is 0").
   -h, --help             Show this help.
 
 AUTO-MERGE SAFETY RAILS:
@@ -191,7 +196,7 @@ fi
 if [[ -n "$weekday_override" && ! "$weekday_override" =~ ^[1-7]$ ]]; then
   echo "autopickup-tick: --weekday must be 1-7 (ISO; 1=Mon), got '$weekday_override'" >&2; exit 2
 fi
-if [[ -n "$hour_override" && ! "$hour_override" =~ ^([0-9]|1[0-9]|2[0-3])$ ]]; then
+if [[ -n "$hour_override" && ! "$hour_override" =~ ^(0?[0-9]|1[0-9]|2[0-3])$ ]]; then
   echo "autopickup-tick: --hour must be 0-23, got '$hour_override'" >&2; exit 2
 fi
 if [[ -n "$tickets_total_override" && ! "$tickets_total_override" =~ ^[0-9]+$ ]]; then
@@ -566,13 +571,22 @@ if [[ "$retro_due" == true ]]; then
     set +e
     if [[ -n "$retro_file_cmd" ]]; then
       retro_file_result="$(bash -c "$retro_file_cmd" _ "$now_week" 2>&1)"
+      retro_file_rc=$?
     elif [[ -x "$RETRO_FILER" ]]; then
       retro_file_result="$("$RETRO_FILER" "$now_week" --retros-dir "$RETROS_DIR" 2>&1)"
+      retro_file_rc=$?
     else
       retro_file_result="retro-file-proposed-edits.sh not found"
+      retro_file_rc=127
     fi
     set -e
-    retro_marker="retro-filed"
+    # Only claim "retro-filed" when the filer actually succeeded; otherwise say so
+    # so Commander doesn't believe the edits were filed when they weren't.
+    if [[ "$retro_file_rc" -eq 0 ]]; then
+      retro_marker="retro-filed"
+    else
+      retro_marker="retro-file-failed"
+    fi
   else
     # Retro is due but Commander hasn't written it yet — it must write first.
     retro_marker="retro-due-write-first"
@@ -609,35 +623,48 @@ scheduled_json="$(jq -nc \
 # =============================================================================
 # 4c. MEMORY-HYGIENE COUNTER  (compact every N tickets)
 # =============================================================================
-# Tracks a monotonic baseline (tickets_at_last_hygiene) against a cumulative
+# Tracks a monotonic baseline (tickets_at_last_hygiene) against a CUMULATIVE
 # ticket total. When tickets_since reaches the threshold (default 10), emit a
 # compact-memory marker. The tick does NOT reset the baseline — Commander resets
 # it after running the compaction (report-don't-mutate).
+#
+# CRITICAL coherence rule: the counter is only meaningful when a CUMULATIVE total
+# is supplied via --tickets-total. There is NO reliable cumulative source on disk
+# — budget-used.json:tickets_completed_today is a DAILY-RESETTING counter, and
+# subtracting the cumulative baseline (tickets_at_last_hygiene) from a daily
+# counter is dimensionally incoherent: a fresh day's small count minus a large
+# cumulative baseline clamps negative → tickets_since=0 → hygiene silently
+# suppressed forever. So when --tickets-total is absent we DO NOT compute from
+# the daily counter; we report hygiene as not-due with an explicit reason, making
+# the gap visible instead of silently wrong. (report-only; no spawn/merge/write.)
 tickets_at_last_hygiene=0
 if [[ -f "$AUTOPICKUP_FILE" ]]; then
   tickets_at_last_hygiene="$(jq -r '.tickets_at_last_hygiene // 0' "$AUTOPICKUP_FILE" 2>/dev/null || echo 0)"
 fi
 [[ "$tickets_at_last_hygiene" =~ ^[0-9]+$ ]] || tickets_at_last_hygiene=0
 
-# Cumulative ticket total: --tickets-total wins; else best-effort from
-# budget-used.json:tickets_completed_today (a partial signal when Commander did
-# not pass its running count).
-tickets_total=""
-if [[ -n "$tickets_total_override" ]]; then
-  tickets_total="$tickets_total_override"
-elif [[ -f "$BUDGET_USED_FILE" ]]; then
-  tickets_total="$(jq -r '.tickets_completed_today // 0' "$BUDGET_USED_FILE" 2>/dev/null || echo 0)"
-fi
-[[ "$tickets_total" =~ ^[0-9]+$ ]] || tickets_total=0
-
-tickets_since=$(( tickets_total - tickets_at_last_hygiene ))
-(( tickets_since < 0 )) && tickets_since=0
-
 hygiene_due=false
 hygiene_marker=""
-if (( tickets_since >= hygiene_threshold )); then
-  hygiene_due=true
-  hygiene_marker="compact-memory"
+hygiene_reason=""
+tickets_total=0
+tickets_since=0
+
+if [[ -z "$tickets_total_override" ]]; then
+  # No cumulative total provided → cannot compute coherently. Report, don't guess.
+  hygiene_reason="tickets-total not provided"
+elif (( hygiene_threshold == 0 )); then
+  # A threshold of 0 ("compact every 0 tickets") is meaningless; treat as disabled
+  # rather than tripping on every tick.
+  tickets_total="$tickets_total_override"
+  hygiene_reason="hygiene-threshold is 0 (disabled)"
+else
+  tickets_total="$tickets_total_override"
+  tickets_since=$(( tickets_total - tickets_at_last_hygiene ))
+  (( tickets_since < 0 )) && tickets_since=0
+  if (( tickets_since >= hygiene_threshold )); then
+    hygiene_due=true
+    hygiene_marker="compact-memory"
+  fi
 fi
 
 hygiene_json="$(jq -nc \
@@ -647,9 +674,11 @@ hygiene_json="$(jq -nc \
   --argjson threshold "$hygiene_threshold" \
   --argjson hygiene_due "$hygiene_due" \
   --arg hygiene_marker "$hygiene_marker" \
+  --arg hygiene_reason "$hygiene_reason" \
   '{tickets_total:$tickets_total, tickets_at_last_hygiene:$tickets_at_last_hygiene,
     tickets_since:$tickets_since, threshold:$threshold,
-    hygiene_due:$hygiene_due, hygiene_marker:$hygiene_marker}')"
+    hygiene_due:$hygiene_due, hygiene_marker:$hygiene_marker,
+    hygiene_reason:$hygiene_reason}')"
 
 # =============================================================================
 # 5. ACTIONS ROLL-UP
@@ -753,7 +782,7 @@ echo
 echo "Memory hygiene (compact every $(printf '%s' "$hygiene_json" | jq -r '.threshold') tickets):"
 printf '%s' "$hygiene_json" | jq -r '
   "  tickets since last hygiene: \(.tickets_since) (total \(.tickets_total) - baseline \(.tickets_at_last_hygiene)) / threshold \(.threshold)" ,
-  "  hygiene: \(if .hygiene_due then "DUE — compact memory + run promote-citations.sh" else "not due" end)"
+  "  hygiene: \(if .hygiene_due then "DUE — compact memory + run promote-citations.sh" else "not due" end)\(if (.hygiene_reason // "") != "" then " (" + .hygiene_reason + ")" else "" end)"
 '
 echo
 
