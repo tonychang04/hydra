@@ -115,24 +115,37 @@ if [[ ${#schemas[@]} -eq 0 ]]; then
   exit 2
 fi
 
+# Resolve which validator path the per-file runner will take. Same detection
+# logic validate-state.sh uses: honor $HYDRA_AJV_CLI if it resolves, else `ajv`
+# on PATH, else fall back to the bash+jq required-keys shim. We resolve it once
+# here so the summary can report WHICH validator actually ran — ticket #249. A
+# bash+jq fallback PASS must never be mistaken for a full Draft-07 strict pass:
+# the fallback enforces only required top-level keys (no enums, no oneOf), so a
+# schema-invalid file (e.g. an out-of-enum merge_policy) sails through it.
+ajv_bin=""
+if [[ -n "${HYDRA_AJV_CLI:-}" ]] && command -v "$HYDRA_AJV_CLI" >/dev/null 2>&1; then
+  ajv_bin="$HYDRA_AJV_CLI"
+elif command -v ajv >/dev/null 2>&1; then
+  ajv_bin="ajv"
+fi
+
+# Human-readable label for the active path, used in the summary line.
+if [[ -n "$ajv_bin" ]]; then
+  validator_label="ajv strict"
+else
+  validator_label="bash+jq fallback"
+fi
+
 # --strict → enforce ajv presence up-front so the user gets one clear error,
 # not one per file.
-if [[ "$strict" -eq 1 ]]; then
-  ajv_bin=""
-  if [[ -n "${HYDRA_AJV_CLI:-}" ]] && command -v "$HYDRA_AJV_CLI" >/dev/null 2>&1; then
-    ajv_bin="$HYDRA_AJV_CLI"
-  elif command -v ajv >/dev/null 2>&1; then
-    ajv_bin="ajv"
-  fi
-  if [[ -z "$ajv_bin" ]]; then
-    cat >&2 <<EOF
+if [[ "$strict" -eq 1 ]] && [[ -z "$ajv_bin" ]]; then
+  cat >&2 <<EOF
 ✗ --strict requested but ajv-cli not found.
 Install with:
   npm install -g ajv-cli ajv-formats
 Or set HYDRA_AJV_CLI to an explicit binary path.
 EOF
-    exit 2
-  fi
+  exit 2
 fi
 
 passed=0
@@ -228,12 +241,20 @@ fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Ticket #249: surface which validator ran so a weak fallback pass is never
+# mistaken for a full Draft-07 strict pass. When the fallback ran, warn loudly
+# that enums/oneOf were NOT enforced and point at the fix.
+if [[ "$validator_label" == "bash+jq fallback" ]]; then
+  echo "validate-state-all: WARN — ran bash+jq fallback (enums/oneOf NOT enforced). Install ajv-cli for full Draft-07 validation: npm install -g ajv-cli ajv-formats" >&2
+fi
+
 if [[ ${#failed_files[@]} -eq 0 ]]; then
-  echo "validate-state-all: OK ($passed passed, $skipped skipped)"
+  echo "validate-state-all: OK ($passed passed, $skipped skipped) [validator: $validator_label]"
   exit 0
 fi
 
-echo "validate-state-all: FAIL ($passed passed, ${#failed_files[@]} failed, $skipped skipped)" >&2
+echo "validate-state-all: FAIL ($passed passed, ${#failed_files[@]} failed, $skipped skipped) [validator: $validator_label]" >&2
 for f in "${failed_files[@]}"; do
   echo "  ✗ $f" >&2
 done
