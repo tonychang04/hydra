@@ -3251,6 +3251,40 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "revalidate-contract-script",
+      "_description": "Script-only self-test for the #256 TRUTH gate: scripts/revalidate-contract.sh re-runs each validation-contract assertion's command and catches lying evidence (a PASS pasted for a command that actually fails). Exercises the RED->GREEN fixtures under self-test/fixtures/revalidate-contract/ and the full regression test. Commander runs this before committing changes to revalidate-contract.sh or its fixtures. Spec: docs/specs/2026-06-07-worker-validator.md",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "lying fixture passes the #255 PRESENCE gate (proves presence != truth)",
+          "cmd": "scripts/validate-contract.sh --file self-test/fixtures/revalidate-contract/lying.md",
+          "expected_exit": 0
+        },
+        {
+          "name": "lying fixture is CAUGHT by the #256 TRUTH gate (re-run mismatch)",
+          "cmd": "scripts/revalidate-contract.sh --file self-test/fixtures/revalidate-contract/lying.md --cwd self-test/fixtures/revalidate-contract",
+          "expected_exit": 1,
+          "expected_stderr_contains": "MISMATCH"
+        },
+        {
+          "name": "honest fixture reproduces under re-run (truth gate clean)",
+          "cmd": "scripts/revalidate-contract.sh --file self-test/fixtures/revalidate-contract/honest.md --cwd self-test/fixtures/revalidate-contract",
+          "expected_exit": 0,
+          "expected_stdout_contains": "revalidate-contract: OK"
+        },
+        {
+          "name": "full revalidate-contract RED->GREEN regression test is green",
+          "cmd": "scripts/test-revalidate-contract.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "test-revalidate-contract: OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

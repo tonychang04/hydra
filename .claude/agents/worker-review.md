@@ -52,6 +52,8 @@ skill is the single source of scoping truth.
 13. If any blocker has `SECURITY:` prefix, also `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-stuck"` — commander will page the operator
 14. Otherwise: `gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=commander-reviewed"` and return
 
+**You are the SCRUTINY half of the gate; runtime TRUTH is `worker-validator`'s job (#256).** Your contract check in step 3b verifies the contract *exists + passes the presence gate* (`validate-contract.sh`: every PASS has pasted evidence). It does NOT re-run the commands — a worker could paste `echo works` as evidence for a command that actually fails, and the presence gate passes. Closing that gap is the **separate** `worker-validator` worker Commander spawns **after** you (`docs/specs/2026-06-07-worker-validator.md`): it RE-RUNS each assertion's command (`scripts/revalidate-contract.sh`) and, for UI/behavioral tickets, drives the app via `browse`/`verify`. Do NOT re-run the contract commands yourself — that is the validator's role, kept separate so its runtime judgment is not biased by your scrutiny pass. Flag a *suspicious* pasted evidence cell as a Concern; the validator proves it false.
+
 Note: label application uses the REST API (`/repos/.../issues/<n>/labels`) rather than `gh pr edit --add-label`, because `gh pr edit` hits the GraphQL API and currently fails with a Projects (classic) deprecation error. The REST endpoint accepts a PR number as an issue number (PRs are issues in GitHub's data model) and is unaffected. Keep `gh label create` for lazy label creation — only the `--add-label` step has the deprecation issue.
 
 ## Anti-stall discipline (no foreground-blocking commands, MANDATORY)
