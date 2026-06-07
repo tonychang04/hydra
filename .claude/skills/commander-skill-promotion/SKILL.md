@@ -1,5 +1,6 @@
 ---
 name: commander-skill-promotion
+version: 1.0.0
 description: |
   Preview and steer the memory→skill promotion pipeline before a draft PR
   appears. Use when the operator asks "what's about to be promoted?", says

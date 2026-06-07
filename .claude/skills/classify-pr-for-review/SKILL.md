@@ -1,5 +1,6 @@
 ---
 name: classify-pr-for-review
+version: 1.0.0
 description: |
   Scope a PR diff before reviewing it: decide which files matter (source,
   tests, specs), which are noise to ignore (lockfiles, generated output,

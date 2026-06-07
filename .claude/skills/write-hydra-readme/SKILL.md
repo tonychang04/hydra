@@ -1,5 +1,6 @@
 ---
 name: write-hydra-readme
+version: 1.0.0
 description: |
   Write the FIRST README for a fresh or bare InsForge-family downstream repo
   (CLI, SDK, MCP server, a new service) — NOT Hydra itself. Use when a worker

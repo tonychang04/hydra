@@ -1,5 +1,6 @@
 ---
 name: apply-label-via-rest
+version: 1.0.0
 description: |
   Apply, remove, or create GitHub labels on PRs and issues via the REST API
   (`gh api --method POST /repos/<owner>/<repo>/issues/<n>/labels`). Use for

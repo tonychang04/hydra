@@ -1,5 +1,6 @@
 ---
 name: author-repo-skill
+version: 1.0.0
 description: |
   Author a NEW Hydra repo-local skill under .claude/skills/<name>/SKILL.md. Use
   when a worker ticket asks to "add a skill", "seed a skill", or "promote this

@@ -1,5 +1,6 @@
 ---
 name: worker-resume-from-rescue
+version: 1.0.0
 description: |
   Resume a Hydra ticket branch after Commander ran `scripts/rescue-worker.sh
   --rescue`. Use when the spawn prompt contains a "resume from rescue" hint,
