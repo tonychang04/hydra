@@ -49,6 +49,57 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "assert-stdout-contains-green",
+      "_description": "expected_stdout_contains happy path: stdout contains the needle, exit 0 — the case PASSES. Paired with assert-stdout-contains-red to prove the assertion actually runs (#250).",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "stdout contains needle",
+          "cmd": "printf 'hello world\\n'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "hello"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "assert-stdout-contains-red",
+      "_description": "expected_stdout_contains RED proof: stdout is 'hello' but the step expects 'goodbye'. Exit code matches (0), so before #250 the runner IGNORED the field and the case PASSED — false confidence. After #250 the runner asserts on stdout and this case MUST FAIL (exit 1). runner-meta asserts the nonzero exit + the 'stdout did not contain' message.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "stdout missing needle should fail the case",
+          "cmd": "printf 'hello world\\n'",
+          "expected_exit": 0,
+          "expected_stdout_contains": "goodbye"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
+    },
+    {
+      "id": "unknown-key",
+      "_description": "Unknown-key guard proof: the step carries 'expected_stduot_contains' (deliberate typo of expected_stdout_contains). Before #250 this typo was silently ignored — the step passed on exit code alone. After #250 the runner MUST FAIL the case (exit 1) with a message naming the unknown key, so typos/unsupported fields are loud not silent. runner-meta asserts the nonzero exit + the 'unknown key' message.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "step with a typo'd assertion key",
+          "cmd": "printf 'hello\\n'",
+          "expected_exit": 0,
+          "expected_stduot_contains": "hello"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

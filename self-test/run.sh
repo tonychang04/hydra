@@ -316,15 +316,35 @@ run_script_case() {
   local failed_step_idx="" failed_reason=""
   local step_stdout_all="" step_stderr_all=""
 
+  # Known per-step keys. Any other (non-comment) key in a step object is a typo
+  # or an unsupported field, and is rejected (fail-fast) rather than silently
+  # ignored — see docs/specs/2026-06-07-self-test-assertion-keys.md (#250).
+  # `timeout_sec` is an intentional advisory field used by some cases; keys
+  # beginning with "_" are treated as comments (same convention as case-level
+  # _comment / _description rows) and allowed.
+  local known_step_keys='["name","cmd","expected_exit","expected_stdout_jq","expected_stderr_contains","expected_stdout_contains","timeout_sec"]'
+
   local step_json
   while IFS= read -r step_json; do
     i=$((i + 1))
-    local cmd expected_exit expected_stdout_jq expected_stderr_contains step_name
+    local cmd expected_exit expected_stdout_jq expected_stderr_contains expected_stdout_contains step_name unknown_key
     cmd="$(jq -r '.cmd // empty' <<<"$step_json")"
     step_name="$(jq -r '.name // ""' <<<"$step_json")"
     expected_exit="$(jq -r '.expected_exit // 0' <<<"$step_json")"
     expected_stdout_jq="$(jq -r '.expected_stdout_jq // empty' <<<"$step_json")"
     expected_stderr_contains="$(jq -r '.expected_stderr_contains // empty' <<<"$step_json")"
+    expected_stdout_contains="$(jq -r '.expected_stdout_contains // empty' <<<"$step_json")"
+
+    # Fail fast on any unknown/unsupported step key (typos, dead metadata).
+    unknown_key="$(jq -r \
+      --argjson known "$known_step_keys" \
+      '(keys - $known) | map(select(startswith("_") | not)) | .[0] // empty' \
+      <<<"$step_json")"
+    if [[ -n "$unknown_key" ]]; then
+      failed_step_idx="$i"
+      failed_reason="step $i ($step_name): unknown key '$unknown_key' (typo or unsupported field; known keys: name, cmd, expected_exit, expected_stdout_jq, expected_stderr_contains, expected_stdout_contains, timeout_sec)"
+      break
+    fi
 
     if [[ -z "$cmd" ]]; then
       failed_step_idx="$i"
@@ -375,6 +395,18 @@ run_script_case() {
       if ! grep -Fq -- "$expected_stderr_contains" "$stderr_tmp"; then
         failed_step_idx="$i"
         failed_reason="step $i ($step_name): stderr did not contain '$expected_stderr_contains'"
+        step_stdout_all="$(cat "$stdout_tmp")"
+        step_stderr_all="$(cat "$stderr_tmp")"
+        rm -f "$stdout_tmp" "$stderr_tmp"
+        break
+      fi
+    fi
+
+    # Check expected_stdout_contains (substring assert on captured stdout).
+    if [[ -n "$expected_stdout_contains" ]]; then
+      if ! grep -Fq -- "$expected_stdout_contains" "$stdout_tmp"; then
+        failed_step_idx="$i"
+        failed_reason="step $i ($step_name): stdout did not contain '$expected_stdout_contains'"
         step_stdout_all="$(cat "$stdout_tmp")"
         step_stderr_all="$(cat "$stderr_tmp")"
         rm -f "$stdout_tmp" "$stderr_tmp"
