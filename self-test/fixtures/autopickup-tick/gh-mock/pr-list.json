@@ -78,5 +78,25 @@
     "labels": [{ "name": "commander-reviewed" }],
     "statusCheckRollup": [{ "conclusion": "SUCCESS" }],
     "reviewDecision": "APPROVED"
+  },
+  {
+    "number": 309,
+    "title": "chore: edit a repo's merge_policy in repos.json",
+    "url": "https://github.com/fixture-org/team-repo/pull/309",
+    "headRefName": "hydra/commander/309",
+    "isDraft": false,
+    "labels": [{ "name": "commander-reviewed" }],
+    "statusCheckRollup": [{ "conclusion": "SUCCESS" }],
+    "reviewDecision": "APPROVED"
+  },
+  {
+    "number": 310,
+    "title": "chore: edit repos.schema.json (merge authority schema)",
+    "url": "https://github.com/fixture-org/team-repo/pull/310",
+    "headRefName": "hydra/commander/310",
+    "isDraft": false,
+    "labels": [{ "name": "commander-reviewed" }],
+    "statusCheckRollup": [{ "conclusion": "SUCCESS" }],
+    "reviewDecision": "APPROVED"
   }
 ]

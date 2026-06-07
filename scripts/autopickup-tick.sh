@@ -320,6 +320,10 @@ is_safety_rail_path() {
     scripts/merge-policy-lookup.sh|scripts/autopickup-tick.sh|\
     scripts/pr-shepherd.sh|scripts/rescue-worker.sh) return 0 ;;
     policy.md|CLAUDE.md) return 0 ;;
+    # Merge-authority config: a PR editing a repo's OWN merge_policy (repos.json)
+    # or the schema that governs it must NEVER auto-merge — it could grant itself
+    # auto-merge rights. Always surface for human review. (ticket #245 review)
+    state/repos.json|state/schemas/repos.schema.json) return 0 ;;
     .github/workflows/*) return 0 ;;
   esac
   case "$p" in
