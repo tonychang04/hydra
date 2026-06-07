@@ -66,6 +66,35 @@ The milestone, in order, as your FIRST concrete actions after Step 0:
 
 Because the draft PR already exists from this milestone, the Flow's PR step (step 6) is a **finalize**, not a create: do NOT call `gh pr create` again (it errors "a pull request for branch X already exists" — see `memory/learnings-hydra.md` 2026-04-17 #84). Push the final commits (they append to the existing PR) and update the body with `gh api --method PATCH /repos/.../pulls/<n> -f body=…` to the full summary + test plan.
 
+## Validation contract (verify-first, MANDATORY for non-trivial tickets)
+
+**Write a `validation-contract.md` at your worktree root BEFORE you implement — then fill it with captured EVIDENCE before you finalize the PR.** This is Hydra's structural defense against its #1 documented weakness: workers CLAIMING tests ran when they did not (`memory/MEMORY.md` → `feedback_context_and_testing_weakness`, `feedback_integration_test_completeness`). The contract makes verification produce a *file + exit code*, not chat prose. It is the implementer-side companion to the reviewer-side evidence gate (#196). Spec: `docs/specs/2026-06-07-validation-contract.md`.
+
+The artifact is a 6-column Markdown table; derive the rows from the ticket's acceptance criteria:
+
+```markdown
+# Validation contract — #<ticket>
+
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | <acceptance criterion, one line> | `<command that proves it>` | exit 0 / `<expected output>` | PASS | `<command>` -> exit 0; `<output snippet>` |
+```
+
+Two phases:
+
+1. **Phase 1 — verify-first (right after the spec / skeleton commit, before code):** fill Assertion + Command + Expected for every acceptance criterion. Leave Verdict/Evidence blank or `UNVERIFIED`. Commit it alongside the skeleton so a stall leaves the contract on the draft PR.
+2. **Phase 2 — fill evidence (before you finalize the PR, Flow step 6):** RUN each command, capture the real exit code + output, fill Verdict (`PASS`/`FAIL`/`UNVERIFIED`) + Evidence. A `PASS` REQUIRES concrete evidence; a criterion you could not run is `UNVERIFIED`, never `PASS`. Then run the gate:
+
+   ```bash
+   bash "$COMMANDER_ROOT/scripts/validate-contract.sh" --file "<worktree>/validation-contract.md"
+   ```
+
+   It MUST exit 0 (every row names a command; every PASS carries evidence) before you finalize the PR. Exit 1 = an unproven assertion (fix the table); exit 2 = the table is missing/garbled.
+
+**Commit the contract for Hydra's own tickets** (it's a first-class artifact the reviewer + operator read; #256 worker-validator will consume it). **For external target repos**, keep it local — add `validation-contract.md` to `.git/info/exclude` so it doesn't land in the downstream repo's tree (same guardrail as `docker-compose.override.yml`).
+
+Trivial tickets (typo, dep bump) get a one-row contract (e.g. "typo fixed" → `git diff` → the changed line); they still prove the one thing changed. The contract scales to the ticket the same way the spec rule does.
+
 ## Anti-stall discipline (no foreground-blocking commands, MANDATORY)
 
 **The harness runs a ~600s no-progress stall watchdog: a worker that emits NO stream output for ~600 seconds is assumed dead and KILLED — losing any uncommitted work.** On 2026-05-23 this killed four-plus workers in one session, every time because the worker ran a command that produced no stream output for a long stretch. Stop emitting those commands. Spec: `docs/specs/2026-05-24-worker-anti-stall-discipline.md`.
