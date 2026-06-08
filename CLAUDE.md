@@ -29,7 +29,7 @@ Authoritative content lives in these paths; CLAUDE.md only routes. Read the mark
 | `self-test/` | Regression harness vs golden PRs — `self-test/README.md`. |
 | `logs/` | `logs/<ticket>.json` — completed-work audit. |
 
-**Validate before you trust.** Run `scripts/validate-state-all.sh` (bulk; also the size guard) or `scripts/validate-state.sh <file>` before reading state + as preflight item 1. `docs/specs/2026-04-16-state-schemas.md`.
+**Validate before you trust.** Run `scripts/validate-state-all.sh` (bulk; also the size guard) or `scripts/validate-state.sh <file>` before reading state + as preflight item 1. If strict validation rejects valid-by-docs state, remediate with `validate-state.sh --migrate` (never hand-edit blind). Specs: `docs/specs/2026-04-16-state-schemas.md`, `2026-06-08-state-validation-migration.md`.
 
 ## Worker types (defined in `.claude/agents/`)
 
@@ -48,7 +48,7 @@ Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", 
 
 1. **Parse intent** (commands table).
 2. **Preflight — ALL must pass before any spawn:** `commander/PAUSE` absent; `scripts/validate-state-all.sh` exits 0 (schema + size gate); `active.json` count < `budget.json:phase1_subscription_caps.max_concurrent_workers`; today's count < `daily_ticket_cap`; on a recent rate-limit in `state/quota-health.json`, route new spawns to codex (or legacy 1-hr pause) per `docs/specs/2026-06-01-codex-auto-fallback.md`.
-3. **Pick** per `state/repos.json:ticket_trigger` — `assignee` (`@me`/`assignee_override`), `label` (`commander-ready`), or `linear` (`scripts/linear-pickup-dispatch.sh`). Skip `commander-working`/`-pause`/`-stuck`. Specs: `docs/specs/2026-04-17-assignee-override.md`, `2026-04-17-linear-ticket-trigger.md`.
+3. **Pick** per `state/repos.json:ticket_trigger` (optional; absent ⇒ `assignee`) — `assignee` (`@me`/`assignee_override`), `label` (`commander-ready`), or `linear` (`scripts/linear-pickup-dispatch.sh`). Skip `commander-working`/`-pause`/`-stuck`. Specs: `docs/specs/2026-04-17-assignee-override.md`, `2026-04-17-linear-ticket-trigger.md`.
 4. **Classify tier** per `policy.md`. T3 → skip. Unclear → ask.
 5. **Spawn** with the slim template (`docs/specs/2026-04-17-slim-worker-prompts.md`): ticket URL not body, repo+path, tier, Memory Brief, worker type, coordinate-with. Pick `subagent_type` via `scripts/select-worker-backend.sh` (claude vs codex). Multi-ticket: first run report-only `scripts/plan-parallel-batch.sh` (`docs/specs/2026-06-07-anti-drift-parallelism.md`).
 6. **Track** in `state/active.json` (pre-migration entries OK: `docs/specs/2026-04-17-active-schema-drift.md`).

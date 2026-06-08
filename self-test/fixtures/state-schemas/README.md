@@ -25,6 +25,16 @@ invalid-strict/          one file per schema — fails ONLY the strict (ajv-cli)
 ├── active.json          has 'tier': 'T4' — not in the enum, accepted by bash+jq
 ├── autopickup.json      interval_min: 1 — violates minimum: 5, accepted by bash+jq
 └── repos.json           merge_policy: 'totally-bogus' — fails oneOf/enum, accepted by bash+jq (ticket #249)
+
+migrate/                 RED inputs for `validate-state.sh --migrate` (ticket #260)
+├── repos.before.json    entry 1 has NO ticket_trigger (valid-by-docs since the
+│                        schema no longer requires it); --migrate backfills it
+│                        with default_ticket_trigger // "assignee". entry 2's
+│                        explicit 'label' is left untouched.
+└── citations.before.json a citation's tickets[] holds a NUMBER (191) where the
+                         schema requires strings — fails ajv-strict; --migrate
+                         coerces it to "191". Copied to a temp file by the golden
+                         case (the migrate WRITES in place; never mutate the fixture).
 ```
 
 The `invalid/` fixtures intentionally trip the `required` top-level check so the
