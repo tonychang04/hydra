@@ -188,8 +188,9 @@ SECOND, adversarial gate before any of them reaches the operator. This runs
 as the `/cso` trigger; never for a T1/non-security PR, so no extra cost there)
 **and only when the first reviewer raised ≥1 security finding.**
 
-The first reviewer (`/review` + `/codex review` + `/cso`) produces security
-finding *claims*. For each claim, run a **critic** to try to KILL it:
+The first reviewer (`/review` + `/cso`, plus `/codex review` only if opted in —
+it is OFF by default; see `.claude/agents/worker-review.md` Flow step 6) produces
+security finding *claims*. For each claim, run a **critic** to try to KILL it:
 
 1. **Kill mandate.** The critic's job is to **disprove the finding, not improve
    it.** It looks for a code-grounded reason the finding cannot occur (the
@@ -209,6 +210,13 @@ finding *claims*. For each claim, run a **critic** to try to KILL it:
      (re-examine the claim against the diff directly). Do NOT send a codex-raised
      finding back to `/codex review` — that would have the same family critique
      itself, defeating the gate.
+
+   **If codex stalls or is unavailable as the critic, fall back to Claude's own
+   rigorous re-examination of the claim against the diff** — do not lose the
+   finding and do not block the review waiting on codex. (Codex is OFF by default
+   and a reliable reviewer-killer; run it only via the bounded-wait +
+   partial-fallback pattern in `.claude/agents/worker-review.md` "Anti-stall
+   discipline", never as a silent poll.)
 4. **The load-bearing HARD RULE — unanimity is NOT confidence.** Two reviewers
    agreeing does not promote a finding. Belief changes ONLY on:
    - a **code-grounded empirical refutation** → the critic verdict is `REFUTED`;
@@ -310,7 +318,8 @@ churn from a dep the PR adds).
 
 `AuthorCard` contains the substring "Author", not "auth" as a trust boundary —
 no session/credential/crypto code. All three are `include`; none is
-`security-trigger`. Run `/review` + `/codex review`, skip `/cso`. When unsure,
+`security-trigger`. Run `/review` (+ `/codex review` only if opted in — it is
+OFF by default), skip `/cso`. When unsure,
 open the file: if it doesn't read credentials, sign/verify, or gate access,
 it's not a trigger.
 
