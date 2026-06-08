@@ -123,7 +123,7 @@ gh api --method POST /repos/<owner>/<repo>/issues/<pr_number>/labels -f "labels[
 
 Do **not** use `gh pr edit --add-label` — GraphQL path fails with a Projects-classic deprecation error on most repos. `gh issue edit <n> --add-label` on plain issues is fine. Use `gh label create <name> --color <hex> --description "..."` to create labels.
 
-When a worker emits a `LIVE_RESOURCES:` marker (it provisioned live cloud state), apply `commander-live-state` to the ticket + PR so the review gate runs its teardown-verification step. Procedure: `docs/specs/2026-06-01-cloud-side-effect-tracking.md`.
+On a worker's `LIVE_RESOURCES:` marker, apply `commander-live-state` (ticket + PR) so the review gate runs its teardown-verify step. Spec: `docs/specs/2026-06-01-cloud-side-effect-tracking.md`.
 
 ## Scheduled autopickup (runs silently)
 
