@@ -1,3 +1,9 @@
+---
+status: draft
+date: 2026-06-08
+author: hydra worker (ticket #285)
+---
+
 # In-flight spec-compliance checkpoints for multi-task tickets
 
 Ticket: #285 — [P1/quality] Two-stage in-flight review checkpoints for multi-task tickets
