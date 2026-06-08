@@ -145,6 +145,81 @@ else
   bad "same inputs => byte-identical stdout" "outputs differ"
 fi
 
+# --- Test 8: robustness (Codex review hardening) ----------------------------
+echo "Test 8: robustness"
+
+# 8a: log with NO completed_at — falls back to file mtime. Touch it to an
+# in-window mtime and confirm it is counted (mtime fallback must work on BSD
+# + GNU; NOT `date -r <file>`).
+R8="$WORK/robust-logs"; mkdir -p "$R8"
+cat > "$R8/300.json" <<'J'
+{"ticket":"hydra#300","repo":"mtime/repo","result":"merged","worker_type":"worker-implementation","wall_clock_minutes":7}
+J
+touch -t 202606051200.00 "$R8/300.json"   # 2026-06-05 12:00 — inside window
+ROUT="$(bash "$SUBJECT" --logs-dir "$R8" --now "$NOW")"
+assert_contains "$ROUT" "mtime/repo" "log without completed_at counted via file mtime fallback"
+
+# 8b: empty object {} is NOT treated as a completion.
+R8B="$WORK/empty-obj-logs"; mkdir -p "$R8B"
+echo '{}' > "$R8B/empty.json"
+touch -t 202606051200.00 "$R8B/empty.json"
+R8BOUT="$(bash "$SUBJECT" --logs-dir "$R8B" --now "$NOW")"
+empty_none="$(grep -c '_none in window_' <<<"$R8BOUT" || true)"
+if [[ "$empty_none" -eq 4 ]]; then
+  ok "bare {} JSON is not counted as a completion"
+else
+  bad "bare {} JSON is not counted as a completion" "got $empty_none _none sections"
+fi
+
+# 8c: completed_at with a numeric UTC offset (+00:00) parses (not mtime fallback).
+R8C="$WORK/offset-logs"; mkdir -p "$R8C"
+cat > "$R8C/301.json" <<'J'
+{"ticket":"hydra#301","repo":"offset/repo","result":"merged","worker_type":"worker-implementation","wall_clock_minutes":2,"completed_at":"2026-06-05T10:00:00+00:00"}
+J
+touch -t 202601010000.00 "$R8C/301.json"   # mtime far OUTSIDE window — only completed_at can include it
+R8COUT="$(bash "$SUBJECT" --logs-dir "$R8C" --now "$NOW")"
+assert_contains "$R8COUT" "offset/repo" "completed_at with +00:00 offset parsed (not stale mtime)"
+
+# 8d: a '|' in a repo name is escaped so the table stays well-formed.
+R8D="$WORK/pipe-logs"; mkdir -p "$R8D"
+cat > "$R8D/302.json" <<'J'
+{"ticket":"hydra#302","repo":"a|b/repo","result":"merged","worker_type":"worker-implementation","wall_clock_minutes":1,"completed_at":"2026-06-05T10:00:00Z"}
+J
+R8DOUT="$(bash "$SUBJECT" --logs-dir "$R8D" --now "$NOW")"
+assert_contains "$R8DOUT" 'a\|b/repo' "pipe char in repo name is escaped in the table cell"
+
+# 8e: a non-object citation ENTRY (string value) is skipped with a stderr
+# WARN, not silently producing a misleading leaderboard. Run still exits 0.
+BADENTRY="$WORK/bad-entry-cit.json"
+echo '{"citations":{"learnings-hydra.md#\"x\"":"not-an-object"}}' > "$BADENTRY"
+ERRTMP="$WORK/8e.err"
+if bash "$SUBJECT" --logs-dir "$EMPTY_LOGS" --citations-file "$BADENTRY" --now "$NOW" >/dev/null 2>"$ERRTMP"; then
+  if grep -q "WARN skipping" "$ERRTMP"; then
+    ok "non-object citation entry => skipped with stderr WARN (exit 0)"
+  else
+    bad "non-object citation entry => stderr WARN" "no WARN emitted: $(cat "$ERRTMP")"
+  fi
+else
+  bad "non-object citation entry => exit 0 with WARN" "exited non-zero"
+fi
+
+# 8e2: a structurally wrong top-level .citations (an array, not an object) is
+# a real corruption => exit 1.
+BADTOP="$WORK/bad-top-cit.json"
+echo '{"citations":[1,2,3]}' > "$BADTOP"
+if bash "$SUBJECT" --logs-dir "$EMPTY_LOGS" --citations-file "$BADTOP" --now "$NOW" >/dev/null 2>&1; then
+  bad ".citations not an object => exit 1" "exited 0"
+else
+  ok ".citations not an object => non-zero exit"
+fi
+
+# 8f: --window-days with a leading zero ('07') does not trip octal arithmetic.
+if bash "$SUBJECT" --logs-dir "$LOGS" --citations-file "$CIT" --now "$NOW" --window-days 07 >/dev/null 2>&1; then
+  ok "--window-days 07 (leading zero) handled, no octal error"
+else
+  bad "--window-days 07 (leading zero) handled" "non-zero exit on '07'"
+fi
+
 # --- summary ----------------------------------------------------------------
 echo
 echo "${C_BOLD}Total: $((PASS+FAIL))  ${C_GREEN}PASS: $PASS${C_RESET}  ${C_RED}FAIL: $FAIL${C_RESET}"

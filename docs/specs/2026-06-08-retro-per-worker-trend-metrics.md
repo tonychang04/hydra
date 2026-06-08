@@ -134,3 +134,31 @@ covering:
   >=5-data-point gate (owned by the inline procedure) is unaffected.
 - **Rollback:** delete `scripts/retro-metrics.sh` + its test and the one pointer
   line. No state migration; nothing else depends on it.
+
+## Implementation notes
+
+Hardening applied after a `/codex review` adversarial pass (locked by tests in
+`scripts/test-retro-metrics.sh` Test 8):
+
+- **Portable mtime fallback.** When `completed_at` is absent/unparseable, mtime
+  comes from `stat -c %Y` (GNU) / `stat -f %m` (BSD), NOT `date -r <file>` —
+  BSD `date -r` takes an epoch integer, not a path, so the old form silently
+  returned "now" and broke window membership.
+- **BSD ISO8601 normalization.** `to_epoch` strips fractional seconds and a
+  trailing numeric UTC offset (`+00:00`/`-0500`) before BSD `date -j -f`, so
+  offset/fractional timestamps parse instead of falling to the mtime fallback.
+  GNU `date -d` already handles these.
+- **Identity guard.** Records with no `repo`/`worker`/`result`/`status` and no
+  flaky-tool signal (e.g. a bare `{}`) are skipped — they're not completions.
+- **Type coercion.** Scalar log fields are coerced to strings in jq so an
+  object/array-valued field can't break a whole section.
+- **Table-cell escaping.** `|` is escaped in repo, worker, tool, AND citation
+  cells so a stray pipe can't corrupt the Markdown table.
+- **Citation structural validation.** A non-object top-level `.citations` =>
+  exit 1 (real corruption). A single non-object entry is skipped with a stderr
+  `WARN` rather than aborting the retro (report-only resilience).
+- **Leading-zero `--window-days`.** Normalized via `10#$window_days` so `07`
+  isn't misread as octal.
+
+The `worker_type`-over-`worker_id` aggregation is intentional (per-role signal),
+not a defect — `worker_id` is only used when `worker_type` is absent.

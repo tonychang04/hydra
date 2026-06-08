@@ -111,27 +111,36 @@ done
 case "$window_days" in
   ''|*[!0-9]*) echo "retro-metrics: --window-days must be a non-negative integer" >&2; exit 2 ;;
 esac
+# Strip leading zeros so Bash arithmetic does not interpret e.g. "08" as octal.
+window_days=$(( 10#$window_days ))
 
 command -v jq >/dev/null 2>&1 || { echo "retro-metrics: jq is required" >&2; exit 1; }
 
 # --- resolve the window epoch bounds ----------------------------------------
 
 # to_epoch <value> -> epoch seconds on stdout, or empty on failure.
-# Accepts: epoch int, YYYY-MM-DD, or full ISO8601 (Z or offset). Portable
-# across BSD (macOS) and GNU date.
+# Accepts: epoch int, YYYY-MM-DD, or full ISO8601 (Z, numeric offset, or
+# fractional seconds). Portable across BSD (macOS) and GNU date.
 to_epoch() {
   local v="$1"
   [[ -z "$v" ]] && return 0
   # Pure integer => already epoch.
   if [[ "$v" =~ ^[0-9]+$ ]]; then printf '%s' "$v"; return 0; fi
   local out=""
-  # GNU date
+  # GNU date handles offsets + fractional seconds natively.
   out="$(date -u -d "$v" +%s 2>/dev/null || true)"
   if [[ -n "$out" ]]; then printf '%s' "$out"; return 0; fi
-  # BSD date — try a few format specifiers.
+  # BSD date can't parse offsets/fractional seconds, so normalize first:
+  #   - strip a fractional-seconds component (".123")
+  #   - convert a trailing numeric offset ("+00:00" / "-0500") to "Z" by
+  #     dropping it (timestamps in logs are emitted in UTC; treating a
+  #     normalized value as UTC keeps window math stable and deterministic).
+  local norm="$v"
+  norm="${norm/Z/}"                                  # drop trailing Z if any
+  norm="$(printf '%s' "$norm" | sed -E 's/\.[0-9]+//; s/[+-][0-9]{2}:?[0-9]{2}$//')"
   local fmt
-  for fmt in "%Y-%m-%dT%H:%M:%SZ" "%Y-%m-%dT%H:%M:%S" "%Y-%m-%d"; do
-    out="$(date -u -j -f "$fmt" "$v" +%s 2>/dev/null || true)"
+  for fmt in "%Y-%m-%dT%H:%M:%S" "%Y-%m-%d %H:%M:%S" "%Y-%m-%d"; do
+    out="$(date -u -j -f "$fmt" "$norm" +%s 2>/dev/null || true)"
     [[ -n "$out" ]] && { printf '%s' "$out"; return 0; }
   done
   return 0
@@ -165,7 +174,9 @@ if [[ -d "$logs_dir" ]]; then
     ca="$(jq -r '.completed_at // empty' "$f" 2>/dev/null || true)"
     ca_epoch="$(to_epoch "$ca")"
     if [[ -z "$ca_epoch" ]]; then
-      ca_epoch="$(date -u -r "$f" +%s 2>/dev/null || date -u +%s)"
+      # Portable mtime: GNU `stat -c %Y`, BSD `stat -f %m`. NOT `date -r <file>`
+      # (BSD `date -r` expects an epoch int, not a path).
+      ca_epoch="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || date -u +%s)"
     fi
     # Window check (inclusive).
     (( ca_epoch >= window_start_epoch && ca_epoch <= now_epoch )) || continue
@@ -176,25 +187,38 @@ if [[ -d "$logs_dir" ]]; then
       [[ "$rfile" == "$repo_filter" ]] || continue
     fi
 
-    # Normalize one record via jq.
+    # Normalize one record via jq. Coerce scalar fields to strings so an
+    # object/array-valued field can't break a downstream section; skip records
+    # that carry no identifying signal at all (e.g. `{}` or unrelated JSON).
     rec="$(jq -c '
       def asarr(x): if (x|type)=="array" then x
                     elif (x==null) then []
                     else [x] end;
+      # str(x): scalar -> its string form; object/array/null -> "".
+      def str(x): if (x|type) as $t | ($t=="string" or $t=="number" or $t=="boolean")
+                  then (x|tostring) else "" end;
       {
-        repo:   (.repo // "—"),
-        result: (.result // ""),
-        status: (.status // ""),
-        worker: (.worker_type // .worker_id // "—"),
+        repo:   (str(.repo)),
+        result: (str(.result)),
+        status: (str(.status)),
+        worker: (if str(.worker_type) != "" then str(.worker_type)
+                 else str(.worker_id) end),
         wall:   ((.wall_clock_minutes // 0) | (try tonumber catch 0)),
         # flaky tool signal: explicit .flaky_tool plus any surprises that
         # name a tool via the "flaky-tool: <name>" convention.
-        tools:  ( asarr(.flaky_tool)
+        tools:  ( (asarr(.flaky_tool) | map(select(type=="string")))
                   + ( asarr(.surprises)
                       | map( select(type=="string")
                              | capture("flaky[- ]tool:?\\s*(?<t>[A-Za-z0-9_./-]+)"; "i")
                              | .t ) ) )
       }
+      # Drop records with no identity (no repo, worker, result, or status and
+      # no flaky-tool signal) — they are not completions.
+      | select( (.repo != "") or (.worker != "") or (.result != "")
+                or (.status != "") or ((.tools | length) > 0) )
+      # Backfill display placeholders AFTER the identity check.
+      | .repo   = (if .repo   == "" then "—" else .repo   end)
+      | .worker = (if .worker == "" then "—" else .worker end)
       | .stuck   = ( (.result=="stuck")
                      or (.status=="stuck") or (.status=="failed")
                      or (.status=="paused-on-question")
@@ -236,7 +260,7 @@ else
   echo "|---|---|---|---|---|---|"
   while IFS=$'\t' read -r repo merged opened stuck mrate srate; do
     [[ -n "$repo" ]] || continue
-    echo "| $repo | $merged | $opened | $stuck | $mrate | $srate |"
+    echo "| ${repo//|/\\|} | $merged | $opened | $stuck | $mrate | $srate |"
   done <<<"$repo_rows"
 fi
 echo
@@ -267,7 +291,7 @@ else
   echo "|---|---|---|---|---|"
   while IFS=$'\t' read -r worker total shipped stuck wall; do
     [[ -n "$worker" ]] || continue
-    echo "| $worker | $total | $shipped | $stuck | $wall |"
+    echo "| ${worker//|/\\|} | $total | $shipped | $stuck | $wall |"
   done <<<"$worker_rows"
 fi
 echo
@@ -280,6 +304,20 @@ cite_rows=""
 if [[ -f "$citations_file" ]]; then
   jq -e . "$citations_file" >/dev/null 2>&1 || {
     echo "retro-metrics: malformed citations file: $citations_file" >&2; exit 1; }
+  # Structural guard: `.citations` (when present) MUST be an object. A wrong
+  # top-level shape is a real corruption => exit 1 (loud, per Codex review).
+  jq -e '(.citations == null) or (.citations | type == "object")' \
+    "$citations_file" >/dev/null 2>&1 || {
+    echo "retro-metrics: .citations is not an object in $citations_file" >&2; exit 1; }
+  # Individual non-object entries (e.g. a string value) are skipped with a
+  # stderr WARN rather than aborting the whole retro — report-only resilience.
+  bad_entries="$(jq -r '
+    (.citations // {}) | to_entries
+    | map(select(((.key | startswith("_")) | not) and (.value | type != "object")))
+    | length' "$citations_file" 2>/dev/null || echo 0)"
+  if [[ "${bad_entries:-0}" -gt 0 ]]; then
+    echo "retro-metrics: WARN skipping $bad_entries non-object citation entr(y/ies) in $citations_file" >&2
+  fi
   # An entry is "active this week" when its last_cited is in-window.
   # Window bounds passed as ISO dates for string comparison (YYYY-MM-DD sorts
   # lexically == chronologically).
@@ -287,25 +325,33 @@ if [[ -f "$citations_file" ]]; then
              || date -u -d "@$window_start_epoch" +%Y-%m-%d 2>/dev/null || echo "0000-00-00")"
   now_date="$(date -u -r "$now_epoch" +%Y-%m-%d 2>/dev/null \
               || date -u -d "@$now_epoch" +%Y-%m-%d 2>/dev/null || echo "9999-99-99")"
-  cite_rows="$(jq -r --arg ws "$ws_date" --arg ne "$now_date" '
+  # Note: errors are NOT swallowed here — a structurally malformed citations
+  # file (e.g. a non-object .citations, or a non-object entry that defeats the
+  # object-guard) makes jq exit non-zero, which we promote to exit 1 below.
+  if ! cite_rows="$(jq -r --arg ws "$ws_date" --arg ne "$now_date" '
     (.citations // {})
     | to_entries
-    | map(select((.key | startswith("_")) | not))
-    | map(select(.value.last_cited != null
+    # Skip meta keys ("_comment") and any entry whose value is not an object.
+    | map(select(((.key | startswith("_")) | not) and (.value | type == "object")))
+    | map(select((.value.last_cited // null) != null
+                 and (.value.last_cited | type == "string")
                  and .value.last_cited >= $ws
                  and .value.last_cited <= $ne))
     | map({
         key: .key,
-        count: (.value.count // 0),
+        count: ((.value.count // 0) | (try tonumber catch 0)),
         last: (.value.last_cited // "—"),
         promo: (.value.promotion_threshold_reached // false),
-        tickets: ((.value.tickets // []) | length)
+        tickets: ((.value.tickets // []) | (if type=="array" then length else 0 end))
       })
     | sort_by(-.count, .key)
     | .[]
     | [ .key, (.count|tostring), (.tickets|tostring), .last,
         (if .promo then "yes" else "no" end) ] | @tsv
-  ' "$citations_file" 2>/dev/null || true)"
+  ' "$citations_file")"; then
+    echo "retro-metrics: malformed citations file: $citations_file" >&2
+    exit 1
+  fi
 fi
 
 if [[ -z "$cite_rows" ]]; then
@@ -342,6 +388,6 @@ else
   echo "|---|---|"
   while IFS=$'\t' read -r tool n; do
     [[ -n "$tool" ]] || continue
-    echo "| $tool | $n |"
+    echo "| ${tool//|/\\|} | $n |"
   done <<<"$tool_rows"
 fi
