@@ -19,7 +19,9 @@
 #   - WARN   (warn_floor <= size <= max)   exit 0, prominent block + "trim first" call to action
 #   - FAIL   (size > max)                  exit 1, ✗ + top 5 trim candidates (the hard rail)
 # Cut points: notice_floor = max * NOTICE_PCT/100, warn_floor = max * WARN_PCT/100.
-# Defaults NOTICE_PCT=85, WARN_PCT=95; tune via HYDRA_CLAUDEMD_NOTICE_PCT / _WARN_PCT.
+# Defaults NOTICE_PCT=72, WARN_PCT=89 (re-tuned to the thin-router lean reality,
+# ticket #297, spec docs/specs/2026-06-08-claudemd-thin-router.md); tune via
+# HYDRA_CLAUDEMD_NOTICE_PCT / _WARN_PCT.
 # NOTICE/WARN inform but do NOT block preflight — only size > max blocks, exactly
 # as the original binary guard did (so --max stays back-compatible / authoritative).
 #
@@ -86,8 +88,8 @@ Bands (as % of the ceiling):
 
 Environment:
   HYDRA_CLAUDEMD_MAX         Override the ceiling. Flag wins if both are set.
-  HYDRA_CLAUDEMD_NOTICE_PCT  NOTICE band floor as % of ceiling (default 85).
-  HYDRA_CLAUDEMD_WARN_PCT    WARN band floor as % of ceiling (default 95).
+  HYDRA_CLAUDEMD_NOTICE_PCT  NOTICE band floor as % of ceiling (default 72).
+  HYDRA_CLAUDEMD_WARN_PCT    WARN band floor as % of ceiling (default 89).
                              Must satisfy NOTICE_PCT <= WARN_PCT <= 100.
   NO_COLOR=1                 Disable colored output.
 
@@ -165,8 +167,8 @@ fi
 # -----------------------------------------------------------------------------
 # band cut points — % of the ceiling, env-overridable (no flags; tuning knobs)
 # -----------------------------------------------------------------------------
-notice_pct="${HYDRA_CLAUDEMD_NOTICE_PCT:-85}"
-warn_pct="${HYDRA_CLAUDEMD_WARN_PCT:-95}"
+notice_pct="${HYDRA_CLAUDEMD_NOTICE_PCT:-72}"
+warn_pct="${HYDRA_CLAUDEMD_WARN_PCT:-89}"
 
 for pair in "HYDRA_CLAUDEMD_NOTICE_PCT:$notice_pct" "HYDRA_CLAUDEMD_WARN_PCT:$warn_pct"; do
   name="${pair%%:*}"
