@@ -1,0 +1,59 @@
+{
+  "_comment": "Example shape of state/approvals.json (the runtime file is gitignored). Durable who/when/why for every human-gated decision. Map of subject-key -> record with current status + append-only history. Written by scripts/approve.sh, read by scripts/approvals.sh. Spec: docs/specs/2026-06-08-approval-record.md (#268).",
+  "approvals": {
+    "tonychang04/hydra#501": {
+      "subject": "tonychang04/hydra#501",
+      "status": "approved",
+      "current": {
+        "decision": "approved",
+        "approver": "tonychang04",
+        "ts": "2026-06-08T18:30:00Z",
+        "reason": "review clean, CI green, T2 within per-repo merge policy",
+        "decision_ref": "merge-surface:tonychang04/hydra#501"
+      },
+      "history": [
+        {
+          "decision": "awaiting",
+          "approver": null,
+          "ts": "2026-06-08T18:00:00Z",
+          "reason": "surfaced for human merge (T2, review-clean)",
+          "decision_ref": "merge-surface:tonychang04/hydra#501"
+        },
+        {
+          "decision": "approved",
+          "approver": "tonychang04",
+          "ts": "2026-06-08T18:30:00Z",
+          "reason": "review clean, CI green, T2 within per-repo merge policy",
+          "decision_ref": "merge-surface:tonychang04/hydra#501"
+        }
+      ]
+    },
+    "tonychang04/hydra#312": {
+      "subject": "tonychang04/hydra#312",
+      "status": "rejected",
+      "current": {
+        "decision": "rejected",
+        "approver": "tonychang04",
+        "ts": "2026-06-08T19:05:00Z",
+        "reason": "touches .github/workflows — T3, never auto-merge; close and refile narrower",
+        "decision_ref": "merge-surface:tonychang04/hydra#312"
+      },
+      "history": [
+        {
+          "decision": "awaiting",
+          "approver": null,
+          "ts": "2026-06-08T19:00:00Z",
+          "reason": "surfaced: safety-rail diff",
+          "decision_ref": "merge-surface:tonychang04/hydra#312"
+        },
+        {
+          "decision": "rejected",
+          "approver": "tonychang04",
+          "ts": "2026-06-08T19:05:00Z",
+          "reason": "touches .github/workflows — T3, never auto-merge; close and refile narrower",
+          "decision_ref": "merge-surface:tonychang04/hydra#312"
+        }
+      ]
+    }
+  }
+}

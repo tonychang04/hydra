@@ -11,6 +11,7 @@ state/quota-health.json
 state/repos.json
 state/linear.json
 state/autopickup.json
+state/approvals.json
 state/commander.lock
 state/pending-dispatches.json
 state/live-resources.json
