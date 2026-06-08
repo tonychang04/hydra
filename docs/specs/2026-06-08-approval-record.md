@@ -189,8 +189,12 @@ bash + jq, no daemon/backend. Records ONE action and degrades safely.
   action, set `status` = `decision`. Atomic write (temp file + `mv`), single
   writer. **Mints `approval:<subject-key>`** and prints it on stdout so the
   caller can pass it as the Decision Record's `approval_ref`.
-- **Exit codes:** `0` recorded; `1` invalid action (validation failed — nothing
-  written); `2` usage error.
+- **Exit codes:** `0` recorded; `1` invalid action — well-formed invocation
+  whose *content* fails write-time validation (e.g. a malformed `--now`
+  timestamp), nothing written; `2` usage error — wrong invocation (missing
+  required `--by`/`--reason`, two decision flags, `--await --by`, unknown arg),
+  nothing written. Both `1` and `2` reject and write nothing; the split is
+  "bad value" vs "bad invocation".
 
 ### Reader — `scripts/approvals.sh [<subject>] [--status <s>]`
 
@@ -261,11 +265,12 @@ Decision Record --(approval_ref: approval:tonychang04/hydra#501)--------> approv
   - `--now` seam controls `ts`; ts is ISO-8601 UTC second precision.
   - `<subject>` normalization: `#501` and `tonychang04/hydra#501` resolve to the
     same key given `--repo`.
-- **Writer — RED→GREEN gate (malformed → exit 1, nothing written)**
-  - `--approve` with no `--by` → exit 1, file unchanged.
-  - empty `--reason` → exit 1, file unchanged.
+- **Writer — RED→GREEN gate (malformed → error, nothing written)**
+  - `--approve` with no `--by` → exit 2 (usage: required input missing), file unchanged.
+  - empty `--reason` → exit 2 (usage), file unchanged.
   - `--await` **with** `--by` → exit 2 (usage: await takes no approver).
-  - two of `--approve/--reject/--await` → exit 2.
+  - two of `--approve/--reject/--await` → exit 2 (usage).
+  - malformed `--now` timestamp → exit 1 (invalid action: content gate), file unchanged.
   - then a corrected `--approve --by --reason` → exit 0, history grows by one.
 - **Schema**
   - `state/approvals.example.json` validates against

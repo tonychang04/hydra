@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/approvals.schema.json",
+  "title": "Hydra Approval Record state",
+  "description": "Durable who/when/why for every human-gated decision. state/approvals.json is a map of subject-key -> per-subject record holding the CURRENT approval status plus an append-only history of every action. Written by scripts/approve.sh, read by scripts/approvals.sh. Pairs with the Decision Record (#267): an approval action's decision_ref links to a Decision Record entry, and that entry's approval_ref links back here (approval:<subject-key>). Spec: docs/specs/2026-06-08-approval-record.md (ticket #268). Runtime-gitignored like the other state/*.json files; state/approvals.example.json is the committed shape.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["approvals"],
+  "definitions": {
+    "action": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "One recorded approval action — also the shape of `current` and each `history[]` entry.",
+      "required": ["decision", "ts", "reason"],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["approved", "rejected", "awaiting"],
+          "description": "The action taken. `awaiting` = surfaced, no human decision yet."
+        },
+        "approver": {
+          "type": ["string", "null"],
+          "description": "WHO. Non-empty string for approved/rejected; null for awaiting (no human yet). The approved/rejected-requires-approver rule is enforced at write time by approve.sh."
+        },
+        "ts": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "description": "WHEN. ISO-8601 UTC timestamp, second precision (e.g. 2026-06-08T18:30:00Z)."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "WHY. Non-empty rationale for the action."
+        },
+        "decision_ref": {
+          "type": ["string", "null"],
+          "description": "Link to the Decision Record entry this approves (e.g. merge-surface:tonychang04/hydra#501). Mirror of #267's approval_ref. null when not linked."
+        }
+      }
+    }
+  },
+  "properties": {
+    "approvals": {
+      "type": "object",
+      "description": "Map of subject key -> per-subject approval record. Subject keys are normalized refs (e.g. tonychang04/hydra#501, worker-abc). Keys starting with underscore (e.g. _comment) are meta and ignored by readers.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["subject", "status", "current", "history"],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The normalized subject key — echoes the map key."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["awaiting", "approved", "rejected"],
+            "description": "Current approval status — equals current.decision."
+          },
+          "current": {
+            "$ref": "#/definitions/action"
+          },
+          "history": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Append-only list of every action recorded for this subject, oldest first. The last element equals `current`.",
+            "items": { "$ref": "#/definitions/action" }
+          }
+        }
+      }
+    }
+  }
+}
