@@ -54,15 +54,16 @@ ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 state_dir=""
 schema_dir=""
 strict=0
+state_dir_overridden=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --state-dir)
       [[ $# -ge 2 ]] || { echo "validate-state-all: --state-dir needs a value" >&2; usage >&2; exit 2; }
-      state_dir="$2"; shift 2
+      state_dir="$2"; state_dir_overridden=1; shift 2
       ;;
     --state-dir=*)
-      state_dir="${1#--state-dir=}"; shift
+      state_dir="${1#--state-dir=}"; state_dir_overridden=1; shift
       ;;
     --schema-dir)
       [[ $# -ge 2 ]] || { echo "validate-state-all: --schema-dir needs a value" >&2; usage >&2; exit 2; }
@@ -234,6 +235,66 @@ else
     1)  failed_files+=("$claude_md_path (over budget)") ;;
     *)
         echo "✗ check-claude-md-size.sh exited $ec on $claude_md_path — aborting bulk run" >&2
+        exit "$ec"
+        ;;
+  esac
+fi
+
+# -----------------------------------------------------------------------------
+# self-test assertion-count baseline guard — ticket #118.
+# Spec: docs/specs/2026-06-01-self-test-baseline-guard.md.
+#
+# Refuses a PR that drops net executable self-test assertions below the
+# committed floor (self-test/baseline.json) — the regression detector that
+# would have caught #118's silent "0 cases executing".
+#
+# GATED behind HYDRA_SELFTEST_BASELINE_GATE=1 because the guard runs the
+# ~90s script-kind harness. Every `pick up` preflight should stay fast, so the
+# default path SKIPs this; the merge/review gate and CI set the flag to enforce
+# it where merges are actually decided. Exit-code semantics mirror the size
+# guard: 0 = OK, 1 = regression (collected as a failure), other = abort.
+#
+# RECURSION GUARD (two independent defenses): the baseline guard runs
+# `self-test/run.sh --kind=script`, which executes EVERY script golden case —
+# including `state-schemas`, which itself shells out to this very script
+# (`validate-state-all.sh --state-dir <fixture>`). Because the gate flag is an
+# *exported* env var, a naive gate would re-fire inside that nested invocation,
+# which re-runs the harness, which re-runs the nested case … an unbounded fork
+# explosion. We block that two ways, either of which is sufficient:
+#   (1) skip the gate whenever --state-dir was overridden — a fixture/self-test
+#       sub-run has no real `state/` coverage to gate, so the gate is meaningless
+#       there; AND
+#   (2) export HYDRA_SELFTEST_BASELINE_GATE_ACTIVE=1 around the guard call and
+#       skip if it's already set — so any nested validate-state-all (however
+#       invoked) sees the in-progress marker and declines to re-enter.
+# -----------------------------------------------------------------------------
+baseline_check="$SCRIPT_DIR/check-self-test-baseline.sh"
+baseline_json="$ROOT_DIR/self-test/baseline.json"
+if [[ "${HYDRA_SELFTEST_BASELINE_GATE:-0}" != "1" ]]; then
+  echo "∅ check-self-test-baseline.sh (skip — set HYDRA_SELFTEST_BASELINE_GATE=1 to enforce; ~90s harness run)"
+  skipped=$((skipped + 1))
+elif [[ "${HYDRA_SELFTEST_BASELINE_GATE_ACTIVE:-0}" == "1" ]]; then
+  echo "∅ check-self-test-baseline.sh (skip — already inside a baseline-gate harness run; recursion guard)"
+  skipped=$((skipped + 1))
+elif [[ "$state_dir_overridden" -eq 1 ]]; then
+  echo "∅ check-self-test-baseline.sh (skip — --state-dir override; gate applies only to the real state/ preflight)"
+  skipped=$((skipped + 1))
+elif [[ ! -f "$baseline_json" ]]; then
+  echo "∅ $baseline_json (skip — self-test baseline not present)"
+  skipped=$((skipped + 1))
+elif [[ ! -f "$baseline_check" ]]; then
+  echo "∅ check-self-test-baseline.sh (skip — helper script not found at $baseline_check)"
+  skipped=$((skipped + 1))
+else
+  set +e
+  HYDRA_SELFTEST_BASELINE_GATE_ACTIVE=1 bash "$baseline_check"
+  ec=$?
+  set -e
+  case "$ec" in
+    0)  passed=$((passed + 1)) ;;
+    1)  failed_files+=("self-test coverage (below baseline)") ;;
+    *)
+        echo "✗ check-self-test-baseline.sh exited $ec — aborting bulk run" >&2
         exit "$ec"
         ;;
   esac

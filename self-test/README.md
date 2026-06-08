@@ -9,6 +9,7 @@ Regression harness that runs the commander against known-good closed PRs to catc
 - `run.sh` — the executable runner (bash + jq). Reads the cases file, dispatches per kind, prints per-case results + a summary.
 - `golden-cases.json` — your validated cases (gitignored; copy from `golden-cases.example.json` and fill in). Commander loads this file if it exists; otherwise it falls back to `golden-cases.example.json` so the harness has something to run out of the box.
 - `golden-cases.example.json` — committed template + the `memory-validators` and `runner-meta` script cases that actually execute today.
+- `baseline.json` — committed floor for net executable assertions. The baseline guard (`scripts/check-self-test-baseline.sh`) fails any PR that drops coverage below it. See "Coverage baseline guard" below (ticket #118).
 - `fixtures/` — supporting data (memory-validator fixtures, self-test-runner fixtures).
 
 ## When to run
@@ -26,10 +27,44 @@ Regression harness that runs the commander against known-good closed PRs to catc
 ./self-test/run.sh --kind script                # only script cases (executable today)
 ./self-test/run.sh --parallel                   # run concurrently, bounded by budget.json:max_concurrent_workers
 ./self-test/run.sh --verbose                    # stream command output for each step
+./self-test/run.sh --kind script --json         # machine-readable summary (for the baseline guard)
 ./self-test/run.sh --help                       # full flag reference
 ```
 
 Exit codes: `0` = all cases passed or skipped · `1` = one or more failed · `2` = usage error / malformed input.
+
+`--json` prints a single object instead of the decorative lines:
+
+```json
+{"passed":46,"failed":0,"skipped":4,"executable_assertions":338,"kind":"script"}
+```
+
+`executable_assertions` is the count of step-level assertions that actually ran in non-skipped
+script cases — the "net assertions" number the coverage guard tracks. It is insensitive to
+host-dependent docker/hadolint SKIPs and collapses to 0 in the regression ticket #118 describes.
+
+## Coverage baseline guard (ticket #118)
+
+The harness is Hydra's regression safety net, but a *silent* collapse of its own coverage looks
+identical to a green run (exit 0, "0 failed"). That is exactly how #118's "0 cases executing"
+regression went unnoticed while workers reported "24 passed". `scripts/check-self-test-baseline.sh`
+closes that gap: it runs `run.sh --kind=script --json` and FAILs (exit 1) if `executable_assertions`
+drops below `self-test/baseline.json:executable_assertions` (minus `tolerance`).
+
+```bash
+scripts/check-self-test-baseline.sh                 # run harness, compare to baseline (exit 1 if regressed)
+scripts/check-self-test-baseline.sh --from-json f   # reuse an existing run.sh --json summary (skip the ~90s re-run)
+scripts/check-self-test-baseline.sh --update        # rewrite the baseline to the current count (intentional coverage change)
+scripts/check-self-test-baseline.sh --json          # {"current":N,"baseline":M,"tolerance":T,"ok":bool}
+```
+
+**Where it runs:** wired into `scripts/validate-state-all.sh` (preflight) but **gated behind
+`HYDRA_SELFTEST_BASELINE_GATE=1`** so the ~90s harness run is paid at the merge/review gate and in
+CI, not on every `pick up` preflight. The canonical merge-gate invocation is
+`HYDRA_SELFTEST_BASELINE_GATE=1 scripts/validate-state-all.sh` (or call the guard directly).
+A PR that legitimately reduces coverage must lower the baseline via `--update`, making the drop
+explicit in the diff. The guard regression-protects itself via the `self-test-baseline-guard`
+golden case.
 
 ## Case kinds and executor status
 
