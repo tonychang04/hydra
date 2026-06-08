@@ -211,9 +211,15 @@ else
   bad "expected exit 2 for non-integer --max, got $ec"
 fi
 
-# Default bands: NOTICE_PCT=85 (notice_floor=850 @ max=1000),
-# WARN_PCT=95 (warn_floor=950 @ max=1000). Use --max 1000 so fixture sizes map
-# cleanly to percentages.
+# Default bands (re-tuned to the thin-router lean reality, ticket #297, spec
+# docs/specs/2026-06-08-claudemd-thin-router.md):
+#   NOTICE_PCT=72 (notice_floor=720 @ max=1000),
+#   WARN_PCT=89   (warn_floor=890   @ max=1000).
+# Use --max 1000 so fixture sizes map cleanly to percentages. Fixtures:
+#   880 chars (88%) → NOTICE band  (>=720, <890)
+#   970 chars (97%) → WARN band    (>=890, <=1000)
+# (Fixture floor: the 8/4/2-line base content is ~850 chars, so fixtures must
+#  sit above it; 880 / 970 are the smallest sizes that land cleanly in band.)
 
 # ---------- Test 8: NOTICE band → exit 0 + advisory line + trim candidates ----------
 say "Test 8: 880-char fixture @ max 1000 (88%, NOTICE band) → exit 0 + advisory"
@@ -277,11 +283,12 @@ else
 fi
 
 # ---------- Test 10: NOTICE_PCT override moves the band ----------
-# At max 1000, 880 chars is NOTICE by default (>=850). Raise NOTICE_PCT to 90
-# (notice_floor=900) so 880 < 900 → falls back to OK band.
-say "Test 10: HYDRA_CLAUDEMD_NOTICE_PCT=90 demotes an 88% fixture to OK"
+# At max 1000, 880 chars is NOTICE by default (>=720). Raise NOTICE_PCT to 89
+# (notice_floor=890) so 880 < 890 → falls back to OK band. 89 <= default WARN
+# (89) keeps the ordering invariant valid (the override sits at the WARN floor).
+say "Test 10: HYDRA_CLAUDEMD_NOTICE_PCT=89 demotes an 88% fixture to OK"
 set +e
-HYDRA_CLAUDEMD_NOTICE_PCT=90 NO_COLOR=1 bash "$CHECK" --path "$fix_notice" --max 1000 > "$tmpdir/t10.out" 2> "$tmpdir/t10.err"
+HYDRA_CLAUDEMD_NOTICE_PCT=89 NO_COLOR=1 bash "$CHECK" --path "$fix_notice" --max 1000 > "$tmpdir/t10.out" 2> "$tmpdir/t10.err"
 ec=$?
 set -e
 combined10="$tmpdir/t10.combined"; cat "$tmpdir/t10.out" "$tmpdir/t10.err" > "$combined10"
@@ -297,7 +304,7 @@ else
 fi
 
 # ---------- Test 11: WARN_PCT override moves the band ----------
-# 970 chars @ max 1000 is WARN by default (>=950). Raise WARN_PCT to 98
+# 970 chars @ max 1000 is WARN by default (>=890). Raise WARN_PCT to 98
 # (warn_floor=980) so 970 < 980 → drops to NOTICE band instead of WARN.
 say "Test 11: HYDRA_CLAUDEMD_WARN_PCT=98 demotes a 97% fixture WARN→NOTICE"
 set +e

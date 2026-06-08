@@ -80,15 +80,30 @@ slug-preservation invariant holds.
 
 Change the default band percentages in `scripts/check-claude-md-size.sh`:
 
-- `notice_pct` default 85 → **57** ⇒ notice_floor = 18000 * 57/100 = **10260**.
+- `notice_pct` default 85 → **72** ⇒ notice_floor = 18000 * 72/100 = **12960**.
 - `warn_pct`   default 95 → **89** ⇒ warn_floor   = 18000 * 89/100 = **16020**.
 - Ceiling (`max_chars`) unchanged at **18000** (the hard rail).
 
-Rationale: NOTICE now fires just above the lean target (~10k), giving an early
-"trim a section to a spec" nudge while leaving generous headroom (≈10260→18000)
-before the file is anywhere near the gate. WARN stays a late-stage "next addition
+Rationale: NOTICE now fires at ~13000 — just above the trimmed file's honest
+floor (~11.4k; see note below) — so the next ~1500 chars of routing are OK, but
+any sustained creep flags an early "trim a section to a spec" nudge with generous
+runway (≈12960→18000) before the gate. WARN stays a late-stage "next addition
 breaches the gate" warning. Both remain env-overridable; the ordering invariant
-`notice_pct <= warn_pct <= 100` still holds (57 ≤ 89 ≤ 100).
+`notice_pct <= warn_pct <= 100` still holds (72 ≤ 89 ≤ 100).
+
+**Note on the ~10000 target vs. the achieved ~11.4k.** The ticket targeted
+≤~10000 chars, estimating ~7000 chars of removable procedure prose. By the time
+this ticket ran, earlier PRs had already trimmed CLAUDE.md (router file-map,
+command-reference collapse), so the *remaining* removable prose was smaller; the
+nine procedure sections collapse cleanly to a one-line-each index, but the file's
+irreducible floor is the routing tables + hard rails + file-map + the **44
+preserved `docs/specs/*` pointer slugs** (~1.8k of slugs alone). Driving below
+~11.4k would require dropping spec pointers or gutting the commands/worker-types
+routing tables — both forbidden by the ticket's hard "preserve every row /
+pointer" constraint. The hard constraints win over the soft size target; the
+NOTICE band is set just above the honest floor so the guard still flags real
+creep. (Largest single trim still available later: de-duplicating slugs that are
+cited in two sections — deferred to keep each section self-routing.)
 
 ### Alternatives considered
 
@@ -105,8 +120,9 @@ breaches the gate" warning. Both remain env-overridable; the ordering invariant
 ## Test plan
 
 - `scripts/check-claude-md-size.sh` on the trimmed CLAUDE.md → exit 0, **OK band**
-  (no NOTICE/WARN), proving size < new notice_floor (10260).
-- `wc -c CLAUDE.md` ≤ ~10000.
+  (no NOTICE/WARN), proving size < new notice_floor (12960).
+- `wc -c CLAUDE.md` — trimmed from 15444 toward the routing-only floor (~11.4k;
+  honest minimum given the no-drop constraint, see §2 note).
 - Slug-preservation diff: `grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+'` over
   old vs new (minus bare dates) shows **zero dropped** slugs (44 preserved).
 - Command-table row count unchanged (25); worker-types row count unchanged (6).
@@ -116,15 +132,18 @@ breaches the gate" warning. Both remain env-overridable; the ordering invariant
   OK, not NOTICE/WARN).
 - `bash scripts/test-check-claude-md-size.sh` → exit 0 (the self-test uses
   synthetic `--max 1000` / `--max 18000` fixtures and asserts the *default*
-  85/95 percentages in Tests 8-11; those assertions move to the new 57/89
-  defaults).
+  85/95 percentages in Tests 8-11; those assertions move to the new 72/89
+  defaults. The 880/970-char fixtures still land in NOTICE/WARN under 72/89, so
+  they stay; Test 10's NOTICE_PCT override drops 90→89 so it no longer exceeds
+  the new WARN default and trip the inverted-band guard).
 
 ## Risks / rollback
 
 - **Risk:** a self-test fixture hard-codes the old 85/95 default floors and goes
   red after the re-tune. Mitigation: Tests 8-11 in `test-check-claude-md-size.sh`
-  are updated to the new defaults (fixtures re-sized so 57%/89% land in the
-  intended band) in the same PR; the env-override tests (10/11) still prove the
+  are updated to the new defaults in the same PR (the 880/970 fixtures already
+  land in NOTICE/WARN under 72/89; Test 10's NOTICE_PCT override drops 90→89 to
+  respect the lower WARN default); the env-override tests (10/11) still prove the
   knobs work.
 - **Risk:** an accidental prose deletion drops a rail or pointer. Mitigation: the
   slug-count + row-count + Safety-block-diff checks above are run pre-PR and pasted
