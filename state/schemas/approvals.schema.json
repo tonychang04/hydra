@@ -12,6 +12,19 @@
       "additionalProperties": true,
       "description": "One recorded approval action — also the shape of `current` and each `history[]` entry.",
       "required": ["decision", "ts", "reason"],
+      "allOf": [
+        {
+          "description": "WHO audit invariant: an approved/rejected action MUST carry a non-empty approver. Enforced in the durable schema (not only at write time by approve.sh) so an imported/hand-edited/corrupted record cannot defeat the core WHO guarantee.",
+          "if": {
+            "properties": { "decision": { "enum": ["approved", "rejected"] } },
+            "required": ["decision"]
+          },
+          "then": {
+            "properties": { "approver": { "type": "string", "minLength": 1 } },
+            "required": ["approver"]
+          }
+        }
+      ],
       "properties": {
         "decision": {
           "type": "string",
@@ -20,7 +33,7 @@
         },
         "approver": {
           "type": ["string", "null"],
-          "description": "WHO. Non-empty string for approved/rejected; null for awaiting (no human yet). The approved/rejected-requires-approver rule is enforced at write time by approve.sh."
+          "description": "WHO. Non-empty string for approved/rejected (enforced by the allOf/if-then above); null for awaiting (no human yet)."
         },
         "ts": {
           "type": "string",

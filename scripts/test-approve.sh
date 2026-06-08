@@ -168,15 +168,36 @@ assert_eq "history grew to 2" "2" "$(histlen_of "$REPO#900")"
 
 # ---------------------------------------------------------------------------
 say "SCHEMA — example validates; malformed record is rejected"
+# The GREEN (valid example) case works on both validation paths. The RED cases
+# below assert rejection of records that are malformed in NESTED structure
+# (current/history) — which only the STRICT (ajv) path detects; validate-state.sh's
+# documented minimal fallback checks only top-level required keys. So gate the
+# nested-RED assertions on strict, using --strict, and skip them (with a note)
+# when ajv is genuinely unavailable. The malformed-action gate the WRITER enforces
+# (exit 1, tested above) is the runtime guard that holds regardless.
 rc=0; bash "$VALIDATE" --schema "$SCHEMA" "$EXAMPLE" >/dev/null 2>&1 || rc=$?
 assert_eq "committed example validates (exit 0)" "0" "$rc"
 
-# RED: a record whose current is missing 'reason' must fail validation.
-BAD="$TMP/bad-approvals.json"
-jq '.approvals["tonychang04/hydra#501"].current |= del(.reason)
-    | .approvals["tonychang04/hydra#501"].history[1] |= del(.reason)' "$EXAMPLE" > "$BAD"
-rc=0; bash "$VALIDATE" --schema "$SCHEMA" "$BAD" >/dev/null 2>&1 || rc=$?
-if [[ "$rc" -ne 0 ]]; then ok "malformed record (no reason) rejected (exit $rc)"; else bad "malformed record was NOT rejected"; fi
+AJV_OK=0
+if command -v ajv >/dev/null 2>&1 || [[ -n "${HYDRA_AJV_CLI:-}" && -x "${HYDRA_AJV_CLI:-}" ]]; then AJV_OK=1; fi
+
+if [[ "$AJV_OK" -eq 1 ]]; then
+  # RED 1: a record whose current/history is missing 'reason' must fail (strict).
+  BAD="$TMP/bad-approvals.json"
+  jq '.approvals["tonychang04/hydra#501"].current |= del(.reason)
+      | .approvals["tonychang04/hydra#501"].history[1] |= del(.reason)' "$EXAMPLE" > "$BAD"
+  rc=0; bash "$VALIDATE" --strict --schema "$SCHEMA" "$BAD" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then ok "strict: malformed record (no reason) rejected (exit $rc)"; else bad "strict: malformed record (no reason) NOT rejected"; fi
+
+  # RED 2 (WHO audit invariant, the codex P1): an approved action with no approver
+  # must fail validation in the durable SCHEMA, not only at write time.
+  BADW="$TMP/bad-who-approvals.json"
+  jq '.approvals["tonychang04/hydra#501"].current.approver = null' "$EXAMPLE" > "$BADW"
+  rc=0; bash "$VALIDATE" --strict --schema "$SCHEMA" "$BADW" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then ok "strict: approved action with null approver rejected (exit $rc)"; else bad "strict: approved+null-approver NOT rejected (WHO invariant broken)"; fi
+else
+  ok "strict-only nested-RED assertions skipped (ajv not available; writer gate still covers malformed actions)"
+fi
 
 # ---------------------------------------------------------------------------
 say "READER — query, filter, json, empty-file"

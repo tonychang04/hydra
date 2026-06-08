@@ -233,10 +233,22 @@ independently (a missing approval just leaves `approval_ref: null`, exactly the
   `state/approvals.json` object: `approvals` map → per-subject object (`subject`,
   `status` enum, `current` action, `history` array of actions). The **action**
   sub-schema requires `decision` (enum), `ts` (UTC pattern), `reason`
-  (non-empty); `approver` is `string|null`; `decision_ref` is `string|null`. The
-  approver-presence rule (required for approved/rejected, null for awaiting) is
-  enforced at **write time** by `approve.sh` (the gate that matters), the same
-  split #267 uses for its per-line entry rules.
+  (non-empty); `decision_ref` is `string|null`. The **WHO audit invariant** —
+  an `approved`/`rejected` action MUST carry a non-empty `approver`, while
+  `awaiting` allows `null` — is encoded in the schema itself via an
+  `allOf`/`if`-`then` (decision in {approved,rejected} ⇒ approver is a non-empty
+  string). This makes the durable record self-validating against an imported,
+  hand-edited, or corrupted file, not only against `approve.sh`'s write-time
+  gate; `approve.sh` enforces the same rule at write time as the fast first line
+  of defense (defense in depth).
+- **Validation-path note:** the WHO invariant and other nested-field rules live
+  *below* the top-level `approvals` key, so only the **strict (ajv)**
+  `validate-state.sh` path detects a violation; the documented minimal
+  bash+jq fallback (used when ajv is absent) checks only top-level required
+  keys. The bulk preflight and the schema tests therefore assert the nested
+  rules under `--strict` (skipping with a note when ajv is genuinely
+  unavailable); the runtime guarantee that holds on any clone is `approve.sh`'s
+  write-time gate (exit 1, nothing written).
 - Wired into the existing bulk `scripts/validate-state-all.sh` automatically (it
   globs `state/schemas/*.schema.json`). A committed
   `state/approvals.example.json` is validated against the schema in the test.
