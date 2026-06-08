@@ -1,3 +1,11 @@
+---
+status: proposed
+date: 2026-06-08
+author: hydra worker
+ticket: 299
+tier: T1
+---
+
 # Regression test for `validate-learning-entry.sh`
 
 ## Problem
