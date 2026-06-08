@@ -1,3 +1,9 @@
+---
+status: draft
+date: 2026-06-08
+author: hydra worker (ticket #274)
+---
+
 # Dynamic learnings-search + recent-failure-pattern session preamble
 
 **Ticket:** [#274](https://github.com/tonychang04/hydra/issues/274) — P3/auto-learn, Tier 1.
