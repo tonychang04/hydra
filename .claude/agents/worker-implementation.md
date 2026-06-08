@@ -60,6 +60,16 @@ Apply the ambiguity test BEFORE writing the spec. A ticket is **ambiguous** if A
 
 If the ticket has **≥5 acceptance criteria** OR you estimate it touches **≥10 files**, commit a short `plan.md` at your worktree root **alongside the skeleton commit, before the first implementation commit**. Keep it to a checklist — bite-sized tasks, each with the exact file path(s) it touches and the test command that proves it (adapt `superpowers:writing-plans` task granularity; you do NOT need the full TDD-per-task plan doc). It doubles as a watchdog-recovery artifact: a mid-implementation stall leaves the remaining task list on the draft PR for Commander or the next worker to resume from. Below the threshold, the spec + validation contract already carry enough structure — skip `plan.md`.
 
+### In-flight spec checkpoint (subagent-driven-development)
+
+**Gated on the `plan.md` artifact above.** If (and only if) you committed a `plan.md`, run a lightweight spec-compliance self-review after EACH plan task — before starting the next. Hydra otherwise reviews only at end-of-ticket (`worker-review` + `worker-validator` on the whole diff); on a multi-task ticket that lets an early task drift from the spec and every later task cascade off that mistake, so the end-of-ticket fix is a multi-task rewrite instead of a one-line catch at task 1. This imports the cheap half of `superpowers:subagent-driven-development` ("two-stage review after each task: spec compliance first … prevents over/under-building"). No `plan.md` (sub-threshold ticket) → skip this; one logical unit of work needs no intermediate checkpoint.
+
+After you finish each `plan.md` task and its incremental commit, before the next task:
+
+- **Re-read the spec + that task's acceptance criterion** and confirm the just-finished task (a) implements exactly what the spec asked — nothing silently dropped, and (b) added nothing the spec did not ask for — no scope creep. If it drifted either way, correct it NOW, in the next commit, before later tasks build on it.
+- **Tick the task's `plan.md` checkbox only after the self-check passes.** The ticked checklist doubles as the checkpoint log: a stall mid-ticket leaves an honest "task N done & spec-checked, N+1 pending" state on the draft PR for the next worker to resume from.
+- **This is a self-review, NOT the review gate.** Only the final PR goes through the full `worker-review` + `worker-validator` gate; the in-flight checkpoint is the early-drift catch, not a replacement for independent review (and it stays spec-compliance only — code-quality nits remain end-of-ticket, owned by `worker-review` / `/codex review`). Spec: `docs/specs/2026-06-08-in-flight-spec-checkpoints.md`.
+
 ## Early-PR discipline (skeleton-first, MANDATORY)
 
 **Open a DRAFT PR within your first few actions — before the heavy implementation.** This is the single most important recoverability rule. Workers repeatedly hit the ~13-min turn / stream-idle limit having *done the work* but never committed, pushed, or opened a PR — leaving an orphaned worktree that needs manual `scripts/rescue-worker.sh` surgery (incidents #157/#176/#159). If your branch + a draft PR already exist, a stall leaves a recoverable draft PR Commander can read and continue, not an orphan. Spec: `docs/specs/2026-05-21-early-pr-skeleton-first.md`.
