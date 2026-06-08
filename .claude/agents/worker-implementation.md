@@ -86,7 +86,7 @@ Because the draft PR already exists from this milestone, the Flow's PR step (ste
 
 ## Validation contract (verify-first, MANDATORY for non-trivial tickets)
 
-**Write a `validation-contract.md` at your worktree root BEFORE you implement — then fill it with captured EVIDENCE before you finalize the PR.** This is Hydra's structural defense against its #1 documented weakness: workers CLAIMING tests ran when they did not (`memory/MEMORY.md` → `feedback_context_and_testing_weakness`, `feedback_integration_test_completeness`). The contract makes verification produce a *file + exit code*, not chat prose. It is the implementer-side companion to the reviewer-side evidence gate (#196). Spec: `docs/specs/2026-06-07-validation-contract.md`.
+**Write your ticket's contract at `.hydra/contracts/<ticket>.md` BEFORE you implement — then fill it with captured EVIDENCE before you finalize the PR.** This is Hydra's structural defense against its #1 documented weakness: workers CLAIMING tests ran when they did not (`memory/MEMORY.md` → `feedback_context_and_testing_weakness`, `feedback_integration_test_completeness`). The contract makes verification produce a *file + exit code*, not chat prose. It is the implementer-side companion to the reviewer-side evidence gate (#196). The path is **per-ticket and gitignored** (`.hydra/` is in `.gitignore`) so concurrent tickets never collide and the artifact never reaches `main` — resolve it with `scripts/contract-path.sh <ticket> --mkdir` (the single source of truth for the location). Specs: `docs/specs/2026-06-07-validation-contract.md`, `docs/specs/2026-06-08-contract-artifact-location.md`.
 
 The artifact is a 6-column Markdown table; derive the rows from the ticket's acceptance criteria:
 
@@ -100,16 +100,16 @@ The artifact is a 6-column Markdown table; derive the rows from the ticket's acc
 
 Two phases:
 
-1. **Phase 1 — verify-first (right after the spec / skeleton commit, before code):** fill Assertion + Command + Expected for every acceptance criterion. Leave Verdict/Evidence blank or `UNVERIFIED`. Commit it alongside the skeleton so a stall leaves the contract on the draft PR.
-2. **Phase 2 — fill evidence (before you finalize the PR, Flow step 6):** RUN each command, capture the real exit code + output, fill Verdict (`PASS`/`FAIL`/`UNVERIFIED`) + Evidence. A `PASS` REQUIRES concrete evidence; a criterion you could not run is `UNVERIFIED`, never `PASS`. Then run the gate:
+1. **Phase 1 — verify-first (right after the spec / skeleton commit, before code):** fill Assertion + Command + Expected for every acceptance criterion. Leave Verdict/Evidence blank or `UNVERIFIED`. Write it to `.hydra/contracts/<ticket>.md` (`mkdir -p .hydra/contracts` first, or use `scripts/contract-path.sh <ticket> --mkdir`).
+2. **Phase 2 — fill evidence (before you finalize the PR, Flow step 6):** RUN each command, capture the real exit code + output, fill Verdict (`PASS`/`FAIL`/`UNVERIFIED`) + Evidence. A `PASS` REQUIRES concrete evidence; a criterion you could not run is `UNVERIFIED`, never `PASS`. Then run the gate (pass the ticket number; `--ticket` resolves the path):
 
    ```bash
-   bash "$COMMANDER_ROOT/scripts/validate-contract.sh" --file "<worktree>/validation-contract.md"
+   bash "$COMMANDER_ROOT/scripts/validate-contract.sh" --ticket <ticket>
    ```
 
    It MUST exit 0 (every row names a command; every PASS carries evidence) before you finalize the PR. Exit 1 = an unproven assertion (fix the table); exit 2 = the table is missing/garbled.
 
-**Commit the contract for Hydra's own tickets** (it's a first-class artifact the reviewer + operator read; #256 worker-validator will consume it). **For external target repos**, keep it local — add `validation-contract.md` to `.git/info/exclude` so it doesn't land in the downstream repo's tree (same guardrail as `docker-compose.override.yml`).
+**Do NOT commit the contract.** `.hydra/` is gitignored (#262), so the per-ticket contract is worktree-local for BOTH Hydra's own tickets and external target repos — no `.git/info/exclude` dance, no churn in the PR diff, no collision between concurrent tickets. The reviewer + `worker-validator` read it from `.hydra/contracts/<ticket>.md` in the live worktree; it is not a tracked artifact. (`git status` should show NOTHING under `.hydra/` — if it does, the `.gitignore` entry is missing.)
 
 Trivial tickets (typo, dep bump) get a one-row contract (e.g. "typo fixed" → `git diff` → the changed line); they still prove the one thing changed. The contract scales to the ticket the same way the spec rule does.
 

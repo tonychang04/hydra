@@ -173,13 +173,16 @@ lists `browse` / `verify` for the conditional UI leg. **Flow:**
 
 1. Step 0 orient (read `using-hydra-skills` dispatcher, `CLAUDE.md`, the contract
    spec + this spec, `learnings-hydra.md`).
-2. `gh pr view <n>` + locate the PR's worktree; find `validation-contract.md` at
-   the worktree root. **No contract present** → report `UNVALIDATED (no contract)`
-   and return (during rollout, the same way the reviewer treats a missing
-   contract as a Concern, not a hard block) — do not fabricate a verdict.
+2. `gh pr view <n>` + locate the PR's worktree; find the ticket's contract at
+   `<wt>/.hydra/contracts/<ticket>.md` (per-ticket, gitignored — #262; originally
+   the committed worktree-root `validation-contract.md`). **No contract present**
+   → report `UNVALIDATED (no contract)` and return (during rollout, the same way
+   the reviewer treats a missing contract as a Concern, not a hard block) — do not
+   fabricate a verdict.
 3. **Re-run leg (ALL tickets):** `bash "$COMMANDER_ROOT/scripts/revalidate-contract.sh"
-   --file "<wt>/validation-contract.md" --cwd "<wt>"`. Nonzero → a `FAIL` row
-   exists (lying / stale evidence) → **blocker**.
+   --ticket <ticket> --worktree "<wt>"` (`--ticket` resolves the contract path AND
+   defaults `--cwd` to the worktree). Nonzero → a `FAIL` row exists (lying / stale
+   evidence) → **blocker**.
 4. **UI/behavioral leg (ONLY UI/behavioral tickets):** detect via the ticket's
    labels / PR file globs (`*.tsx`, `*.css`, `packages/dashboard/**`) or an
    explicit `ui: on` spawn hint. For these, additionally start the app locally

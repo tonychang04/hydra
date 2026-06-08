@@ -99,9 +99,12 @@ chat output."
 
 ### The validation-contract artifact format
 
-A single Markdown file at the worktree root: `validation-contract.md`. It carries
-a fixed-header table; the helper parses **only** that table (free-form prose
-around it is fine — the worker can add a header naming the ticket).
+A single Markdown file at the per-ticket, gitignored path
+`.hydra/contracts/<ticket>.md` (**updated by #262** — the artifact originally
+lived at the committed worktree root as `validation-contract.md`, which collided
+across concurrent tickets; see `docs/specs/2026-06-08-contract-artifact-location.md`).
+It carries a fixed-header table; the helper parses **only** that table (free-form
+prose around it is fine — the worker can add a header naming the ticket).
 
 ```markdown
 # Validation contract — #<ticket>
@@ -160,8 +163,10 @@ The two-phase lifecycle the artifact encodes:
   Rejected: that is the status quo, and it fires too late + off-worktree. The
   Factory lesson is *verify-first, on disk, by the implementer*. A new artifact
   is the point of the ticket.
-- **Chosen:** a 6-column Markdown `validation-contract.md` at the worktree root,
-  written first by the implementer + filled with evidence before the PR, plus a
+- **Chosen:** a 6-column Markdown contract at `.hydra/contracts/<ticket>.md`
+  (per-ticket, gitignored — #262; originally the committed worktree-root
+  `validation-contract.md`), written first by the implementer + filled with
+  evidence before the PR, plus a
   deterministic bash validator sharing #196's verdict/placeholder rules.
 
 ### #256 extension point (do not depend on it)
@@ -201,8 +206,9 @@ Also run, and paste output into the PR:
 - `scripts/validate-state-all.sh` — schema + CLAUDE.md size gate stays green.
 - `scripts/preflight-syntax.sh` — bash -n + jq + spec frontmatter (this spec's
   frontmatter included).
-- **Practice what we preach:** a filled `validation-contract.md` for THIS ticket,
-  committed at the worktree root, passing `scripts/validate-contract.sh`.
+- **Practice what we preach:** a filled contract for THIS ticket at
+  `.hydra/contracts/<ticket>.md` (gitignored — #262; originally committed at the
+  worktree root), passing `scripts/validate-contract.sh`.
 
 ## Risks / rollback
 
@@ -215,12 +221,13 @@ Also run, and paste output into the PR:
   line). The worker-implementation prose scales the contract to the ticket, the
   same way the spec rule already does ("trivial tickets skip the spec but note
   why"). A one-row contract still proves the one thing changed.
-- **Risk: `validation-contract.md` accidentally committed to a *target* repo**
-  when Hydra works downstream repos. Mitigation: the artifact lives at the
-  worktree root and is intended to be committed **for Hydra's own tickets**; for
-  downstream repos the worker keeps it local (the agent prose says: commit it for
-  Hydra repos, keep it local + add to `.git/info/exclude` for external repos,
-  mirroring the `docker-compose.override.yml` guardrail).
+- **Risk: the contract accidentally committed to a *target* repo** when Hydra
+  works downstream repos. **Resolved by #262:** the artifact now lives at the
+  gitignored, per-ticket path `.hydra/contracts/<ticket>.md` (`.hydra/` is in
+  `.gitignore`), so it is worktree-local for BOTH Hydra's own tickets and external
+  repos — never committed, never in a PR diff, no per-repo `.git/info/exclude`
+  dance. (Originally this spec committed the contract for Hydra tickets; that
+  caused the collision #262 fixed — `docs/specs/2026-06-08-contract-artifact-location.md`.)
 - **Rollback:** revert the spec + delete the two scripts + the fixture dir + the
   agent-prose additions + the one CLAUDE.md line. Nothing else calls the helper;
   removal is clean. The contract degrades to "an extra markdown file in the

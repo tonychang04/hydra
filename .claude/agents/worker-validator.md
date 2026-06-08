@@ -55,16 +55,20 @@ block for "diff not provided". Spec: `docs/specs/2026-04-17-slim-worker-prompts.
 2. **Locate the PR + its worktree + contract.** `gh pr view <n> --json
    files,body,title,baseRefName,headRefName,author`. Find the PR's worktree
    (Commander tracks it in `state/active.json`; else the branch's checkout).
-   Look for `validation-contract.md` at the worktree root.
+   Look for the ticket's contract at `<wt>/.hydra/contracts/<ticket>.md` (the
+   per-ticket, gitignored location — #262; resolve it with
+   `scripts/contract-path.sh <ticket> --worktree <wt>`).
    - **No contract present →** report `UNVALIDATED (no contract)` and return —
      during rollout, the same way the reviewer treats a missing contract as a
      Concern, not a hard block (downstream/external-repo PRs legitimately keep
      the contract local). Do NOT fabricate a verdict.
-3. **Re-run leg (ALL tickets — this is the core).** Run the truth gate:
+3. **Re-run leg (ALL tickets — this is the core).** Run the truth gate (pass the
+   ticket number; `--ticket` resolves the contract path AND defaults `--cwd` to
+   the worktree):
 
    ```bash
    bash "$COMMANDER_ROOT/scripts/revalidate-contract.sh" \
-        --file "<wt>/validation-contract.md" --cwd "<wt>"
+        --ticket <ticket> --worktree "<wt>"
    ```
 
    - **exit 0** → every claimed-PASS assertion reproduced when re-run. Capture
