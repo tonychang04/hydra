@@ -1,3 +1,11 @@
+---
+status: proposed
+date: 2026-06-08
+author: hydra worker
+ticket: 300
+tier: T1
+---
+
 # Spec: regression test for `validate-citations.sh`
 
 Ticket: tonychang04/hydra#300 — "missing-test: validate-citations.sh (canonical citation-liveness check, no coverage)". Tier T1.
