@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "interval_min": 30,
+  "consecutive_rate_limit_hits": 0
+}

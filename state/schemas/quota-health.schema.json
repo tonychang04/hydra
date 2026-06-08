@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/quota-health.schema.json",
+  "title": "Hydra cost + quota health snapshot",
+  "description": "Operator-facing cost + quota rollup written by scripts/quota-watch.sh --write. Read-only telemetry / visibility — NOT a throttle or quota gate (v1 ship principle: hard cost-control + visibility only). The CLAUDE.md preflight and the quota_health block of hydra-status-output.schema.json reference state/quota-health.json; this schema gives it a durable, validated home (ticket #273). Aggregates today's counters from state/budget-used.json, consecutive-rate-limit state from state/autopickup.json, and cost from scripts/cost-per-pr.sh. Additive-friendly (additionalProperties:true) like the other Hydra state schemas. Spec: docs/specs/2026-06-07-quota-watch-cost-visibility.md.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "tickets_completed_today",
+    "tickets_failed_today",
+    "wall_clock_min_today",
+    "rate_limit_hits_today",
+    "consecutive_rate_limit_hits"
+  ],
+  "properties": {
+    "generated_at": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 UTC timestamp this snapshot was written. Null/absent if never written.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    },
+    "date": {
+      "type": ["string", "null"],
+      "description": "ISO date (YYYY-MM-DD) the today-counters apply to, mirrored from budget-used.json. Null when not yet populated.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "tickets_completed_today": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tickets completed today (from budget-used.json:tickets_completed_today)."
+    },
+    "tickets_failed_today": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tickets failed today (from budget-used.json:tickets_failed_today)."
+    },
+    "wall_clock_min_today": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total worker wall-clock minutes today (from budget-used.json)."
+    },
+    "rate_limit_hits_today": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Rate-limit hits today (from budget-used.json:rate_limit_hits_today)."
+    },
+    "consecutive_rate_limit_hits": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Consecutive rate-limit hits (from autopickup.json). 2+ drives the autopickup 2-strike auto-disable — read here for visibility only; the gate itself lives on autopickup.json and is untouched."
+    },
+    "github_rate_limit_ok": {
+      "type": "boolean",
+      "description": "Convenience flag (true when rate_limit_hits_today == 0). Mirrors the quota_health block of hydra-status-output.schema.json."
+    },
+    "linear_rate_limit_ok": {
+      "type": "boolean",
+      "description": "Convenience flag (true when rate_limit_hits_today == 0). Mirrors the quota_health block of hydra-status-output.schema.json."
+    },
+    "total_cost_usd": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Total cost over merged-PR tickets (from cost-per-pr.sh). Null when the cost lookup was unavailable (e.g. offline gh)."
+    },
+    "cost_per_merged_pr": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Cost per merged PR (from cost-per-pr.sh). Null when no PRs merged or cost unavailable."
+    },
+    "tickets_counted": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of per-ticket log files cost-per-pr.sh read."
+    },
+    "est_cost_per_ticket": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Derived total_cost_usd / tickets_completed_today. Null when 0 tickets completed or cost unavailable."
+    },
+    "operator_line": {
+      "type": "string",
+      "description": "One-line operator health string consumed by the session greeting / autopickup tick."
+    }
+  }
+}
