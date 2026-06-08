@@ -1,3 +1,11 @@
+---
+status: proposed
+date: 2026-06-08
+author: hydra worker
+ticket: 301
+tier: T1
+---
+
 # Spec: regression test for `parse-citations.sh`
 
 **Ticket:** #301 — missing-test: parse-citations.sh (learning-loop entry point, no coverage)
