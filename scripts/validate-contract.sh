@@ -27,9 +27,11 @@
 # Sibling checker (shared rules): scripts/validate-evidence-table.sh (#196).
 #
 # Input:
-#   - default:        read the contract body from stdin
-#   - --file <path>:  read it from a file
-#   - --body  <str>:  read it from a literal string argument
+#   - default:         read the contract body from stdin
+#   - --file <path>:   read it from a file
+#   - --ticket <n>:    locate the contract by the #262 per-ticket convention
+#                      (<worktree>/.hydra/contracts/<n>.md, via contract-path.sh)
+#   - --body  <str>:   read it from a literal string argument
 #
 # Expected table (GitHub Markdown), embedded anywhere in the body:
 #
@@ -98,9 +100,12 @@ without a proving command.
 Input (one of):
   (default)        read the contract body from stdin
   --file <path>    read the body from a file
+  --ticket <n>     locate the contract by the #262 per-ticket convention
+                   (<worktree>/.hydra/contracts/<n>.md, via contract-path.sh)
   --body  <str>    read the body from a literal string
 
 Other:
+  --worktree <dir> worktree root for --ticket (default: git toplevel / cwd)
   -h, --help       show this help.
 
 Expected table (Markdown), anywhere in the body:
@@ -130,6 +135,8 @@ EOF
 src_file=""
 src_body=""
 have_body=0
+src_ticket=""
+src_worktree=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -139,6 +146,20 @@ while [[ $# -gt 0 ]]; do
       ;;
     --file=*)
       src_file="${1#--file=}"; shift
+      ;;
+    --ticket)
+      [[ $# -ge 2 ]] || { echo "validate-contract: --ticket needs a value" >&2; exit 2; }
+      src_ticket="$2"; shift 2
+      ;;
+    --ticket=*)
+      src_ticket="${1#--ticket=}"; shift
+      ;;
+    --worktree)
+      [[ $# -ge 2 ]] || { echo "validate-contract: --worktree needs a value" >&2; exit 2; }
+      src_worktree="$2"; shift 2
+      ;;
+    --worktree=*)
+      src_worktree="${1#--worktree=}"; shift
       ;;
     --body)
       [[ $# -ge 2 ]] || { echo "validate-contract: --body needs a value" >&2; exit 2; }
@@ -160,6 +181,27 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# -----------------------------------------------------------------------------
+# resolve --ticket into a file path (the #262 per-ticket convention). --ticket
+# is mutually exclusive with --file / --body so the input source is unambiguous.
+# -----------------------------------------------------------------------------
+if [[ -n "$src_ticket" ]]; then
+  if [[ -n "$src_file" || "$have_body" -eq 1 ]]; then
+    echo "${C_RED}x${C_RESET} validate-contract: --ticket is mutually exclusive with --file / --body" >&2
+    exit 2
+  fi
+  resolver="$(dirname -- "${BASH_SOURCE[0]}")/contract-path.sh"
+  if [[ ! -x "$resolver" && ! -r "$resolver" ]]; then
+    echo "${C_RED}x${C_RESET} validate-contract: contract-path.sh not found next to this script" >&2
+    exit 2
+  fi
+  if [[ -n "$src_worktree" ]]; then
+    src_file="$(bash "$resolver" "$src_ticket" --worktree "$src_worktree")" || exit 2
+  else
+    src_file="$(bash "$resolver" "$src_ticket")" || exit 2
+  fi
+fi
 
 # -----------------------------------------------------------------------------
 # read the body
