@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/decision-entry.schema.json",
+  "title": "Hydra Decision Record entry",
+  "description": "One decision entry — a single line in logs/decisions/<YYYY-MM-DD>.jsonl. Records WHY Commander made a consequential decision (tier-classify, ticket-pick, subagent-route, scope, merge-surface, escalate, rescue, gc, pause). Append-only, written by scripts/record-decision.sh, read by scripts/decisions.sh. Spec: docs/specs/2026-06-08-decision-record.md (ticket #267). The five always-known fields are required; the rest are optional so a forced/low-context decision is still recordable. approval_ref is the seam for the sibling Approval Record (#268).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["ts", "decision_type", "subject", "decided", "why"],
+  "properties": {
+    "ts": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "ISO-8601 UTC timestamp, second precision (e.g. 2026-06-08T18:30:00Z). The moment the decision was made."
+    },
+    "decision_type": {
+      "type": "string",
+      "enum": [
+        "tier-classify",
+        "ticket-pick",
+        "subagent-route",
+        "scope",
+        "merge-surface",
+        "escalate",
+        "rescue",
+        "gc",
+        "pause"
+      ],
+      "description": "Which consequential decision point this records. Mirrors CLAUDE.md's operating-loop + safety/merge decision points."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The thing decided about — a ticket/PR/worker ref (e.g. tonychang04/hydra#501, worker-abc123)."
+    },
+    "decided": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What was chosen (e.g. surface-for-human, T2, worker-implementation)."
+    },
+    "why": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Rule/policy clause + concrete evidence (e.g. 'policy.md T2: touches >1 module; scripts/x.sh:12')."
+    },
+    "alternatives": {
+      "type": "array",
+      "description": "Rejected options. Absent or empty allowed (some decisions are forced).",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["option"],
+        "properties": {
+          "option": {
+            "type": "string",
+            "description": "The rejected alternative."
+          },
+          "why_rejected": {
+            "type": "string",
+            "description": "Why this alternative was not chosen."
+          }
+        }
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "high"],
+      "description": "How sure Commander was about this decision."
+    },
+    "what_would_reverse": {
+      "type": "string",
+      "description": "The new fact that flips this decision (e.g. 'if the PR drops the auth-path edit')."
+    },
+    "approval_ref": {
+      "type": ["string", "null"],
+      "description": "Seam for the Approval Record (#268). A link/ref to an approval record when the decision was human-gated; null (or absent) otherwise. Defined here, populated by #268."
+    }
+  }
+}
