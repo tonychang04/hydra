@@ -1105,7 +1105,7 @@ The wrapper detects this error and returns exit code 4 (`codex-unavailable`), wh
 |---|---|
 | `./scripts/hydra-codex-exec.sh --check` exits 1 "codex CLI not on PATH" | Install the Codex CLI per upstream docs; re-run. On Fly, add the install step to `infra/Dockerfile` and redeploy. |
 | `--check` exits 4 "codex-unavailable" | Auth problem. Run `codex --version` by hand to see the raw error; then either set `OPENAI_API_KEY` or run `codex login`. |
-| A ticket PR opens as `worker-implementation` even though `preferred_backend: codex` | Expected until [#97] lands. Until then, `preferred_backend` is persisted and validated but not yet routed on. |
+| A ticket PR opens as `worker-implementation` even though `preferred_backend: codex` | The router (`scripts/select-worker-backend.sh`) reads `preferred_backend`. Run `scripts/select-worker-backend.sh --repo-backend codex` to see the decision; if it prints `worker-implementation`, a `manual_override: claude` or `fallback_on_rate_limit: false` is in `state/quota-health.json` (`backend status` to inspect). |
 | Wrapper reports "codex exec completed with exit 0 but produced no changes" | Codex accepted the prompt but refused to edit anything — usually means the task prompt was too vague or asked Codex to touch a disallowed path. Check the worker's commit log for the task prompt it sent. |
 | Prompt text appears in commander logs | File a security bug. The wrapper pipes via stdin and scrubs stderr; any leak is a regression. The `codex-worker-fixture` self-test asserts this invariant. |
 
@@ -1116,6 +1116,45 @@ The wrapper detects this error and returns exit code 4 (`codex-unavailable`), wh
 ```
 
 Runs the wrapper against four stubbed `codex` binaries (success / no-change / model-not-supported / rate-limit), verifying every exit code and the prompt-leak security invariant. Runs on CI (script-kind). Set `HYDRA_TEST_CODEX_E2E=1` to additionally smoke-check against a real `codex` install on your host.
+
+## When Claude runs out of tokens
+
+Once the Codex backend is configured (above), Hydra stops freezing when Claude hits a rate-limit — it **auto-switches new spawns to Codex** so the machine keeps shipping while you sleep. This is ticket [#97]; full procedure in [`docs/specs/2026-06-01-codex-auto-fallback.md`](specs/2026-06-01-codex-auto-fallback.md).
+
+### What changes
+
+When Commander detects a Claude rate-limit (classes `claude-rate-limit`, `anthropic-api-429`, `session-token-exhausted`), it:
+
+1. Records the switch in [`state/quota-health.json`](../state/quota-health.example.json): `active_backend: "codex"`, `fallback_reason`, and `fallback_expires_at` (default **now + 1 hour**).
+2. Routes every NEW spawn for the next hour through `worker-codex-implementation` (regardless of each repo's `preferred_backend`).
+3. Surfaces ONE chat line: `⚠ Claude rate-limit detected — switching to Codex backend for 1hr. Re-enable Claude with 'backend claude' or wait for auto-recovery.`
+
+In-flight Claude workers are not killed — only the *next* batch of spawns is rerouted.
+
+**Auto-recovery is automatic and free.** When the 1-hour TTL lapses, the next spawn goes back to Claude. If Claude is still rate-limited, that spawn's failure re-triggers the fallback. Hydra never burns a Claude spawn just to "probe" whether it has recovered.
+
+### How to check status
+
+```bash
+# Human-readable: active backend + reason + TTL remaining + override state.
+scripts/set-backend-fallback.sh --status
+# (Commander exposes this as the `backend status` chat command.)
+```
+
+### How to override
+
+| You want | Command (chat) | Under the hood |
+|---|---|---|
+| Force Claude (ignore the fallback) | `backend claude` | `set-backend-fallback.sh --set claude` — pins `manual_override: claude` |
+| Force Codex | `backend codex` | `--set codex` |
+| Return to automatic (clear pin + any active fallback) | `backend auto` | `--set auto` |
+| Disable auto-switching entirely (keep the legacy 1-hr freeze) | edit `state/quota-health.json`: `"fallback_on_rate_limit": false` | router never auto-switches; rate-limits still recorded |
+
+A manual `backend claude` / `backend codex` pin **wins over** an active auto-fallback and persists until you run `backend auto`.
+
+### Caveat
+
+If you fall back to Codex but your Codex env is the one with the known ChatGPT-account blocker (above), the codex workers will hit `codex-unavailable` (exit 4) and label `commander-stuck`. Resolve the Codex auth (API key or account upgrade) BEFORE relying on the fallback, or the safety net is empty. `scripts/hydra-codex-exec.sh --check` confirms Codex is actually usable.
 
 ## Using a dedicated bot account
 
