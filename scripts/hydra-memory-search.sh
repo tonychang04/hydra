@@ -114,9 +114,18 @@ if [[ -d "$memory_dir" ]]; then
     case "$(basename "$f")" in
       learnings-*.example.md) continue ;;
     esac
-    # Case-insensitive fixed-string match count across the file.
-    count="$(grep -icF -- "$query" "$f" 2>/dev/null || true)"
-    [[ -z "$count" ]] && count=0
+    # Case-insensitive fixed-string OCCURRENCE count across the file.
+    # `grep -o` emits one line per match (not per matching line), so a query
+    # repeated several times on a single line still scores correctly. `wc -l`
+    # then counts occurrences. Trailing whitespace is stripped from wc output.
+    # `grep -o` exits 1 on no match; under `set -o pipefail` that would fail the
+    # pipeline, so capture matches first (tolerating exit 1) then count them.
+    matches="$(grep -oiF -- "$query" "$f" 2>/dev/null || true)"
+    if [[ -n "$matches" ]]; then
+      count="$(printf '%s\n' "$matches" | wc -l | tr -d '[:space:]')"
+    else
+      count=0
+    fi
     if [[ "$count" -gt 0 ]]; then
       rows_tsv+="${count}	${f}"$'\n'
     fi
