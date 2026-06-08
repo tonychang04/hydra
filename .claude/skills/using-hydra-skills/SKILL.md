@@ -77,6 +77,7 @@ This roster is a convenience pointer only — the directory is the source of tru
 - `worker-emit-memory-citations` — `MEMORY_CITED:` markers at end of a worker report
 - `worker-resume-from-rescue` — picking up a `commander-rescued` branch
 - `classify-pr-for-review` — scoping a diff before `/review`
+- `respond-to-review` — processing review-gate findings on a re-spawn (verify before implementing)
 - `commander-classify-tier` — T1/T2/T3 tiering per `policy.md`
 - `commander-skill-promotion` — previewing/steering the promotion pipeline
 - `author-repo-skill` — authoring a NEW repo-local skill
