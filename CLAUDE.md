@@ -73,7 +73,7 @@ Triggers + terse action below; **full semantics → `docs/specs/2026-06-07-comma
 | `retro` | Weekly retro → `memory/retros/YYYY-WW.md` |
 | `self-test` / `self-test <id>` / `self-test --parallel` | Regression harness vs golden PRs |
 | `audit` | Spawn `worker-auditor` (files ≤3 issues; `docs/specs/2026-04-17-worker-auditor-subagent.md`) |
-| `./hydra connect <x>` | Connector wizard `scripts/hydra-connect.sh` |
+| `./hydra connect <x>` | Connector wizard `scripts/hydra-connect.sh` (`docs/specs/2026-04-17-connector-wizard.md`) |
 | `./hydra setup` | Setup wizard (`docs/specs/2026-04-17-setup-wizard.md`) |
 
 ## Safety rules (hard)
@@ -101,9 +101,9 @@ On a worker's `LIVE_RESOURCES:` marker, apply `commander-live-state` (ticket + P
 
 Each line is the trigger/purpose only; the named spec(s) own the full steps. **Read the spec before acting.**
 
-- **Operating loop** — parse intent → preflight → pick (`ticket_trigger`) → classify tier → spawn slim template (`scripts/select-worker-backend.sh`) → track → report. Specs: `docs/specs/2026-04-17-slim-worker-prompts.md`, `2026-04-17-assignee-override.md`, `2026-04-17-linear-ticket-trigger.md`, `2026-04-17-active-schema-drift.md`, `2026-06-07-anti-drift-parallelism.md`, `2026-06-01-codex-auto-fallback.md`.
-- **Commander review gate** — after a PR opens: `worker-review` → `worker-validator` → blockers re-spawn (max 2) → clean → surface; PR-Shepherd flags orphan PRs. Specs: `docs/specs/2026-06-07-worker-validator.md`, `2026-06-07-validation-contract.md`, `2026-05-23-pr-shepherd.md`.
-- **Worker timeout watchdog** — on each tick + worker completion, `scripts/rescue-worker.sh --probe` then act on its exit verdict (rescue / stuck / surface / `/review` / flaky-retry); apply tick actuations. Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md`, `2026-04-17-review-worker-rescue.md`, `2026-04-17-rescue-worker-index-lock.md`, `2026-05-23-auto-rescue-on-completion.md`, `2026-05-24-worker-anti-stall-discipline.md`, `2026-06-07-tick-stall-robustness.md`.
+- **Operating loop** — parse intent → preflight → pick (`ticket_trigger`) → classify tier → spawn slim template (`scripts/select-worker-backend.sh`) → track → report. Specs: `docs/specs/2026-04-17-slim-worker-prompts.md`, `docs/specs/2026-04-17-assignee-override.md`, `2026-04-17-linear-ticket-trigger.md`, `docs/specs/2026-04-17-active-schema-drift.md`, `docs/specs/2026-06-07-anti-drift-parallelism.md`, `2026-06-01-codex-auto-fallback.md`.
+- **Commander review gate** — after a PR opens: `worker-review` → `worker-validator` → blockers re-spawn (max 2) → clean → surface; PR-Shepherd flags orphan PRs. Specs: `docs/specs/2026-06-07-worker-validator.md`, `docs/specs/2026-06-07-validation-contract.md`, `docs/specs/2026-05-23-pr-shepherd.md`.
+- **Worker timeout watchdog** — on each tick + worker completion, `scripts/rescue-worker.sh --probe` then act on its exit verdict (rescue / stuck / surface / `/review` / flaky-retry); apply tick actuations. Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md`, `2026-04-17-review-worker-rescue.md`, `2026-04-17-rescue-worker-index-lock.md`, `2026-05-23-auto-rescue-on-completion.md`, `2026-05-24-worker-anti-stall-discipline.md`, `docs/specs/2026-06-07-tick-stall-robustness.md`.
 - **Escalate to supervisor agent** — when memory can't resolve: scan `escalation-faq.md` + `learnings-<repo>.md`, else escalate per the do/don't list. Specs: `docs/specs/2026-04-16-mcp-agent-interface.md`, `2026-04-17-supervisor-escalate-client.md`, `docs/mcp-tool-contract.md`, `docs/specs/2026-04-17-main-agent-filing.md`.
 - **Auto-dispatch test-discovery** — `QUESTION: test procedure unclear` twice in a row on a repo → spawn `worker-test-discovery`, park the ticket. Spec: `docs/specs/2026-04-17-auto-dispatch-test-discovery.md`.
 - **Scheduled autopickup** — `autopickup every N min` runs a cron-like `/loop`; each tick runs report-only `scripts/autopickup-tick.sh --json`, then acts (spawn / review / rescue / merge / retro). Specs: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `2026-06-06-autopickup-tick-orchestrator.md`, `2026-04-16-scheduled-autopickup.md`, `2026-04-16-autopickup-default-on.md`, `2026-04-17-scheduled-retro.md`, `2026-04-17-daily-digest.md`.
