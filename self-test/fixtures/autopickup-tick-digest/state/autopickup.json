@@ -1,5 +1,5 @@
 {
-  "_description": "Fixture autopickup.json for the daily-digest tick-step self-test (#266). last_digest_run is null so the daily digest-due gate fires on a never-run repo; digest_time is the default 09:00 so the smoke harness can place 'now' before/after it via --hour/--minute to prove the time-of-day gate. The harness also derives same-day and yesterday variants via jq to prove once/day-then-false idempotency. See docs/specs/2026-06-08-digest-tick-step.md.",
+  "_description": "Fixture autopickup.json for the daily-digest tick-step self-test (#266). The digest scheduler state (enabled / time / last_digest_run) lives on the sibling state/digests.json — the tick's section-4f digest step reads it from there, NOT from this file. This file just supplies the surrounding tick state (interval, last_*_run for the other steps) so the digest run renders in a realistic tick. See docs/specs/2026-06-08-digest-tick-step.md.",
   "enabled": true,
   "interval_min": 30,
   "auto_enable_on_session_start": true,
@@ -9,7 +9,5 @@
   "last_retro_run": "2026-06-08T09:00:00",
   "last_promotion_run": "2026-06-08",
   "last_audit_run": "2026-06-08T08:00:00",
-  "tickets_at_last_hygiene": 0,
-  "last_digest_run": null,
-  "digest_time": "09:00"
+  "tickets_at_last_hygiene": 0
 }

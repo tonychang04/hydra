@@ -1083,7 +1083,7 @@ printf '%s' "$actions_json" | jq -r '
 [[ "$(printf '%s' "$audit_json" | jq -r '.audit_due')" == "true" ]] \
   && echo "  ↳ Audit DUE — Commander: spawn worker-auditor on the hydra repo (<=3 issues, dedupe vs open commander-auto-filed), then stamp last_audit_run."
 [[ "$(printf '%s' "$digest_json" | jq -r '.digest_due')" == "true" ]] \
-  && echo "  ↳ Digest DUE — Commander: run scripts/build-daily-digest.sh, route per the configured channel (state/digests.json), then stamp last_digest_run on state/autopickup.json."
+  && echo "  ↳ Digest DUE — Commander: run scripts/build-daily-digest.sh, route per the configured channel (state/digests.json), then stamp last_digest_run on state/digests.json."
 [[ "$(printf '%s' "$gc_json" | jq '.candidates_count')" -gt 0 ]] \
   && echo "  ↳ Stale worktrees: run scripts/gc-stale-worktrees.sh --apply to reclaim."
 [[ "$(printf '%s' "$preflight_json" | jq -r '.interval_warn')" == "true" ]] \

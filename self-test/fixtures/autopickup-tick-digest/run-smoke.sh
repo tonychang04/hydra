@@ -8,13 +8,19 @@
 #   --today <YYYY-MM-DD>   fixes "today" so the daily digest-due date gate is stable
 #   --hour <0-23>          fixes "now" hour for the time-of-day gate
 #   --minute <0-59>        fixes "now" minute for the time-of-day gate
-#   --state-dir            points at this fixture's state/autopickup.json
+#   --state-dir            points at the fixture state dir (incl. state/digests.json)
+#
+# The digest scheduler state (enabled / time / last_digest_run) lives on the
+# CANONICAL state/digests.json (written by ./hydra connect digest) — the tick's
+# section-4f digest step reads it FROM THERE, not from autopickup.json. The
+# run_with helper therefore drives digests.json.
 #
 # Asserts the acceptance behavior from the ticket:
-#   1. digest-due fires when never run (last_digest_run null) AND now >= digest_time
-#   2. once/day idempotency: last_digest_run == today        -> digest_due false
+#   0. ENABLED gate: digests.json:.enabled == false           -> digest_due false
+#   1. digest-due fires when enabled + never run (last_digest_run null) AND now >= time
+#   2. once/day idempotency: last_digest_run == today         -> digest_due false
 #   3. a stamp from YESTERDAY does not suppress today         -> digest_due true
-#   4. before configured time (now < digest_time)            -> digest_due false
+#   4. before configured time (now < time)                    -> digest_due false
 #   5. human-mode renders the Digest stanza
 #   6. run_hint mentions build-daily-digest.sh + last_digest_run (Commander actuates)
 #   7. MUTATION PROOF: stripping the time-of-day gate clause from a copy of the
@@ -47,18 +53,23 @@ common_args=(
   --json
 )
 
-# Helper: run a given tick SCRIPT against a state dir whose autopickup.json sets
-# last_digest_run to $1 (literal string "null" for the null case), at the given
-# today/hour/minute. $5 is the script path (so the mutation test can pass a
-# patched copy).
+# Helper: run a given tick SCRIPT against a state dir whose CANONICAL
+# state/digests.json sets last_digest_run to $1 (literal string "null" for the
+# null case), at the given today/hour/minute. $5 is the script path (so the
+# mutation test can pass a patched copy). $6 (optional, default "true") sets
+# digests.json:.enabled so the enabled-gate case can flip it off. autopickup.json
+# is copied through unchanged — the digest step does not read it.
 run_with() {
-  local last_digest="$1" today="$2" hour="$3" minute="$4" script="${5:-$SCRIPT}"
+  local last_digest="$1" today="$2" hour="$3" minute="$4" script="${5:-$SCRIPT}" enabled="${6:-true}"
   local tmp; tmp="$(mktemp -d)"
-  cp "$STATE_DIR/active.json" "$tmp/active.json"
+  cp "$STATE_DIR/active.json"     "$tmp/active.json"
+  cp "$STATE_DIR/autopickup.json" "$tmp/autopickup.json"
   if [[ "$last_digest" == "null" ]]; then
-    jq '.last_digest_run = null' "$STATE_DIR/autopickup.json" > "$tmp/autopickup.json"
+    jq --argjson en "$enabled" '.enabled = $en | .last_digest_run = null' \
+      "$STATE_DIR/digests.json" > "$tmp/digests.json"
   else
-    jq --arg v "$last_digest" '.last_digest_run = $v' "$STATE_DIR/autopickup.json" > "$tmp/autopickup.json"
+    jq --argjson en "$enabled" --arg v "$last_digest" '.enabled = $en | .last_digest_run = $v' \
+      "$STATE_DIR/digests.json" > "$tmp/digests.json"
   fi
   NO_COLOR=1 "$script" --repo tonychang04/hydra --gh-mock "$GH_MOCK" \
     --repos-file "$REPOS" --state-dir "$tmp" \
@@ -67,9 +78,24 @@ run_with() {
 }
 
 # =============================================================================
-# 1. DIGEST-DUE fires when never run (last_digest_run null) and now >= digest_time
+# 0. ENABLED GATE: digests.json:.enabled == false -> NOT due (un-wired digest).
+#    Even with last_digest_run null and now after the configured time, an
+#    un-subscribed digest must never report due — a fresh clone is inert.
 # =============================================================================
-# digest_time fixture default is 09:00; place "now" at 10:00 (after).
+disabled_out="$(run_with null "$TODAY" 10 0 "$SCRIPT" false)"
+echo "$disabled_out" | jq -e '.digest.digest_due == false' >/dev/null \
+  || fail "a disabled digest (enabled=false) must NOT be due" "$disabled_out"
+echo "$disabled_out" | jq -e '.digest.digest_reason | test("not enabled")' >/dev/null \
+  || fail "disabled digest must report a 'not enabled' reason" "$disabled_out"
+echo "$disabled_out" | jq -e '.digest.digest_marker == ""' >/dev/null \
+  || fail "digest_marker must be empty when not enabled" "$disabled_out"
+echo "$disabled_out" | jq -e '.actions.digest_due == false' >/dev/null \
+  || fail "actions roll-up should expose digest_due false when not enabled" "$disabled_out"
+
+# =============================================================================
+# 1. DIGEST-DUE fires when enabled + never run (last_digest_run null) and now >= time
+# =============================================================================
+# digest time fixture default is 09:00; place "now" at 10:00 (after).
 never_out="$(run_with null "$TODAY" 10 0)"
 
 echo "$never_out" | jq -e 'has("digest")' >/dev/null \

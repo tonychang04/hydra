@@ -44,13 +44,20 @@ This is a schedule-claim-without-scheduler gap, and it stalls the P1
   `last_digest_run`. Actuation stays Commander's job — the same
   report-don't-mutate split as every other `*_due` step (retro, promotion,
   audit).
-- Gate: `digest_due = (date(last_digest_run) != today) AND (now_hm >=
-  digest_time)`. The daily date-gate mirrors `audit_due`; the added time-of-day
-  gate (default `09:00` local) matches the digest spec's "configured time"
-  promise and the Monday-retro `>= 09:00` precedent.
-- Add the additive, optional `last_digest_run` and `digest_time` fields to
-  `state/schemas/autopickup.schema.json` (`additionalProperties: true` keeps it
-  forward-compatible; absence is tolerated).
+- Gate: `digest_due = enabled AND (date(last_digest_run) != today) AND (now_hm
+  >= time)`, reading all three (`enabled` / `last_digest_run` / `time`) from the
+  **canonical `state/digests.json`** (written by `./hydra connect digest`). The
+  `enabled` gate keeps a fresh, un-subscribed clone inert; the daily date-gate
+  mirrors `audit_due`; the time-of-day gate (default `09:00` local) matches the
+  digest spec's "configured time" promise and the Monday-retro `>= 09:00`
+  precedent.
+- Read the scheduler state from `state/digests.json` — its CANONICAL home, which
+  the pre-existing `state/schemas/digests.schema.json` already declares
+  (`enabled` / `channel` / `time` / `destination` / `last_digest_run`) and whose
+  description already says "Scheduled by the Scheduled autopickup tick". No new
+  fields are added to `state/autopickup.json`; the tick reads `digests.json`
+  directly (one canonical state file, no duplicated stamp). See "Reconciliation
+  with #144" below.
 - Expose `digest_due` in the tick's `--json` (`digest` object + `actions`
   roll-up) and human report (a "Digest" stanza + an actions-footer hint when
   due).
@@ -62,11 +69,13 @@ This is a schedule-claim-without-scheduler gap, and it stalls the P1
   channel, and stamps `last_digest_run` — exactly as it actuates `audit_due`.
 - **Not** the channel-routing / composer work — that already shipped under #144.
   This ticket is the missing *scheduler leg* only.
-- **Not** moving idempotency state to `state/digests.json`. The original #144
-  spec proposed `last_digest_run` on `state/digests.json`; this ticket
-  deliberately puts it on `state/autopickup.json` so the digest rides the same
-  tick idempotency machinery as retro/promotion/audit (one scheduler pattern,
-  one state file the tick already reads). See "Reconciliation with #144" below.
+- **Not** inventing a new idempotency-state home. The scheduler state
+  (`enabled` / `time` / `last_digest_run`) lives on the **canonical
+  `state/digests.json`** that `./hydra connect digest` already writes and
+  `digests.schema.json` already declares. The tick reads that file directly
+  rather than mirroring fields onto `state/autopickup.json` — one canonical
+  state file, no duplicated stamp to keep in sync. See "Reconciliation with
+  #144" below.
 - **Not** a CLAUDE.md edit. A CLAUDE.md PR is in flight; the one-line routing
   pointer this step needs (the digest tick step, paralleling the audit step
   pointer) is noted in this spec and the PR body for that PR to fold in.
@@ -81,21 +90,27 @@ Copy the shape of section 4d (`4d. SCHEDULED SELF-AUDIT`):
 # Resolve "today" (date gate) and "now_hm" (time-of-day gate).
 digest_today  = today_override   || date +%F
 now_hm        = (hour_override || date +%H) : (minute_override || date +%M)   # "HH:MM"
-digest_time   = autopickup.json:.digest_time // "09:00"
 
-last_digest_run  = autopickup.json:.last_digest_run // ""
+# Read the scheduler state from the CANONICAL state/digests.json.
+enabled         = digests.json:.enabled // false
+digest_time     = digests.json:.time    // "09:00"   # fall back if absent/malformed
+last_digest_run = digests.json:.last_digest_run // ""
 last_digest_date = ${last_digest_run%%T*}
 
 digest_due = true
-if   last_digest_date == digest_today                  -> due=false, reason="already ran today"
+if   enabled != true                                   -> due=false, reason="not enabled (run ./hydra connect digest)"
+elif last_digest_date == digest_today                  -> due=false, reason="already ran today"
 elif now_hm < digest_time                              -> due=false, reason="before configured time HH:MM"
 else                                                    -> due=true,  marker="digest-due"
 ```
 
-Emit `digest_json = {today, last_digest_run, digest_time, now_hm, digest_due,
-digest_marker, digest_reason, run_hint}` where `run_hint` tells Commander:
-"run scripts/build-daily-digest.sh, route per the configured channel, then
-stamp last_digest_run". Wire `digest_due` into `actions_json`
+The ENABLED gate is the one deliberate addition over the `audit_due` shape: an
+un-subscribed digest (no `digests.json`, or `enabled=false`) must never report
+due, so a fresh clone stays inert. Emit `digest_json = {today, enabled,
+last_digest_run, digest_time, now_hm, digest_due, digest_marker, digest_reason,
+run_hint}` where `run_hint` tells Commander: "run scripts/build-daily-digest.sh,
+route per the configured channel (state/digests.json), then stamp
+last_digest_run on state/digests.json". Wire `digest_due` into `actions_json`
 (`digest_due: ($digest.digest_due)`), the `--json` envelope (new top-level
 `digest` key), and the human report (a "Digest" stanza + a footer hint when
 due). String comparison of zero-padded `HH:MM` is lexicographically correct for
@@ -109,98 +124,116 @@ time-of-day gate so the smoke test can place "now" before/after `digest_time`
 without depending on the wall clock. All three default to the live clock so a
 bare invocation Just Works.
 
-### Schema (`state/schemas/autopickup.schema.json`)
+### Schema (`state/schemas/digests.schema.json` — already present)
 
-Add two optional properties (NOT in `required`):
-
-- `last_digest_run`: `["string","null"]` — ISO-8601 local timestamp (or bare
-  date) of the last digest emit, or null/absent if never run. Drives the daily
-  date-gate. Commander stamps it after running the composer.
-- `digest_time`: `string`, pattern `^([01][0-9]|2[0-3]):[0-5][0-9]$`, default
-  documented as `09:00` — the configured local emit time. Absent ⇒ tick uses
-  `09:00`.
+No schema *additions* are needed: the canonical `state/schemas/digests.schema.json`
+already declares the three fields the tick reads — `enabled` (boolean),
+`time` (`^([01][0-9]|2[0-3]):[0-5][0-9]$`), and `last_digest_run`
+(`["string","null"]`) — all in `required`, with descriptions that already name
+the autopickup tick as the scheduler. The tick reads them as-is; the only
+schema *change* in this ticket is **removing** the (now-vestigial)
+`last_digest_run` / `digest_time` properties that an earlier draft had added to
+`state/schemas/autopickup.schema.json` — the tick reads `digests.json`, not
+those, so they were dead fields. A NOTE on `autopickup.schema.json`'s
+`tickets_at_last_hygiene` points future readers at `digests.json` as the digest
+scheduler home.
 
 ### Reconciliation with #144
 
-The #144 spec text (lines 34-36, 82-95) put `last_digest_run` on
-`state/digests.json`. The tick orchestrator that shipped after #144 (#228/#239)
-established `state/autopickup.json` as the single home for all tick scheduler
-state (`last_retro_run`, `last_promotion_run`, `last_audit_run`). Putting
-`last_digest_run` there too — rather than on a second file the tick would have
-to additionally read — keeps **one scheduler pattern, one state file**. This
-spec records that decision; the #144 spec's `state/digests.json` remains the
-home for the **channel config** (`enabled`, `channel`, `time`, `destination`),
-while the **idempotency stamp** lives on `autopickup.json`. The
-`autopickup.json:digest_time` added here is the tick-side mirror of
-`digests.json:time` — the tick reads `digest_time` (always present-or-defaulted
-on the file it already loads) rather than cross-reading `digests.json`, keeping
-the tick's file dependencies unchanged.
+The #144 spec text put `last_digest_run` on `state/digests.json`, and
+`digests.schema.json` was created there with `enabled` / `channel` / `time` /
+`destination` / `last_digest_run` all required — its description already reads
+"Scheduled by the Scheduled autopickup tick (step 1.6)". This ticket honors that
+canonical home: the tick reads `enabled` / `time` / `last_digest_run` straight
+from `state/digests.json`. An earlier draft of this ticket mirrored the stamp
+onto `state/autopickup.json` (to match `last_retro_run` / `last_audit_run`); that
+was reverted because it duplicated state across two files (the wizard writes
+`digests.json`, the tick would read a different `autopickup.json` copy) and
+contradicted the schema #144 already shipped. One canonical file, no sync risk.
 
 ### Alternatives considered
 
-- **A: Tick reads `state/digests.json` directly for `enabled`/`time`.**
-  Rejected — adds a new file dependency to the tick and couples it to the #144
-  channel-config schema. The tick already reads `autopickup.json`; mirroring
-  `digest_time` there is cheaper and matches how retro/audit work. Commander
-  still consults `digests.json:enabled` at actuation time before running the
-  composer (the tick reporting "due" is necessary, not sufficient — same as the
-  retro "due-write-first" marker that Commander still gates on).
+- **A (picked): Tick reads `state/digests.json` directly for
+  `enabled`/`time`/`last_digest_run`.** Adds one file read to the tick but uses
+  the canonical, wizard-written file `digests.schema.json` already defines —
+  no duplicated stamp, no risk of the tick reading a stale mirror. The tick's
+  ENABLED gate also lets it short-circuit cleanly on an un-wired clone.
+- **A′ (rejected): Mirror `last_digest_run` + `digest_time` onto
+  `state/autopickup.json`** to match retro/audit. Rejected — it duplicates the
+  stamp the wizard writes to `digests.json`, so the tick and the composer could
+  drift; and it contradicts the already-shipped `digests.schema.json` that names
+  the tick as its scheduler. The marginal "one scheduler file" tidiness isn't
+  worth a two-file sync hazard.
 - **B: Daily date-gate only, no time-of-day gate (exact `audit_due` copy).**
   Rejected — the digest spec explicitly promises "a configured time (default
   09:00)". The audit step has no time component; the digest does. The added
   `now_hm >= digest_time` gate is the one deliberate divergence from 4d.
-- **C (picked):** Report-only `digest_due` step on `autopickup.json`, daily
-  date-gate + configurable time-of-day gate, schema fields additive, composer
-  + stamping stay Commander's job.
+- **C (picked):** Report-only `digest_due` step reading the canonical
+  `state/digests.json` (enabled + daily date-gate + configurable time-of-day
+  gate); composer + stamping stay Commander's job.
 
 ## Test plan
 
 New offline smoke fixture `self-test/fixtures/autopickup-tick-digest/run-smoke.sh`
-(mirrors `autopickup-tick-audit/run-smoke.sh`), registered in
+(mirrors `autopickup-tick-audit/run-smoke.sh`) drives the canonical
+`state/digests.json` via a `run_with` helper, registered in
 `self-test/golden-cases.example.json`. Asserts:
 
-1. **Never run** (`last_digest_run = null`), now after `digest_time` →
+0. **Enabled gate**: `digests.json:.enabled == false` → `digest_due == false`,
+   reason `not enabled`, marker empty (a fresh/un-wired clone is inert).
+1. **Never run** (`last_digest_run = null`), enabled, now after `time` →
    `digest.digest_due == true`, `digest_marker == "digest-due"`,
    `actions.digest_due == true`.
 2. **Once/day idempotency**: `last_digest_run == today` → `digest_due == false`,
    reason `already ran today`, marker empty.
 3. **New day**: `last_digest_run` = yesterday → `digest_due == true`.
-4. **Before configured time**: never-run but `now_hm` < `digest_time` →
+4. **Before configured time**: never-run but `now_hm` < `time` →
    `digest_due == false`, reason mentions the configured time, marker empty.
+   (Plus a boundary case: exactly at `09:00` → due, `>=` inclusive.)
 5. **Human stanza** renders a "Digest" section.
-6. **Mutation proof**: a `bash -n` clean check plus the guard's own
-   red-green — deleting the time-gate clause in a `mktemp` copy flips
-   assertion 4 to fail (proving the test actually constrains the gate).
+6. **Mutation proof**: the guard's own red-green — neutralizing the time-gate
+   clause in a `mktemp` copy of the tick flips assertion 4 to (wrongly) due,
+   proving the test actually constrains the gate.
 
-Plus the existing `--help` / unknown-flag (exit 2) / `bash -n` cases continue
-to pass, and `scripts/validate-state-all.sh` passes with the new schema fields
-present on a real `state/autopickup.json`.
+The harness's temp state dir includes the fixture's `digests.json`, so the
+tick's section-0 `validate-state-all --state-dir` runs it through `digests.schema.json`
+(ajv strict) on every case — `state_valid == true` confirms the fixture is
+schema-clean. Plus the existing `--help` / unknown-flag (exit 2) / `bash -n`
+cases continue to pass.
 
 ## Risks / rollback
 
 - **Risk:** tick reports the digest due every tick (over-firing).
   **Mitigation:** the `last_digest_run` daily date-gate — identical to
   `audit_due`'s proven once/day guard.
-- **Risk:** schema change rejects existing `autopickup.json` files.
-  **Mitigation:** both new fields are optional (not in `required`) and
-  `additionalProperties` is already `true`; existing files validate unchanged.
+- **Risk:** a fresh clone with no `state/digests.json` reports the digest due.
+  **Mitigation:** the ENABLED gate — a missing file or `enabled != true` yields
+  `digest_due == false` (`enabled` defaults to `false` when absent).
+- **Risk:** the tick reads a stale `digests.json` mirror that drifts from the
+  wizard's copy. **Mitigation:** there is no mirror — the tick reads the same
+  canonical `state/digests.json` the wizard writes; no second copy to sync.
 - **Risk:** time-gate string comparison breaks on un-padded hours (e.g. `9:00`).
   **Mitigation:** the tick zero-pads `now_hm` from `date +%H:%M` (always two
-  digits) and the schema pattern forces `digest_time` to `HH:MM`, so the
+  digits) and `digests.schema.json`'s pattern forces `time` to `HH:MM`, so the
   lexical compare is sound.
 - **Rollback:** the step is report-only and additive. Reverting the tick block
-  removes the marker; the schema fields are optional and harmless if left.
-  Commander simply stops seeing a "digest due" line.
+  removes the marker; `digests.json` is read-only to the tick, so nothing else
+  changes. Commander simply stops seeing a "digest due" line.
 
 ## Implementation notes
 
 Files touched (all owned by this ticket per the coordinate-with hint):
 
-- `scripts/autopickup-tick.sh` — new section 4f + `--minute` seam + JSON/human
-  wiring + actions roll-up entry.
-- `state/schemas/autopickup.schema.json` — `last_digest_run` + `digest_time`.
-- `self-test/fixtures/autopickup-tick-digest/` — smoke fixture (state/, repos/,
-  gh-mock/, run-smoke.sh).
+- `scripts/autopickup-tick.sh` — new section 4f (reads `state/digests.json`:
+  `enabled`/`time`/`last_digest_run`) + `--minute` seam + JSON/human wiring +
+  actions roll-up entry.
+- `state/schemas/autopickup.schema.json` — **removes** the vestigial
+  `last_digest_run` / `digest_time` properties an earlier draft added (the tick
+  reads `digests.json`, not these); adds a NOTE pointing to the canonical home.
+  No change to `digests.schema.json` — it already declares the fields the tick
+  reads.
+- `self-test/fixtures/autopickup-tick-digest/` — smoke fixture (state/ incl.
+  `digests.json`, repos/, gh-mock/, run-smoke.sh).
 - `self-test/golden-cases.example.json` — register the new smoke case.
 - This spec.
 
