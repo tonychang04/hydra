@@ -1,0 +1,8 @@
+{
+  "_description": "Fixture digests.json for the daily-digest tick-step self-test (#266). This is the CANONICAL home of the digest scheduler state (written by ./hydra connect digest); the autopickup tick's section-4f digest step reads enabled / time / last_digest_run from HERE, not from autopickup.json. Base case: enabled=true, time=09:00, last_digest_run=null so the digest-due gate fires on a never-run repo. The run-smoke harness derives enabled=false, same-day, and yesterday variants via jq to prove the enabled gate + once/day idempotency. See docs/specs/2026-06-08-digest-tick-step.md.",
+  "enabled": true,
+  "channel": "stdout",
+  "time": "09:00",
+  "destination": "memory/digests/",
+  "last_digest_run": null
+}

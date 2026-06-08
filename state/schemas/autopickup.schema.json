@@ -55,7 +55,7 @@
     "tickets_at_last_hygiene": {
       "type": "integer",
       "minimum": 0,
-      "description": "Cumulative ticket count at the last memory-hygiene compaction. The autopickup tick computes tickets_since = tickets_total - this; when it reaches the threshold (default 10) the tick emits a compact-memory marker. Commander resets this to the current cumulative total after running compaction. When the field is ABSENT (never written) the tick treats the baseline as 0 (never run). Commander always writes an integer here, never an explicit null, so the field stays integer-typed and validate-state-all passes. See docs/specs/2026-06-06-autopickup-tick-orchestrator.md (ticket #239)."
+      "description": "Cumulative ticket count at the last memory-hygiene compaction. The autopickup tick computes tickets_since = tickets_total - this; when it reaches the threshold (default 10) the tick emits a compact-memory marker. Commander resets this to the current cumulative total after running compaction. When the field is ABSENT (never written) the tick treats the baseline as 0 (never run). Commander always writes an integer here, never an explicit null, so the field stays integer-typed and validate-state-all passes. See docs/specs/2026-06-06-autopickup-tick-orchestrator.md (ticket #239). NOTE: the daily-digest scheduler state (enabled / time / last_digest_run) lives on state/digests.json — its CANONICAL home, written by ./hydra connect digest — NOT here. The autopickup tick's section-4f digest step reads digests.json directly; see docs/specs/2026-06-08-digest-tick-step.md (ticket #266)."
     }
   }
 }

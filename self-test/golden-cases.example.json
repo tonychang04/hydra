@@ -3208,6 +3208,12 @@
           "expected_stdout_contains": "SMOKE_OK"
         },
         {
+          "name": "autopickup-tick daily-digest smoke (#266: digest-due fires once/day AND after digest_time, suppressed same-day, re-fires next day, suppressed before configured time, due exactly AT time, run_hint + human stanza render, mutation-proves the time gate)",
+          "cmd": "self-test/fixtures/autopickup-tick-digest/run-smoke.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        },
+        {
           "name": "gc-stale-worktrees.sh bash -n clean",
           "cmd": "bash -n scripts/gc-stale-worktrees.sh && echo OK",
           "expected_exit": 0,

@@ -87,7 +87,10 @@ Options:
   --no-merge-surface     Skip the merge-surface block (report an empty list).
   --weekday <1-7>        Test-only: override local ISO weekday (1=Mon..7=Sun)
                          for Monday-retro detection. Default: live clock.
-  --hour <0-23>          Test-only: override local hour for the >=09:00 retro gate.
+  --hour <0-23>          Test-only: override local hour for the >=09:00 retro gate
+                         and the daily-digest time-of-day gate (section 4f).
+  --minute <0-59>        Test-only: override local minute for the daily-digest
+                         time-of-day gate (now_hm = HH:MM vs digest_time).
   --week <YYYY-WW>       Test-only: override the current ISO week tag (date +%G-%V).
   --today <YYYY-MM-DD>   Test-only: passed to promote-citations.sh --check-due.
   --retros-dir <path>    Override memory/retros (retro file lookup + filer).
@@ -136,6 +139,7 @@ do_merge_surface=1
 # make the smoke test deterministic and offline.
 weekday_override=""        # --weekday <1-7> (ISO; 1=Mon..7=Sun)
 hour_override=""           # --hour <0-23>
+minute_override=""         # --minute <0-59> (digest time-of-day gate, ticket #266)
 week_override=""           # --week <YYYY-WW> (ISO week tag, date +%G-%V)
 today_override=""          # --today <YYYY-MM-DD> (passed to promote-citations --check-due)
 retros_dir_override=""     # --retros-dir <path> (default memory/retros)
@@ -176,6 +180,8 @@ while [[ $# -gt 0 ]]; do
     --weekday=*)          weekday_override="${1#--weekday=}"; shift ;;
     --hour)               need_val "$@"; hour_override="$2"; shift 2 ;;
     --hour=*)             hour_override="${1#--hour=}"; shift ;;
+    --minute)             need_val "$@"; minute_override="$2"; shift 2 ;;
+    --minute=*)           minute_override="${1#--minute=}"; shift ;;
     --week)               need_val "$@"; week_override="$2"; shift 2 ;;
     --week=*)             week_override="${1#--week=}"; shift ;;
     --today)              need_val "$@"; today_override="$2"; shift 2 ;;
@@ -210,6 +216,9 @@ fi
 if [[ -n "$hour_override" && ! "$hour_override" =~ ^(0?[0-9]|1[0-9]|2[0-3])$ ]]; then
   echo "autopickup-tick: --hour must be 0-23, got '$hour_override'" >&2; exit 2
 fi
+if [[ -n "$minute_override" && ! "$minute_override" =~ ^([0-5]?[0-9])$ ]]; then
+  echo "autopickup-tick: --minute must be 0-59, got '$minute_override'" >&2; exit 2
+fi
 if [[ -n "$tickets_total_override" && ! "$tickets_total_override" =~ ^[0-9]+$ ]]; then
   echo "autopickup-tick: --tickets-total must be a non-negative integer, got '$tickets_total_override'" >&2; exit 2
 fi
@@ -226,6 +235,12 @@ REPOS_FILE="${repos_file_override:-$STATE_DIR/repos.json}"
 BUDGET_FILE="$ROOT_DIR/budget.json"
 AUTOPICKUP_FILE="$STATE_DIR/autopickup.json"
 BUDGET_USED_FILE="$STATE_DIR/budget-used.json"
+# Daily-digest config + idempotency state. CANONICAL home is state/digests.json
+# (written by `./hydra connect digest` via scripts/hydra-connect.sh): it owns
+# enabled / time / last_digest_run. The tick reads them from here so a non-09:00
+# schedule the operator configured actually takes effect and an already-emitted
+# digest is not re-reported as due (ticket #266; #144 shipped this file).
+DIGEST_FILE="$STATE_DIR/digests.json"
 RETROS_DIR="${retros_dir_override:-$ROOT_DIR/memory/retros}"
 
 SHEPHERD="$ROOT_DIR/scripts/pr-shepherd.sh"
@@ -803,6 +818,102 @@ if [[ -x "$GC_WORKTREES" ]]; then
 fi
 
 # =============================================================================
+# 4f. DAILY DIGEST  (daily status rollup — report-only schedule leg)
+# =============================================================================
+# REPORT-ONLY discipline (same as 4b/4c/4d/4e): this block detects whether the
+# daily status digest is due and emits a `digest-due` marker. It NEVER runs
+# scripts/build-daily-digest.sh, routes a channel, or stamps last_digest_run —
+# Commander actuates (runs the composer, routes per the configured channel) and
+# stamps last_digest_run when it does, the same split as audit (audit_due) and
+# retro (retro_due).
+#
+# CANONICAL STATE is state/digests.json (written by `./hydra connect digest` via
+# scripts/hydra-connect.sh, shipped under #144). It owns enabled / time /
+# last_digest_run. The tick reads ALL THREE from there so:
+#   - a non-09:00 schedule the operator configured actually takes effect
+#     (reading a separate mirror that the connector never writes would fire at
+#     the wrong time), and
+#   - an already-emitted digest is not re-reported as due after upgrade
+#     (the stamp lives in digests.json, not autopickup.json).
+#
+# The gate has THREE parts:
+#   0. ENABLED gate: digests.json:.enabled == true. The connector defaults this
+#      false so a fresh clone is inert; an un-wired digest is never "due".
+#   1. DAILY date-gate (mirrors last_audit_run): date(last_digest_run) != today.
+#   2. TIME-OF-DAY gate: now_hm >= time. `time` defaults to "09:00" when the file
+#      is absent or the value is malformed.
+# All three must hold for digest_due. Missing file / absent enabled => not
+# configured => not due. Null/missing/malformed last_digest_run => never run =>
+# date-gate passes (still subject to enabled + time gates).
+#
+# String comparison of zero-padded HH:MM is lexicographically correct
+# ("08:59" < "09:00" < "13:00"), the same trick the retro step uses for ISO week
+# tags. Test seams: --today fixes the date; --hour/--minute fix now_hm; defaults
+# read the live clock (date +%F / +%H / +%M). Spec: docs/specs/2026-06-08-digest-tick-step.md.
+digest_today="${today_override:-$(date +%F)}"
+
+# now_hm = "HH:MM", zero-padded. Overrides for tests; else the live clock.
+digest_now_hh="${hour_override:-$(date +%H)}"
+digest_now_mm="${minute_override:-$(date +%M)}"
+# Zero-pad to two digits so the lexical compare against digest_time is sound
+# even when --hour 8 / --minute 5 are passed un-padded.
+printf -v digest_now_hh '%02d' "$((10#$digest_now_hh))"
+printf -v digest_now_mm '%02d' "$((10#$digest_now_mm))"
+digest_now_hm="${digest_now_hh}:${digest_now_mm}"
+
+# Read enabled / time / last_digest_run from the CANONICAL state/digests.json.
+digest_enabled=false
+digest_time="09:00"
+last_digest_run=""
+if [[ -f "$DIGEST_FILE" ]]; then
+  de="$(jq -r '.enabled // false' "$DIGEST_FILE" 2>/dev/null || echo false)"
+  [[ "$de" == "true" ]] && digest_enabled=true
+  dt="$(jq -r '.time // ""' "$DIGEST_FILE" 2>/dev/null || echo "")"
+  [[ "$dt" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && digest_time="$dt"
+  last_digest_run="$(jq -r '.last_digest_run // ""' "$DIGEST_FILE" 2>/dev/null || echo "")"
+fi
+# Date portion of last_digest_run (accept an ISO timestamp or a bare date).
+last_digest_date="${last_digest_run%%T*}"
+
+digest_due=true
+digest_marker="digest-due"
+digest_reason=""
+digest_run_hint="run scripts/build-daily-digest.sh, route per the configured channel (state/digests.json), then stamp last_digest_run on state/digests.json"
+
+if [[ "$digest_enabled" != true ]]; then
+  # Enabled-gate: the operator hasn't wired the digest (no file, or enabled=false).
+  digest_due=false
+  digest_marker=""
+  digest_reason="not enabled (run ./hydra connect digest)"
+elif [[ "$last_digest_date" == "$digest_today" ]]; then
+  # Date-gate: already emitted today.
+  digest_due=false
+  digest_marker=""
+  digest_reason="already ran today"
+elif [[ "$digest_now_hm" < "$digest_time" ]]; then
+  # Time-gate: the configured emit time hasn't arrived yet today.
+  digest_due=false
+  digest_marker=""
+  digest_reason="before configured time ${digest_time} (now ${digest_now_hm})"
+fi
+
+digest_json="$(jq -nc \
+  --arg today "$digest_today" \
+  --argjson enabled "$digest_enabled" \
+  --arg last_digest_run "$last_digest_run" \
+  --arg digest_time "$digest_time" \
+  --arg now_hm "$digest_now_hm" \
+  --argjson digest_due "$digest_due" \
+  --arg digest_marker "$digest_marker" \
+  --arg digest_reason "$digest_reason" \
+  --arg run_hint "$digest_run_hint" \
+  '{today:$today, enabled:$enabled,
+    last_digest_run:(if $last_digest_run == "" then null else $last_digest_run end),
+    digest_time:$digest_time, now_hm:$now_hm,
+    digest_due:$digest_due, digest_marker:$digest_marker,
+    digest_reason:$digest_reason, run_hint:$run_hint}')"
+
+# =============================================================================
 # 5. ACTIONS ROLL-UP
 # =============================================================================
 actions_json="$(jq -nc \
@@ -812,6 +923,7 @@ actions_json="$(jq -nc \
   --argjson scheduled "$scheduled_json" \
   --argjson hygiene "$hygiene_json" \
   --argjson audit "$audit_json" \
+  --argjson digest "$digest_json" \
   --argjson gc "$gc_json" \
   '{
     needs_rescue:        ($rescue | map(select(.action == "needs-rescue")) | length),
@@ -825,6 +937,7 @@ actions_json="$(jq -nc \
     promotion_due:       ($scheduled.promotion_due),
     hygiene_due:         ($hygiene.hygiene_due),
     audit_due:           ($audit.audit_due),
+    digest_due:          ($digest.digest_due),
     gc_stale_worktrees:  ($gc.candidates_count)
   }')"
 
@@ -842,12 +955,13 @@ if [[ "$json_mode" -eq 1 ]]; then
     --argjson scheduled "$scheduled_json" \
     --argjson hygiene "$hygiene_json" \
     --argjson audit "$audit_json" \
+    --argjson digest "$digest_json" \
     --argjson gc "$gc_json" \
     --argjson actions "$actions_json" \
     '{generated_at:$generated_at, repo:$repo, preflight:$preflight,
       shepherd:$shepherd, rescue:$rescue, merge_surface:$merge_surface,
-      scheduled:$scheduled, hygiene:$hygiene, audit:$audit, gc:$gc,
-      actions:$actions}'
+      scheduled:$scheduled, hygiene:$hygiene, audit:$audit, digest:$digest,
+      gc:$gc, actions:$actions}'
   exit 0
 fi
 
@@ -925,6 +1039,14 @@ printf '%s' "$audit_json" | jq -r '
 '
 echo
 
+# Daily digest
+echo "Digest (daily status rollup):"
+printf '%s' "$digest_json" | jq -r '
+  "  today \(.today) · now \(.now_hm) · emit time \(.digest_time) · last digest run \(.last_digest_run // "never")" ,
+  "  digest: \(if .digest_due then "DUE — run scripts/build-daily-digest.sh, route, then stamp last_digest_run" else "not due" end)\(if (.digest_reason // "") != "" then " (" + .digest_reason + ")" else "" end)"
+'
+echo
+
 # Stale-worktree gc. A failed/fail-closed safety scan must look DISTINCT from a
 # clean one — never silently "(none)".
 echo "Stale worktrees (gc candidates):"
@@ -960,6 +1082,8 @@ printf '%s' "$actions_json" | jq -r '
   && echo "  ↳ Memory hygiene DUE — Commander: compact memory + reset tickets_at_last_hygiene to the current total."
 [[ "$(printf '%s' "$audit_json" | jq -r '.audit_due')" == "true" ]] \
   && echo "  ↳ Audit DUE — Commander: spawn worker-auditor on the hydra repo (<=3 issues, dedupe vs open commander-auto-filed), then stamp last_audit_run."
+[[ "$(printf '%s' "$digest_json" | jq -r '.digest_due')" == "true" ]] \
+  && echo "  ↳ Digest DUE — Commander: run scripts/build-daily-digest.sh, route per the configured channel (state/digests.json), then stamp last_digest_run on state/digests.json."
 [[ "$(printf '%s' "$gc_json" | jq '.candidates_count')" -gt 0 ]] \
   && echo "  ↳ Stale worktrees: run scripts/gc-stale-worktrees.sh --apply to reclaim."
 [[ "$(printf '%s' "$preflight_json" | jq -r '.interval_warn')" == "true" ]] \
