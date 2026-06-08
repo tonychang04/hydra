@@ -235,6 +235,12 @@ REPOS_FILE="${repos_file_override:-$STATE_DIR/repos.json}"
 BUDGET_FILE="$ROOT_DIR/budget.json"
 AUTOPICKUP_FILE="$STATE_DIR/autopickup.json"
 BUDGET_USED_FILE="$STATE_DIR/budget-used.json"
+# Daily-digest config + idempotency state. CANONICAL home is state/digests.json
+# (written by `./hydra connect digest` via scripts/hydra-connect.sh): it owns
+# enabled / time / last_digest_run. The tick reads them from here so a non-09:00
+# schedule the operator configured actually takes effect and an already-emitted
+# digest is not re-reported as due (ticket #266; #144 shipped this file).
+DIGEST_FILE="$STATE_DIR/digests.json"
 RETROS_DIR="${retros_dir_override:-$ROOT_DIR/memory/retros}"
 
 SHEPHERD="$ROOT_DIR/scripts/pr-shepherd.sh"
@@ -821,14 +827,24 @@ fi
 # stamps last_digest_run when it does, the same split as audit (audit_due) and
 # retro (retro_due).
 #
-# Gate has TWO parts (the one deliberate divergence from the audit step, which
-# is date-only):
+# CANONICAL STATE is state/digests.json (written by `./hydra connect digest` via
+# scripts/hydra-connect.sh, shipped under #144). It owns enabled / time /
+# last_digest_run. The tick reads ALL THREE from there so:
+#   - a non-09:00 schedule the operator configured actually takes effect
+#     (reading a separate mirror that the connector never writes would fire at
+#     the wrong time), and
+#   - an already-emitted digest is not re-reported as due after upgrade
+#     (the stamp lives in digests.json, not autopickup.json).
+#
+# The gate has THREE parts:
+#   0. ENABLED gate: digests.json:.enabled == true. The connector defaults this
+#      false so a fresh clone is inert; an un-wired digest is never "due".
 #   1. DAILY date-gate (mirrors last_audit_run): date(last_digest_run) != today.
-#   2. TIME-OF-DAY gate: now_hm >= digest_time. digest_time defaults to "09:00"
-#      and is read from state/autopickup.json:.digest_time (the tick-side mirror
-#      of state/digests.json:time, kept on the file the tick already loads).
-# Both must hold for digest_due. Null/missing/malformed last_digest_run => never
-# run => date-gate passes (still subject to the time gate).
+#   2. TIME-OF-DAY gate: now_hm >= time. `time` defaults to "09:00" when the file
+#      is absent or the value is malformed.
+# All three must hold for digest_due. Missing file / absent enabled => not
+# configured => not due. Null/missing/malformed last_digest_run => never run =>
+# date-gate passes (still subject to enabled + time gates).
 #
 # String comparison of zero-padded HH:MM is lexicographically correct
 # ("08:59" < "09:00" < "13:00"), the same trick the retro step uses for ISO week
@@ -845,16 +861,16 @@ printf -v digest_now_hh '%02d' "$((10#$digest_now_hh))"
 printf -v digest_now_mm '%02d' "$((10#$digest_now_mm))"
 digest_now_hm="${digest_now_hh}:${digest_now_mm}"
 
-# Configured emit time (default 09:00) from autopickup.json.
+# Read enabled / time / last_digest_run from the CANONICAL state/digests.json.
+digest_enabled=false
 digest_time="09:00"
-if [[ -f "$AUTOPICKUP_FILE" ]]; then
-  dt="$(jq -r '.digest_time // ""' "$AUTOPICKUP_FILE" 2>/dev/null || echo "")"
-  [[ "$dt" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && digest_time="$dt"
-fi
-
 last_digest_run=""
-if [[ -f "$AUTOPICKUP_FILE" ]]; then
-  last_digest_run="$(jq -r '.last_digest_run // ""' "$AUTOPICKUP_FILE" 2>/dev/null || echo "")"
+if [[ -f "$DIGEST_FILE" ]]; then
+  de="$(jq -r '.enabled // false' "$DIGEST_FILE" 2>/dev/null || echo false)"
+  [[ "$de" == "true" ]] && digest_enabled=true
+  dt="$(jq -r '.time // ""' "$DIGEST_FILE" 2>/dev/null || echo "")"
+  [[ "$dt" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && digest_time="$dt"
+  last_digest_run="$(jq -r '.last_digest_run // ""' "$DIGEST_FILE" 2>/dev/null || echo "")"
 fi
 # Date portion of last_digest_run (accept an ISO timestamp or a bare date).
 last_digest_date="${last_digest_run%%T*}"
@@ -862,9 +878,14 @@ last_digest_date="${last_digest_run%%T*}"
 digest_due=true
 digest_marker="digest-due"
 digest_reason=""
-digest_run_hint="run scripts/build-daily-digest.sh, route per the configured channel (state/digests.json), then stamp last_digest_run on state/autopickup.json"
+digest_run_hint="run scripts/build-daily-digest.sh, route per the configured channel (state/digests.json), then stamp last_digest_run on state/digests.json"
 
-if [[ "$last_digest_date" == "$digest_today" ]]; then
+if [[ "$digest_enabled" != true ]]; then
+  # Enabled-gate: the operator hasn't wired the digest (no file, or enabled=false).
+  digest_due=false
+  digest_marker=""
+  digest_reason="not enabled (run ./hydra connect digest)"
+elif [[ "$last_digest_date" == "$digest_today" ]]; then
   # Date-gate: already emitted today.
   digest_due=false
   digest_marker=""
@@ -878,6 +899,7 @@ fi
 
 digest_json="$(jq -nc \
   --arg today "$digest_today" \
+  --argjson enabled "$digest_enabled" \
   --arg last_digest_run "$last_digest_run" \
   --arg digest_time "$digest_time" \
   --arg now_hm "$digest_now_hm" \
@@ -885,7 +907,7 @@ digest_json="$(jq -nc \
   --arg digest_marker "$digest_marker" \
   --arg digest_reason "$digest_reason" \
   --arg run_hint "$digest_run_hint" \
-  '{today:$today,
+  '{today:$today, enabled:$enabled,
     last_digest_run:(if $last_digest_run == "" then null else $last_digest_run end),
     digest_time:$digest_time, now_hm:$now_hm,
     digest_due:$digest_due, digest_marker:$digest_marker,
