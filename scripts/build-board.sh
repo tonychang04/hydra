@@ -44,6 +44,8 @@ Options:
   --logs-dir <path>    Override logs/ dir (default $ROOT/logs)
   --out <path>         Override output file (default <state-dir>/board.md)
   --now <iso8601>      Override "now" used for age math (deterministic tests).
+  --decisions-dir <p>  Override the Decision Record dir (default <logs>/decisions)
+                       for the "Recent decisions" section (#267).
   --no-write           Print to stdout only; do not write the board file.
   -h, --help           Show this help.
 
@@ -59,6 +61,7 @@ state_dir_override=""
 logs_dir_override=""
 out_override=""
 now_override=""
+decisions_dir_override=""
 no_write=0
 
 # Require a value for a value-taking flag; usage error (exit 2) if absent.
@@ -77,11 +80,13 @@ while [[ $# -gt 0 ]]; do
     --logs-dir)    need_val "$@"; logs_dir_override="$2"; shift 2 ;;
     --out)         need_val "$@"; out_override="$2"; shift 2 ;;
     --now)         need_val "$@"; now_override="$2"; shift 2 ;;
+    --decisions-dir) need_val "$@"; decisions_dir_override="$2"; shift 2 ;;
     --no-write)    no_write=1; shift ;;
     --state-dir=*) state_dir_override="${1#--state-dir=}"; shift ;;
     --logs-dir=*)  logs_dir_override="${1#--logs-dir=}"; shift ;;
     --out=*)       out_override="${1#--out=}"; shift ;;
     --now=*)       now_override="${1#--now=}"; shift ;;
+    --decisions-dir=*) decisions_dir_override="${1#--decisions-dir=}"; shift ;;
     *) echo "build-board: unknown arg '$1'" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -93,6 +98,11 @@ STATE_DIR="${state_dir_override:-$ROOT_DIR/state}"
 LOGS_DIR="${logs_dir_override:-$ROOT_DIR/logs}"
 OUT_FILE="${out_override:-$STATE_DIR/board.md}"
 ACTIVE_FILE="$STATE_DIR/active.json"
+# Decision Record (#267): default logs/decisions, sibling of LOGS_DIR.
+DECISIONS_DIR="${decisions_dir_override:-$LOGS_DIR/decisions}"
+DECISIONS_READER="$SCRIPT_DIR/decisions.sh"
+# Max decision rows to surface on the board (newest first).
+DECISIONS_LIMIT="${HYDRA_BOARD_DECISIONS_LIMIT:-5}"
 
 # -----------------------------------------------------------------------------
 # helpers
@@ -291,6 +301,39 @@ fi
 # render
 # -----------------------------------------------------------------------------
 
+# Render the "Recent decisions" section (#267): the last few Decision Record
+# entries (newest first) so the operator can see WHY Commander acted, right on
+# the board. Best-effort + fail-soft: a missing reader / empty record → "_none_"
+# (same convention as an empty worker section), never an error.
+render_decisions() {
+  printf '\n## Recent decisions (last %s)\n' "$DECISIONS_LIMIT"
+  if [[ ! -x "$DECISIONS_READER" ]]; then
+    printf '_none_\n'
+    return
+  fi
+  local entries
+  entries="$(NO_COLOR=1 "$DECISIONS_READER" --decisions-dir "$DECISIONS_DIR" --json 2>/dev/null || echo '[]')"
+  [[ -n "$entries" ]] || entries='[]'
+  local count
+  count="$(printf '%s' "$entries" | jq 'length' 2>/dev/null || echo 0)"
+  if [[ "$count" -eq 0 ]]; then
+    printf '_none_\n'
+    return
+  fi
+  printf '| When | Type | Subject | Decided | Why |\n'
+  printf '|---|---|---|---|---|\n'
+  # Newest first (the reader already sorts), capped to the limit. Escape pipes in
+  # free-text cells so a literal | in `why` can't shift columns.
+  printf '%s' "$entries" | jq -r --argjson lim "$DECISIONS_LIMIT" '
+    .[0:$lim][]
+    | [ (.ts // ""),
+        (.decision_type // ""),
+        (.subject // ""),
+        (.decided // ""),
+        ((.why // "") | gsub("\\|"; "\\|")) ]
+    | "| " + (join(" | ")) + " |"'
+}
+
 # Buffer the full board so stdout and the file are byte-identical.
 render_board() {
   printf '# Hydra Command Center\n\n'
@@ -306,6 +349,7 @@ render_board() {
     else
       printf '\n_No active workers._\n'
     fi
+    render_decisions
     return
   fi
 
@@ -343,6 +387,8 @@ render_board() {
   if [[ -n "$other_rows" ]]; then
     render_section_from_rows "Other" "$other_rows"
   fi
+
+  render_decisions
 }
 
 # Render one named section, selecting workers whose status is in $matchers

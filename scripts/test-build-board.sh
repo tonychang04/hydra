@@ -389,6 +389,41 @@ for flag in --state-dir --logs-dir --out --now; do
   fi
 done
 
+# --- Test 15: Recent decisions section (#267) ------------------------------
+say "Test 15: 'Recent decisions' section renders entries (and _none_ when empty)"
+root15="$tmpdir/r15"; mk_dirs "$root15"
+printf '%s\n' '{"workers":[]}' > "$root15/state/active.json"
+ddir15="$root15/decisions"; mkdir -p "$ddir15"
+
+# Empty record → _none_ under the section.
+ec=$(run_board "$root15" "$tmpdir/t15a.out" "$tmpdir/t15a.err" --decisions-dir "$ddir15")
+if grep -q "## Recent decisions" "$tmpdir/t15a.out"; then
+  ok "section header present"
+else
+  bad "section header missing"
+fi
+if grep -A1 "## Recent decisions" "$tmpdir/t15a.out" | grep -q "_none_"; then
+  ok "empty record → _none_"
+else
+  bad "empty record did not render _none_"
+fi
+
+# With entries → a table row carrying the why.
+"$SCRIPT_DIR/record-decision.sh" --decisions-dir "$ddir15" --date 2026-05-21 \
+  --type merge-surface --subject "tonychang04/hydra#501" --decided "surface-for-human" \
+  --why "t3-never: T3 is never auto-merge-eligible" >/dev/null 2>&1
+ec=$(run_board "$root15" "$tmpdir/t15b.out" "$tmpdir/t15b.err" --decisions-dir "$ddir15")
+if grep -q "| merge-surface | tonychang04/hydra#501 | surface-for-human |" "$tmpdir/t15b.out"; then
+  ok "decision row rendered with subject + decided"
+else
+  bad "decision row not rendered: $(grep -A4 'Recent decisions' "$tmpdir/t15b.out")"
+fi
+if grep -q "t3-never" "$tmpdir/t15b.out"; then
+  ok "decision 'why' surfaced on the board"
+else
+  bad "decision 'why' missing from board"
+fi
+
 # --- Summary --------------------------------------------------------------
 echo ""
 echo "${C_BOLD}Total: $((passed + failed))  passed: ${C_GREEN}${passed}${C_RESET}  failed: ${C_RED}${failed}${C_RESET}"

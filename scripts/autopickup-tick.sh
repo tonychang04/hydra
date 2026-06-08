@@ -85,6 +85,11 @@ Options:
                          rescue-worker.sh --probe verdicts.
   --no-rescue            Skip the rescue scan (report an empty rescue list).
   --no-merge-surface     Skip the merge-surface block (report an empty list).
+  --record-decisions     Also append a `merge-surface` Decision Record entry
+                         (#267) per merge-ready PR to logs/decisions/<date>.jsonl
+                         (additive; never state/). Off by default.
+  --decisions-dir <p>    Test-only: Decision Record dir (default logs/decisions).
+  --decisions-date <d>   Test-only: target daily file date (YYYY-MM-DD).
   --weekday <1-7>        Test-only: override local ISO weekday (1=Mon..7=Sun)
                          for Monday-retro detection. Default: live clock.
   --hour <0-23>          Test-only: override local hour for the >=09:00 retro gate
@@ -134,6 +139,14 @@ gh_mock="${HYDRA_PR_SHEPHERD_GH_MOCK:-}"
 rescue_mock=""
 do_rescue=1
 do_merge_surface=1
+# Decision Record producer (ticket #267). OFF by default so the tick stays
+# report-only w.r.t. Commander state and all existing test expectations hold.
+# When ON, the merge-surface step ALSO appends a `merge-surface` decision entry
+# (the already-computed reason) to the ADDITIVE logs/decisions/<date>.jsonl —
+# never to state/. With the flag off, behavior is byte-identical.
+record_decisions=0
+decisions_dir_override=""   # --decisions-dir <path> (test seam; default logs/decisions)
+decisions_date_override=""  # --decisions-date <YYYY-MM-DD> (test seam)
 # scheduled-checks + memory-hygiene seams (ticket #239). All optional; defaults
 # read the live clock / state so a bare invocation Just Works, while the flags
 # make the smoke test deterministic and offline.
@@ -176,6 +189,11 @@ while [[ $# -gt 0 ]]; do
     --json)               json_mode=1; shift ;;
     --no-rescue)          do_rescue=0; shift ;;
     --no-merge-surface)   do_merge_surface=0; shift ;;
+    --record-decisions)   record_decisions=1; shift ;;
+    --decisions-dir)      need_val "$@"; decisions_dir_override="$2"; shift 2 ;;
+    --decisions-dir=*)    decisions_dir_override="${1#--decisions-dir=}"; shift ;;
+    --decisions-date)     need_val "$@"; decisions_date_override="$2"; shift 2 ;;
+    --decisions-date=*)   decisions_date_override="${1#--decisions-date=}"; shift ;;
     --weekday)            need_val "$@"; weekday_override="$2"; shift 2 ;;
     --weekday=*)          weekday_override="${1#--weekday=}"; shift ;;
     --hour)               need_val "$@"; hour_override="$2"; shift 2 ;;
@@ -251,6 +269,7 @@ RETRO_FILER="$ROOT_DIR/scripts/retro-file-proposed-edits.sh"
 PROMOTE="$ROOT_DIR/scripts/promote-citations.sh"
 GC_WORKTREES="${gc_script_override:-$ROOT_DIR/scripts/gc-stale-worktrees.sh}"
 WORKTREES_DIR="${worktrees_dir_override:-$ROOT_DIR/.claude/worktrees}"
+RECORD_DECISION="$ROOT_DIR/scripts/record-decision.sh"
 
 GEN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -422,6 +441,58 @@ fi
 # =============================================================================
 # 4. MERGE SURFACING  (the safety-rail core)
 # =============================================================================
+# Decision Record producer (#267). Translate a merge-surface (classification,
+# reason, policy, tier) into a human `why` sentence + a `what_would_reverse`,
+# then append a `merge-surface` decision entry via record-decision.sh --json.
+# Only called when --record-decisions is set; writes ONLY to the additive
+# logs/decisions/ log (never state/), so the tick stays report-only.
+decision_why_for_reason() {
+  local reason="$1" policy="$2" tier="$3"
+  case "$reason" in
+    t3-never)       printf 'policy.md: T3 is never auto-merge-eligible (hardcoded safety rail; tier=%s)' "$tier" ;;
+    policy-never)   printf 'merge-policy-lookup resolved policy=never for tier=%s' "$tier" ;;
+    policy-human)   printf 'merge-policy-lookup resolved policy=human for tier=%s — needs operator approval' "$tier" ;;
+    safety-rail)    printf 'changed files touch a safety-rail path (or no file data → fail-closed); always surfaces regardless of policy=%s' "$policy" ;;
+    policy-unknown) printf 'merge policy could not be resolved for tier=%s → fail-closed to human' "$tier" ;;
+    policy-auto|policy-auto_if_review_clean)
+                    printf 'policy=%s and no safety-rail path touched → eligible for auto-merge (tier=%s)' "$policy" "$tier" ;;
+    *)              printf 'reason=%s, policy=%s, tier=%s' "$reason" "$policy" "$tier" ;;
+  esac
+}
+decision_reverse_for_reason() {
+  local reason="$1"
+  case "$reason" in
+    t3-never|policy-never|policy-human|policy-unknown)
+                 printf 'if the PR is reclassified to a tier/policy that permits auto-merge' ;;
+    safety-rail) printf 'if the PR stops touching any safety-rail path' ;;
+    policy-auto|policy-auto_if_review_clean)
+                 printf 'if the PR starts touching a safety-rail path, or the review verdict regresses' ;;
+    *)           printf '' ;;
+  esac
+}
+# record_merge_decision <subject> <decided/classification> <reason> <policy> <tier>
+record_merge_decision() {
+  [[ "$record_decisions" -eq 1 ]] || return 0
+  [[ -x "$RECORD_DECISION" ]] || return 0
+  local subject="$1" decided="$2" reason="$3" policy="$4" tier="$5"
+  local why reverse entry
+  why="$(decision_why_for_reason "$reason" "$policy" "$tier")"
+  reverse="$(decision_reverse_for_reason "$reason")"
+  entry="$(jq -nc \
+    --arg subject "$subject" \
+    --arg decided "$decided" \
+    --arg why "$why" \
+    --arg reverse "$reverse" \
+    '{decision_type:"merge-surface", subject:$subject, decided:$decided,
+      why:$why, approval_ref:null}
+     + (if ($reverse|length)>0 then {what_would_reverse:$reverse} else {} end)')"
+  local dargs=(--json)
+  [[ -n "$decisions_dir_override" ]]  && dargs+=(--decisions-dir "$decisions_dir_override")
+  [[ -n "$decisions_date_override" ]] && dargs+=(--date "$decisions_date_override")
+  # Best-effort: a writer failure must never break the report-only tick.
+  printf '%s' "$entry" | "$RECORD_DECISION" "${dargs[@]}" >/dev/null 2>&1 || true
+}
+
 # Safety-rail path detection. A merge-ready PR whose changed files include ANY
 # of these is ALWAYS surfaced for human merge — never auto-merged — regardless
 # of policy. Mirrors the worker hard-rails + the merge mechanism itself.
@@ -561,6 +632,10 @@ if [[ "$do_merge_surface" -eq 1 ]]; then
         policy:$policy, orphaned:$orphaned,
         classification:$classification, reason:$reason}')"
     merge_jsonl+="$row"$'\n'
+
+    # Decision Record (#267): record WHY this PR was classified the way it was.
+    # Opt-in (--record-decisions); additive log only.
+    record_merge_decision "${slug}#${number}" "$classification" "$reason" "$policy" "$pr_tier"
   done < <(printf '%s' "$shepherd_json" | jq -c '(.prs // [])[] | select(.state == "merge-ready")')
 fi
 
