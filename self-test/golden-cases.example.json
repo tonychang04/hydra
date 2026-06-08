@@ -3402,6 +3402,47 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "decision-record",
+      "_description": "Script-only self-test for the Decision Record substrate (spec docs/specs/2026-06-08-decision-record.md, ticket #267): the durable, human-reviewable WHY for Commander decisions. Exercises scripts/record-decision.sh (writer: flags + JSON-stdin append, RED->GREEN schema rejection of malformed entries, ts auto-gen, --date/--decisions-dir seams) and scripts/decisions.sh (reader: no-arg listing, #N subject-filter normalization, --since date filter, --json array) against the committed self-test/fixtures/decision-record/sample-decisions.jsonl (one entry per seeded type: tier-classify, merge-surface, escalate). Pure bash + jq, offline. The real producer wiring (autopickup-tick.sh --record-decisions) and surfaces (build-board.sh / digest) are covered by their own cases; this binds the writer+reader contract to the committed fixture.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "record-decision.sh bash -n clean",
+          "cmd": "bash -n scripts/record-decision.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "decisions.sh bash -n clean",
+          "cmd": "bash -n scripts/decisions.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "record-decision.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/record-decision.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage:"
+        },
+        {
+          "name": "decisions.sh --help prints usage",
+          "cmd": "NO_COLOR=1 scripts/decisions.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage:"
+        },
+        {
+          "name": "decision-record fixture roundtrip (writer + reader suites + fixture-bound reader asserts)",
+          "cmd": "self-test/fixtures/decision-record/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SMOKE_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
