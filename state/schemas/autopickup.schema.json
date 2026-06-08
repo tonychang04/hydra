@@ -56,6 +56,15 @@
       "type": "integer",
       "minimum": 0,
       "description": "Cumulative ticket count at the last memory-hygiene compaction. The autopickup tick computes tickets_since = tickets_total - this; when it reaches the threshold (default 10) the tick emits a compact-memory marker. Commander resets this to the current cumulative total after running compaction. When the field is ABSENT (never written) the tick treats the baseline as 0 (never run). Commander always writes an integer here, never an explicit null, so the field stays integer-typed and validate-state-all passes. See docs/specs/2026-06-06-autopickup-tick-orchestrator.md (ticket #239)."
+    },
+    "last_digest_run": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 local timestamp (or bare date) of the last daily-status-digest emit, or null if never run. Drives the DAILY date-gate in the autopickup tick (section 4f) so the digest fires at most once/day: digest_due requires date(last_digest_run) != today AND now_hm >= digest_time. Null/missing/malformed means never run. Commander stamps this when it runs scripts/build-daily-digest.sh; the tick only reports. See docs/specs/2026-06-08-digest-tick-step.md (ticket #266; the scheduler leg #144 left unimplemented)."
+    },
+    "digest_time": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+      "description": "Configured local emit time (HH:MM, 24h) for the daily status digest. The tick-side mirror of state/digests.json:time, kept on the file the tick already loads so the digest step needs no extra file dependency. The autopickup tick's section-4f time-of-day gate fires the digest only once now_hm >= this. To mean 'use the default 09:00', OMIT the field — Commander writes either a valid HH:MM string or nothing, never an explicit null (a null would fail this string-typed property, the same discipline as tickets_at_last_hygiene). The tick tolerates a malformed value by falling back to 09:00. See docs/specs/2026-06-08-digest-tick-step.md (ticket #266)."
     }
   }
 }
