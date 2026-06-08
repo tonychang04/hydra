@@ -194,5 +194,3 @@ usage error) to keep behavior unambiguous.
   additions + the agent/spec prose edits + the `.gitignore` line, and (if needed)
   restore the root file. The contract format and gates degrade to the #255/#256
   behavior; removal is clean.
-</content>
-</invoke>
