@@ -24,6 +24,7 @@ Pick tickets. Spawn workers. Answer their questions (memory first, operator seco
 |---|---|---|
 | `worker-implementation` | Any ticket with code changes | Review / discovery |
 | `worker-review` | After a PR opens, before surfacing to the operator | Code changes |
+| `worker-validator` | After `worker-review` — re-runs the PR's `validation-contract.md` for runtime TRUTH (UI leg via `browse`/`verify` for UI tickets). See `docs/specs/2026-06-07-worker-validator.md`. | Code changes |
 | `worker-test-discovery` | When a repo has no working documented test procedure | Source changes |
 | `worker-conflict-resolver` | When ≥2 PRs have mutual conflicts — automates additive merges, escalates semantic ones | Semantic judgments |
 | `worker-codex-implementation` | Code tickets on repos with `preferred_backend: codex`. Dormant until router #97 lands. See `docs/specs/2026-04-17-codex-worker-backend.md`. | Write code directly / silently fall back to Claude |
@@ -57,7 +58,7 @@ Specs: `docs/specs/2026-04-16-mcp-agent-interface.md`, `docs/specs/2026-04-17-su
 
 ## Commander review gate
 
-After `worker-implementation` opens a PR: spawn `worker-review` → if blockers, re-spawn implementation with feedback (max 2 cycles) → if clean, surface "PR #N passed commander review. Ready for your merge." Review is separate from implementation so the reviewer isn't biased by implementer context. Workers verify-first via a `validation-contract.md` (implementer writes assertions+commands, fills evidence pre-PR; `scripts/validate-contract.sh` gates it) which the reviewer checks alongside the evidence table: `docs/specs/2026-06-07-validation-contract.md`.
+After `worker-implementation` opens a PR: spawn `worker-review` (scrutiny) → then `worker-validator` (runtime truth — re-runs the contract via `scripts/revalidate-contract.sh`, UI leg via `browse`/`verify`; `docs/specs/2026-06-07-worker-validator.md`) → if blockers from either, re-spawn implementation with feedback (max 2 cycles) → if clean, surface "PR #N passed commander review. Ready for your merge." Review/validation are separate from implementation (and from each other) so neither is biased by implementer or scrutiny context. Workers verify-first via a `validation-contract.md` (implementer writes assertions+commands, fills evidence pre-PR; `scripts/validate-contract.sh` checks evidence PRESENCE, the validator re-runs for TRUTH): `docs/specs/2026-06-07-validation-contract.md`.
 
 **PR Shepherd** (read-only): `scripts/pr-shepherd.sh [--repo R] [--json]` classifies Commander-authored open PRs and flags orphans (open PR, no `active.json` worker) — run at session start to re-attach orphans and on the autopickup tick to route in-flight PRs. Spec: `docs/specs/2026-05-23-pr-shepherd.md`.
 
@@ -130,7 +131,7 @@ Do **not** use `gh pr edit --add-label` — GraphQL path fails with a Projects-c
 
 ## Scheduled autopickup (runs silently)
 
-`autopickup every N min` runs a cron-like `/loop` (no daemon; state `state/autopickup.json`; default-on, opt out via `./hydra --no-autopickup` / `HYDRA_NO_AUTOPICKUP=1`). Each tick runs the deterministic report-only `scripts/autopickup-tick.sh --json` (preflight + pr-shepherd reconcile + completion-rescue scan + policy-aware merge surfacing + Monday-retro / once-a-day skill-promotion / 10-ticket memory-hygiene checks → `scheduled`+`hygiene` keys), then ACTS on the report: pick + spawn to headroom, dispatch review/rescue, merge per `merge_surface`, and when `scheduled.retro_due`/`hygiene_due` fire run the retro / compaction (the tick reports + auto-files retro edits but never writes the retro, spawns, merges, or stamps run timestamps). T3 / safety-rail PRs are NEVER auto-merged (`surface-for-human`). Two consecutive rate-limit hits auto-disable. Tick contract: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `docs/specs/2026-06-06-autopickup-tick-orchestrator.md`.
+`autopickup every N min` runs a cron-like `/loop` (no daemon; state `state/autopickup.json`; default-on, opt out via `./hydra --no-autopickup` / `HYDRA_NO_AUTOPICKUP=1`). Each tick runs the deterministic report-only `scripts/autopickup-tick.sh --json` (preflight + pr-shepherd reconcile + completion-rescue scan + merge surfacing + retro/skill-promotion/memory-hygiene checks → `scheduled`+`hygiene` keys), then ACTS on it: pick + spawn to headroom, dispatch review/rescue, merge per `merge_surface`, and run the retro/compaction when due. The tick reports but never spawns, merges, writes the retro, or stamps run timestamps. T3 / safety-rail PRs are NEVER auto-merged (`surface-for-human`). Two consecutive rate-limit hits auto-disable. Tick contract: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `docs/specs/2026-06-06-autopickup-tick-orchestrator.md`.
 
 Specs: `docs/specs/2026-04-16-scheduled-autopickup.md`, `docs/specs/2026-04-16-autopickup-default-on.md`, `docs/specs/2026-04-17-scheduled-retro.md`, `docs/specs/2026-04-17-daily-digest.md`.
 
