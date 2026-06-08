@@ -1,3 +1,12 @@
+---
+status: accepted
+date: 2026-06-07
+ticket: https://github.com/tonychang04/hydra/issues/276
+area: worker-review / cross-model review consensus / quality
+size: M
+authors: [worker-implementation]
+---
+
 # Cross-model review consensus + codex graceful degradation in worker-review
 
 **Ticket:** #276 ([P1/quality] Verify + harden cross-model review (Codex consensus) in worker-review)
