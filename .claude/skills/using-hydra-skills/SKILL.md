@@ -78,6 +78,7 @@ This roster is a convenience pointer only — the directory is the source of tru
 - `worker-resume-from-rescue` — picking up a `commander-rescued` branch
 - `classify-pr-for-review` — scoping a diff before `/review`
 - `respond-to-review` — processing review-gate findings on a re-spawn (verify before implementing)
+- `dispatch-parallel-tickets` — consuming `plan-parallel-batch.sh` partition output; honoring serialize groups + coordinate-with
 - `commander-classify-tier` — T1/T2/T3 tiering per `policy.md`
 - `commander-skill-promotion` — previewing/steering the promotion pipeline
 - `author-repo-skill` — authoring a NEW repo-local skill
