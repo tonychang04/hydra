@@ -20,14 +20,14 @@ The authoritative content lives in the files below; CLAUDE.md only routes to the
 |---|---|
 | `policy.md` | Risk tiers (T1/T2/T3). **Read at session start.** |
 | `budget.json` | Concurrency + wall-clock + daily-ticket caps. |
-| `state/` | Live state: `active.json` (in-flight workers), `repos.json` (enabled repos + `ticket_trigger` + `merge_policy`), `autopickup.json`, `budget-used.json`, `memory-citations.json`, `quota-health.json`, `setup-complete.json`. Each has `state/schemas/*.schema.json`. |
-| `docs/specs/` | The "why" + full procedures: every non-trivial behavior has a `YYYY-MM-DD-<slug>.md`. CLAUDE.md points, specs explain. Read the specs cited by your task. |
+| `state/` | Live state: `active.json` (workers), `repos.json` (enabled repos + `ticket_trigger` + `merge_policy`), `autopickup.json`, `budget-used.json`, `memory-citations.json`, `quota-health.json`, `setup-complete.json`. Each has `state/schemas/*.schema.json`. |
+| `docs/specs/` | The "why" + full procedures: every non-trivial behavior has a `YYYY-MM-DD-<slug>.md`. CLAUDE.md points, specs explain. |
 | `memory/` | `MEMORY.md` (index — follow refs), `escalation-faq.md`, `learnings-<repo>.md`, `memory-lifecycle.md`, `retros/`, `archive/`. |
 | `scripts/` | All executable behavior + `scripts/README.md`. |
 | `.claude/agents/` | Worker subagent definitions (`worker-*.md`). |
 | `.claude/skills/` | Promoted repo skills (≥3 citations across 3+ tickets graduate here). |
 | `self-test/` | Regression harness vs golden closed PRs — `self-test/README.md`. |
-| `logs/` | `logs/<ticket>.json` — completed-work audit, one per ticket. |
+| `logs/` | `logs/<ticket>.json` — completed-work audit. |
 
 **Validate before you trust.** Run `scripts/validate-state-all.sh` (bulk; also the CLAUDE.md size guard) or `scripts/validate-state.sh <file>` before reading state + as the first preflight item. Specs: `scripts/README.md`, `docs/specs/2026-04-16-state-schemas.md`.
 
@@ -83,28 +83,28 @@ Workers can hit ~18-min stream-idle timeouts with work unpushed. On every tick t
 | `review PR #501` | Spawn `worker-review` on that PR |
 | `test discover <repo>` | Spawn `worker-test-discovery` |
 | `retry #42` | Remove `commander-stuck`, re-spawn with prior failure log as hint |
-| `undo #501` | Revert a merged Commander PR (main CI green, <72hr or confirm); revert PR, label `commander-undo`, surface |
+| `undo #501` | Revert a merged Commander PR (main CI green, <72hr or confirm); revert PR, `commander-undo`, surface |
 | `pause` / `resume` | Toggle `PAUSE` file |
 | `autopickup every N min` | Scheduled auto-pickup (N clamped [5,120], default 30). See "Scheduled autopickup". |
 | `autopickup off` | `state/autopickup.json:enabled=false`; in-flight workers continue |
-| `resolve conflicts #A #B [...]` | Spawn `worker-conflict-resolver` on a PR set; return superseding PR link |
-| `resolve all conflicts` | Survey open PRs for mutual/main conflicts, batch, spawn resolvers per batch |
+| `resolve conflicts #A #B [...]` | Spawn `worker-conflict-resolver` on the PR set; return superseding PR |
+| `resolve all conflicts` | Survey open PRs for conflicts, batch, spawn resolvers per batch |
 | `kill <id>` | `TaskStop <id>`, update `active.json`, label `commander-stuck` |
-| `merge #501` | Tier-aware (T1 auto on CI green, T2 operator OK, T3 refuse) per `scripts/merge-policy-lookup.sh`; `--queue` (`queue:*`) → merge-queue; `docs/specs/2026-04-17-merge-queue.md` |
+| `merge #501` | Tier-aware per `scripts/merge-policy-lookup.sh` (T1 auto/CI-green, T2 operator OK, T3 refuse); `--queue`→merge-queue (`docs/specs/2026-04-17-merge-queue.md`) |
 | `reject #501 reason: ...` | `gh pr close`, label `commander-rejected` |
 | `quota` / `cost today` | Report tickets done + wall-clock + rate-limit health |
 | `repos` | Show `state/repos.json`; edit on request |
 | `answer #42: <guidance>` | `SendMessage(worker_id, guidance)` + append to `escalation-faq.md` |
-| `compact memory` / `promote learnings` / `archive stale` | Run memory hygiene on demand |
-| `retro` | Weekly retro → `memory/retros/YYYY-WW.md` + chat summary. See "Weekly retro". |
-| `self-test` / `self-test <id>` / `self-test --parallel` | Regression harness vs golden closed PRs. `self-test/README.md`. |
-| `audit` | Spawn `worker-auditor` — files up to 3 `commander-ready`+`commander-auto-filed` issues. `docs/specs/2026-04-17-worker-auditor-subagent.md`. |
+| `compact memory` / `promote learnings` / `archive stale` | Memory hygiene on demand |
+| `retro` | Weekly retro → `memory/retros/YYYY-WW.md`. See "Weekly retro". |
+| `self-test` / `self-test <id>` / `self-test --parallel` | Regression harness vs golden PRs. `self-test/README.md`. |
+| `audit` | Spawn `worker-auditor` (files ≤3 `commander-ready`+`commander-auto-filed`). `docs/specs/2026-04-17-worker-auditor-subagent.md`. |
 | `./hydra connect <x>` | Connector wizard `scripts/hydra-connect.sh` (linear/slack/supervisor/digest). `docs/specs/2026-04-17-connector-wizard.md`, `2026-04-17-daily-digest.md`. |
-| `./hydra setup` | First-time setup wizard (env, repo picker, interval; fingerprint `state/setup-complete.json`). `docs/specs/2026-04-17-setup-wizard.md`. |
+| `./hydra setup` | Setup wizard (env, repo picker, interval; `state/setup-complete.json`). `docs/specs/2026-04-17-setup-wizard.md`. |
 
 ## Safety rules (hard)
 
-- Never merge T2/T3 without explicit operator approval unless `state/repos.json:repos[].merge_policy` permits. Before every `merge #N`, run `scripts/merge-policy-lookup.sh <owner>/<name> <tier>` and obey (`auto` / `auto_if_review_clean` / `human` / `never`). T3 is hardcoded `never`. See `docs/specs/2026-04-17-per-repo-merge-policy.md`.
+- Never merge T2/T3 without explicit operator approval unless `state/repos.json:repos[].merge_policy` permits. Before every `merge #N`, run `scripts/merge-policy-lookup.sh <owner>/<name> <tier>` and obey (`auto`/`auto_if_review_clean`/`human`/`never`). T3 is hardcoded `never`. `docs/specs/2026-04-17-per-repo-merge-policy.md`.
 - Never run `rm -rf`, `git push --force`, `git reset --hard` on main, `DROP TABLE`, or touch the operator's host outside `commander/` and worker worktrees.
 - Never share tokens, keys, or `.env*` / `secrets/` contents in logs, comments, or chat.
 - Never spawn if preflight fails — no exceptions. The CLAUDE.md size gate is preflight; trips mean procedures move to specs, not that the ceiling raises.
@@ -123,11 +123,11 @@ Do **not** use `gh pr edit --add-label` — GraphQL path fails with a Projects-c
 
 ## Scheduled autopickup (runs silently)
 
-`autopickup every N min` runs a cron-like `/loop` (no daemon; state `state/autopickup.json`; default-on, opt out via `./hydra --no-autopickup` / `HYDRA_NO_AUTOPICKUP=1`). Each tick runs report-only `scripts/autopickup-tick.sh --json` (preflight + pr-shepherd reconcile + completion-rescue scan + merge surfacing + retro/promotion/hygiene checks), then ACTS: spawn to headroom, dispatch review/rescue, merge per `merge_surface`, run retro/compaction when due, apply the watchdog actuations above (gc, interval-warn). The tick reports but never spawns/merges/writes-retro/stamps timestamps. T3 / safety-rail PRs are NEVER auto-merged (`surface-for-human`). Two consecutive rate-limit hits auto-disable. Specs: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `2026-06-06-autopickup-tick-orchestrator.md`, `2026-04-16-scheduled-autopickup.md`, `2026-04-16-autopickup-default-on.md`, `2026-04-17-scheduled-retro.md`, `2026-04-17-daily-digest.md`.
+`autopickup every N min` runs a cron-like `/loop` (no daemon; state `state/autopickup.json`; default-on, opt out via `./hydra --no-autopickup` / `HYDRA_NO_AUTOPICKUP=1`). Each tick runs report-only `scripts/autopickup-tick.sh --json` (preflight + pr-shepherd + completion-rescue + merge surfacing + retro/promotion/hygiene checks), then ACTS: spawn to headroom, dispatch review/rescue, merge per `merge_surface`, run retro/compaction when due, apply the watchdog actuations above (gc, interval-warn). The tick reports but never spawns/merges/writes-retro/stamps. T3 / safety-rail PRs NEVER auto-merge (`surface-for-human`). Two consecutive rate-limit hits auto-disable. Specs: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `2026-06-06-autopickup-tick-orchestrator.md`, `2026-04-16-scheduled-autopickup.md`, `2026-04-16-autopickup-default-on.md`, `2026-04-17-scheduled-retro.md`, `2026-04-17-daily-digest.md`.
 
 ## Memory hygiene (runs silently)
 
-Per-ticket: parse `MEMORY_CITED:` → bump `state/memory-citations.json` (flag `count>=3` across 3+ tickets as promotion-ready). Every 10 tickets (or `compact memory`): merge dups, archive stale → `memory/archive/`, draft skill-promotion PRs (`commander-skill-promotion`). Pre-spawn: prepend a Memory Brief. Skill promotion runs once/day via the tick → `.claude/skills/`. Tooling + rules: `scripts/{parse-citations,validate-learning-entry,validate-citations,promote-citations}.sh`, `memory/memory-lifecycle.md`. Specs: `docs/specs/2026-04-16-external-memory-split.md`, `2026-04-17-memory-preloading.md`, `2026-04-17-skill-seed-list.md`, `2026-04-17-skill-promotion-automation.md`.
+Per-ticket: parse `MEMORY_CITED:` → bump `state/memory-citations.json` (`count>=3` across 3+ tickets = promotion-ready). Every 10 tickets (or `compact memory`): merge dups, archive stale → `memory/archive/`, draft skill-promotion PRs (`commander-skill-promotion`). Pre-spawn: prepend a Memory Brief. Skill promotion runs once/day via the tick → `.claude/skills/`. Tooling + rules: `scripts/{parse-citations,validate-learning-entry,validate-citations,promote-citations}.sh`, `memory/memory-lifecycle.md`. Specs: `docs/specs/2026-04-16-external-memory-split.md`, `2026-04-17-memory-preloading.md`, `2026-04-17-skill-seed-list.md`, `2026-04-17-skill-promotion-automation.md`.
 
 ## Weekly retro (on demand + scheduled)
 
