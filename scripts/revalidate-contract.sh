@@ -29,6 +29,9 @@
 # Input:
 #   - default:        read the contract body from stdin
 #   - --file <path>:  read it from a file
+#   - --ticket <n>:   locate the contract by the #262 per-ticket convention
+#                     (<worktree>/.hydra/contracts/<n>.md, via contract-path.sh);
+#                     also defaults --cwd to that worktree.
 #   - --cwd  <dir>:   run each Command in this directory (default: current dir)
 #   - --timeout <s>:  per-command kill bound in seconds (default: 120)
 #
@@ -96,8 +99,12 @@ re-run, actually fails). Never trust chat output — run it yourself.
 Input (one of):
   (default)        read the contract body from stdin
   --file <path>    read the body from a file
+  --ticket <n>     locate the contract by the #262 per-ticket convention
+                   (<worktree>/.hydra/contracts/<n>.md); also defaults --cwd
+                   to that worktree.
 
 Options:
+  --worktree <dir> worktree root for --ticket (default: git toplevel / cwd)
   --cwd <dir>      run each Command in this directory (default: current dir)
   --timeout <s>    per-command kill bound in seconds (default: 120)
   -h, --help       show this help.
@@ -124,8 +131,10 @@ EOF
 # arg parsing
 # -----------------------------------------------------------------------------
 src_file=""
-run_cwd="."
+run_cwd=""
 timeout_s=120
+src_ticket=""
+src_worktree=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -135,6 +144,20 @@ while [[ $# -gt 0 ]]; do
       ;;
     --file=*)
       src_file="${1#--file=}"; shift
+      ;;
+    --ticket)
+      [[ $# -ge 2 ]] || { echo "revalidate-contract: --ticket needs a value" >&2; exit 2; }
+      src_ticket="$2"; shift 2
+      ;;
+    --ticket=*)
+      src_ticket="${1#--ticket=}"; shift
+      ;;
+    --worktree)
+      [[ $# -ge 2 ]] || { echo "revalidate-contract: --worktree needs a value" >&2; exit 2; }
+      src_worktree="$2"; shift 2
+      ;;
+    --worktree=*)
+      src_worktree="${1#--worktree=}"; shift
       ;;
     --cwd)
       [[ $# -ge 2 ]] || { echo "revalidate-contract: --cwd needs a value" >&2; exit 2; }
@@ -168,6 +191,35 @@ if [[ ! "$timeout_s" =~ ^[0-9]+$ ]] || [[ "$timeout_s" -le 0 ]]; then
   echo "revalidate-contract: --timeout must be a positive integer (seconds)" >&2
   exit 2
 fi
+
+# -----------------------------------------------------------------------------
+# resolve --ticket into a file path (the #262 per-ticket convention). --ticket
+# is mutually exclusive with --file. When --ticket is used, default --cwd to the
+# resolved worktree (the contract's commands run against the ticket's tree).
+# -----------------------------------------------------------------------------
+if [[ -n "$src_ticket" ]]; then
+  if [[ -n "$src_file" ]]; then
+    echo "${C_RED}x${C_RESET} revalidate-contract: --ticket is mutually exclusive with --file" >&2
+    exit 2
+  fi
+  resolver="$(dirname -- "${BASH_SOURCE[0]}")/contract-path.sh"
+  if [[ ! -x "$resolver" && ! -r "$resolver" ]]; then
+    echo "${C_RED}x${C_RESET} revalidate-contract: contract-path.sh not found next to this script" >&2
+    exit 2
+  fi
+  # Resolve the worktree once so --cwd can default to it.
+  wt="$src_worktree"
+  if [[ -z "$wt" ]]; then
+    if ! wt="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$wt" ]]; then
+      wt="."
+    fi
+  fi
+  src_file="$(bash "$resolver" "$src_ticket" --worktree "$wt")" || exit 2
+  [[ -n "$run_cwd" ]] || run_cwd="$wt"
+fi
+
+# Default --cwd to the current directory when neither --cwd nor --ticket set it.
+[[ -n "$run_cwd" ]] || run_cwd="."
 
 # -----------------------------------------------------------------------------
 # read the body

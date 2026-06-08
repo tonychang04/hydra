@@ -57,3 +57,9 @@ self-test/golden-cases.json
 
 # Node (in case test-discovery runs npm)
 node_modules/
+
+# Per-ticket validation-contract scratch dir (#262). Each ticket's contract
+# lives at .hydra/contracts/<ticket>.md — worktree-local, never committed, so
+# concurrent tickets never collide and the artifact never reaches main.
+# Spec: docs/specs/2026-06-08-contract-artifact-location.md
+.hydra/
