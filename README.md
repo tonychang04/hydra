@@ -18,16 +18,12 @@ Built on [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) + [
 
 ## Why "Hydra"?
 
-Named after the Lernaean Hydra from Greek mythology — the serpent that regenerated when you cut off a head. Chop one, two grow back. More heads, more teeth, more trouble for whatever's in front of it.
-
-The name maps directly onto the architecture:
+Named after the Lernaean Hydra: cut off one head, two grow back. The name maps onto the architecture:
 
 - **Commander is the body.** Persistent. Holds memory, state, and policy across every ticket.
-- **Workers are the heads.** Ephemeral. One per ticket. Spawn, work, die.
-- Every new ticket grows a new head. Finished heads die. The body keeps going.
-- More tickets in the queue means more heads working in parallel — no human needed to cut the next one loose.
+- **Workers are the heads.** Ephemeral. One per ticket — spawn, work, die. More tickets in the queue means more heads in parallel, no human needed to cut the next one loose.
 
-The mythological Hydra got stronger each time a head was cut off. So does this one. Every completed ticket feeds memory; memory makes the next head smarter, faster, more autonomous. Dead heads are not losses — they are how the body learns.
+The myth's Hydra got stronger each time a head was severed, and so does this one: every finished ticket feeds memory, and memory makes the next head smarter. Dead heads are how the body learns.
 
 ## Try it in 60 seconds
 
@@ -41,13 +37,13 @@ cd hydra
 ./hydra
 ```
 
-Inside the launched Commander, type `pick up 1`. That's it — you should see **"hydra picked up its first ticket"** as a worker spawns against whatever issue is next in your queue.
+Inside the launched Commander, type `pick up 1`. A worker spawns against the next issue in your queue, and Commander reports a one-line status when the draft PR lands.
 
 Assumes `git`, `claude`, and `gh` are installed and `gh auth login` is done. If any command fails, run `./hydra doctor` — it runs a battery of non-destructive checks across env / config / state and tells you what to fix. Full install reference in **[INSTALL.md](INSTALL.md)**.
 
 ## Demo
 
-**Run the demo yourself in ~10 minutes** — no video required. The [`hello-hydra-demo`](examples/hello-hydra-demo/) fixture is a tiny Node repo with three pre-written issues that exercise all three Hydra outcomes (T1 auto-merge, T2 human-merge, T3 refusal). Follow **[examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md)** — it's the fastest honest proof that Hydra works end-to-end.
+Want the full loop end-to-end before wiring it into your own repos? Run the demo yourself in ~10 minutes — no video required. The [`hello-hydra-demo`](examples/hello-hydra-demo/) fixture is a tiny zero-dep Node repo with three pre-written issues that exercise all three Hydra outcomes (T1 auto-merge, T2 human-merge, T3 refusal). No `npm install`, no config beyond adding the forked repo to `state/repos.json`. Follow **[examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md)**.
 
 What you'll have when it's done:
 
@@ -81,14 +77,6 @@ Four roles, three of them agents. Keep them straight and the rest of the docs cl
 - "Is Commander the same as Main Agent?" — **No.** Main Agent is yours (Claude Code on your laptop). Commander is Hydra's. They talk to each other over MCP.
 - "Is Worker the same as Subagent?" — Yes. "Worker" is Hydra's name for the role; "subagent" is Claude Code's name for the mechanism. Same thing.
 - "Who does 'Operator' refer to in old docs?" — Historically "Operator" meant You-the-human, but sometimes meant "your Main Agent". We're phasing "Operator" out in favor of the four precise terms above.
-
-## Try it in 10 minutes
-
-Want to see the full Hydra loop end-to-end before wiring it into your own repos? A runnable demo lives at [`examples/hello-hydra-demo/`](examples/hello-hydra-demo/). It's a minimal zero-dep Node package plus three fixture GitHub issues that exercise the three tier outcomes — one T1 auto-merge, one T2 human-merge, one T3 refusal — in about ten minutes of wall-clock.
-
-Walkthrough: **[examples/hello-hydra-demo/DEMO.md](examples/hello-hydra-demo/DEMO.md)**
-
-No `npm install` required. No config beyond adding the forked repo to `state/repos.json`. By the end you'll have two PRs merged, one issue refused, and a `memory/learnings-hello-hydra-demo.md` file showing what the worker captured — the seed of the learning loop.
 
 ## How Hydra compares
 
@@ -402,54 +390,17 @@ If "assigned to me" is already your personal in-progress field, set `"ticket_tri
 
 The session loads `CLAUDE.md` as its system prompt, greets you with queue status, and waits. Try `status`, then `show me 3 ready tickets` (inspection only), then `pick up 1` for a real run.
 
-## Mental model
+## Worker types (defined in `.claude/agents/`)
 
-```
-You (chat) ──────────────────────────────────────────────┐
-                                                         │
-Commander (the body: this dir's long-lived claude session)│ ← operator asks
-  │                                                      │   question only
-  ├─ reads MEMORY.md, policy.md, budget.json             │   when memory
-  ├─ polls GitHub issues (label: commander-ready)        │   can't resolve
-  ├─ classifies tier (T1 auto-merge / T2 human-merge     │
-  │                   / T3 refuse)                       │
-  │                                                      │
-  ├─ Agent(subagent_type="worker-implementation",        │
-  │        isolation="worktree")  ──┐                    │
-  │                                 │                    │
-  │                                 ▼                    │
-  │                       Head (one of many workers —    │
-  │                       fresh context, own worktree,   │
-  │                       own memory, own permission     │
-  │                       scope, short-lived)            │
-  │                         ↓                            │
-  │                       Reads repo's CLAUDE.md /       │
-  │                       AGENTS.md / .claude/skills/    │
-  │                         ↓                            │
-  │                       brainstorming → plan → TDD     │
-  │                         ↓                            │
-  │                       Runs tests (docker if needed)  │
-  │                         ↓                            │
-  │                       /review → /codex review        │
-  │                         ↓                            │
-  │                       Opens draft PR → labels issue  │
-  │                                                      │
-  ├─ Agent(subagent_type="worker-review",                │
-  │        isolation="worktree")                         │
-  │     (runs against the worker's new PR before         │
-  │      surfacing to human for merge)                   │
-  │                                                      │
-  └─ QUESTION: block from a worker ─────────────────────>┘
-        (surfaced in chat with nearest memory precedent)
-```
-
-## Three worker types (defined in `.claude/agents/`)
+The three you meet first:
 
 | Type | When | Never does |
 |---|---|---|
 | `worker-implementation` | Any ticket with code changes | Review / discovery |
-| `worker-review` | After a PR opens, before human merge gate | Code changes |
+| `worker-review` | After a PR opens, before the merge gate | Code changes |
 | `worker-test-discovery` | When a repo has no working documented test procedure | Source changes |
+
+Plus four that Commander spawns on demand: `worker-validator` (re-runs a PR's validation contract for runtime truth), `worker-auditor` (files follow-up tickets), `worker-conflict-resolver` (untangles mutually-conflicting PRs), and `worker-codex-implementation` (code tickets on Codex-backed repos). All seven live in `.claude/agents/`.
 
 Each is a proper Claude Code subagent definition (YAML frontmatter with `isolation: worktree`, `memory: project`, `maxTurns`, `skills:` preload, `color:`).
 
@@ -501,7 +452,7 @@ Idempotent (re-run preserves unrelated keys, offers updates), schema-validated a
 
 ## Staged rollout (don't skip)
 
-See `docs/superpowers/specs/2026-04-16-commander-agent-design.md` for the full spec.
+Don't graduate to T1 auto-merge on day one. Walk up the rungs:
 
 - **Rung 1 — smoke test (5 min):** launch, verify state files parse, classify a few test tickets. No spawning.
 - **Rung 2 — Stage 0 (30-60 min):** one small already-merged PR, compare worker's diff to the real one
@@ -520,6 +471,8 @@ Project-specific knowledge (what works in each repo) lives in `memory/` and is *
 - `memory/archive/` — **gitignored**; compacted older entries
 - `state/*.json` — **gitignored**; live runtime state
 - `logs/*` — **gitignored**; per-ticket audit trail
+
+**From learning to skill (the pipeline, not just the promise).** The loop above is wired, not aspirational. Each worker ends its report with `MEMORY_CITED:` markers; [`scripts/parse-citations.sh`](scripts/parse-citations.sh) folds those into `state/memory-citations.json` (gitignored runtime state). When an entry reaches `count >= 3` across 3+ distinct tickets, [`scripts/promote-citations.sh`](scripts/promote-citations.sh) drafts a PR that lands a `.claude/skills/<slug>/SKILL.md` and labels it `commander-skill-promotion` — at which point the pattern is repo-native and every future worker reads it for free. Nine skills already live in [`.claude/skills/`](.claude/skills/) this way. Design and thresholds: [`docs/specs/2026-04-17-skill-promotion-automation.md`](docs/specs/2026-04-17-skill-promotion-automation.md).
 
 **Phase 2 knowledge store:** `memory/` and `state/` graduate to S3 (via S3 Files filesystem mount), so multiple commander instances share learnings. See `docs/phase2-s3-knowledge-store.md`.
 
@@ -576,10 +529,12 @@ commander/
 ├── .claude/
 │   ├── settings.local.json                permissions (GITIGNORED — copy from .example)
 │   ├── settings.local.json.example        template (committed)
-│   └── agents/
-│       ├── worker-implementation.md       (committed)
-│       ├── worker-review.md               (committed)
-│       └── worker-test-discovery.md       (committed)
+│   ├── agents/                            seven worker definitions (all committed)
+│   │   ├── worker-implementation.md
+│   │   ├── worker-review.md
+│   │   ├── worker-test-discovery.md
+│   │   └── ... (validator, auditor, conflict-resolver, codex-implementation)
+│   └── skills/                            promoted + seed worker skills (committed)
 ├── state/
 │   ├── repos.json                         your repos (GITIGNORED)
 │   ├── repos.example.json                 template (committed)
