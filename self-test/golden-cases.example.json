@@ -772,7 +772,7 @@
         },
         {
           "name": "#260 --migrate is a no-op on already-valid state (reports no repairs, leaves file unchanged)",
-          "cmd": "set -euo pipefail; TMP=$(mktemp -d); trap 'rm -rf \"$TMP\"' EXIT; cp self-test/fixtures/state-schemas/valid/repos.json \"$TMP/repos.json\"; scripts/validate-state.sh --schema-dir state/schemas --migrate \"$TMP/repos.json\" 2>&1 | grep -q 'no repairs needed' && echo NOOP_OK",
+          "cmd": "set -euo pipefail; TMP=$(mktemp -d); trap 'rm -rf \"$TMP\"' EXIT; cp self-test/fixtures/state-schemas/valid/repos.json \"$TMP/repos.json\"; migrate_out=$(scripts/validate-state.sh --schema-dir state/schemas --migrate \"$TMP/repos.json\" 2>&1); printf '%s\\n' \"$migrate_out\" | grep -q 'no repairs needed' && echo NOOP_OK",
           "expected_exit": 0,
           "expected_stdout_contains": "NOOP_OK"
         },
