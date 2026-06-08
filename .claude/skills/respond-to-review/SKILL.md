@@ -85,23 +85,26 @@ Skip when:
 
 ### Good — verify, then respond (mix of fix + evidence-backed pushback)
 
-Review finding: "Remove the legacy `--no-color` branch in `scripts/foo.sh`; it's
-dead." → **Don't strip it reflexively.** `grep -rn 'no-color\|NO_COLOR'
-scripts/ self-test/` shows `self-test/run.sh` invokes it for deterministic
-golden output. Response: "Pushed back: `--no-color` is live — `self-test/run.sh`
-relies on it for byte-stable JSON (self-test/run.sh:NN). Keeping it. Other
-finding (unguarded `jq` on empty input) is real — Fixed: added `// empty` guard
-in scripts/foo.sh." Each disposition carries evidence; the reviewer can re-check.
+Review finding: "The `NO_COLOR` guard in `self-test/run.sh` is dead — just emit
+ANSI unconditionally." → **Don't strip it reflexively.** `grep -n 'NO_COLOR'
+self-test/run.sh` shows the live guard (`[[ "${NO_COLOR:-}" != "1" ]]`), and
+the surrounding `[[ -t 1 ]]` test means color is already suppressed when output
+is captured (not a TTY) — so byte-stable non-TTY output depends on this guard
+staying. Response: "Pushed back: the `NO_COLOR` guard is load-bearing —
+self-test/run.sh:NN gates ANSI on `[[ -t 1 ]] && NO_COLOR != 1`; removing it
+would inject escape codes into captured golden output. Keeping it. Second
+finding (an unguarded array index) is real — Fixed at <file:line>." Each
+disposition cites a line the reviewer can re-check.
 
 ### Bad — blind implementation (the failure this skill prevents)
 
-Same finding. Worker writes "You're absolutely right!" and deletes the
-`--no-color` branch without grepping. The next `worker-validator` run reruns the
-contract; `self-test/run.sh` now emits ANSI codes and the golden-output
-assertion fails. A cycle is burned re-adding the branch — exactly the "changes
-land in weird ways without project context" failure
-(`memory/feedback_context_and_testing_weakness.md`). Verification before
-implementation would have caught it in one `grep`.
+Same finding. Worker writes "You're absolutely right!" and rips the `NO_COLOR`
+guard out without grepping. The next `worker-validator` run reruns the contract;
+any assertion that captures `self-test/run.sh` output and diffs it now sees ANSI
+escape codes and fails. A cycle is burned re-adding the guard — the operator's
+"changes land in weird ways without project context" failure mode (Commander
+memory, `feedback_context_and_testing_weakness`). One `grep` before
+implementing would have caught it.
 
 ## Verification
 
@@ -114,8 +117,8 @@ Confirmed offline against the current corpus:
   3 `grep` is the single action that prevents it — the skill's claim is testable
   by walking that scenario.
 - **Non-duplication:** `grep -ni 'review feedback\|receiving-code-review'
-  memory/learnings-hydra.md memory/escalation-faq.md .claude/skills/*/SKILL.md`
-  → no sibling Hydra skill covers processing inbound review findings;
+  .claude/skills/*/SKILL.md memory/escalation-faq.md` → no sibling Hydra skill
+  covers processing inbound review findings;
   `classify-pr-for-review` is the *reviewer* side (producing findings), this is
   the *implementer* side (consuming them) — complementary, not redundant.
 

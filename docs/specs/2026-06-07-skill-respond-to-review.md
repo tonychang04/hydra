@@ -18,7 +18,8 @@ modes when it processes that feedback:
    *for this codebase*, whether it breaks existing tests, or whether the current
    implementation exists for a legacy reason that still holds. This is the exact
    "changes land in weird ways without project context" failure the operator
-   flagged (`memory/feedback_context_and_testing_weakness.md`).
+   flagged (Commander-root memory `feedback_context_and_testing_weakness`; not a
+   worktree-local file).
 2. **Reflexive over-defense** — it argues against valid findings without first
    verifying them against the codebase, burning a review cycle on social
    friction instead of a fix.
@@ -99,7 +100,9 @@ Offline, no network (matches sibling seeds' Verification sections):
   new file AND the dispatcher roster line — a re-spawned worker enumerating the
   directory would surface it.
 - **No duplication/contradiction:** `grep -ni 'respond-to-review\|review feedback'
-  memory/learnings-hydra.md memory/escalation-faq.md` — link or reconcile hits.
+  .claude/skills/*/SKILL.md memory/escalation-faq.md` — link or reconcile hits.
+  (Per-repo `learnings-<repo>.md` lives at the Commander root, not the worktree,
+  so it is checked by Commander's memory hygiene, not this offline test.)
 
 ## Risks / rollback
 
