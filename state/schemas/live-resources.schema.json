@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hydra/state/schemas/live-resources.schema.json",
+  "title": "Hydra live cloud resources ledger",
+  "description": "Append-only ledger of live cloud resources (InsForge projects/deployments/buckets/functions, seeded rows, test users, EC2/compute, externally-billable API keys) that workers provision while implementing or testing a ticket. The Commander review gate is diff-bound and cannot see live cloud residue; this ledger gives Commander something to audit and tear down. Populated by the worker-implementation agent's cloud-cleanup checklist (NEVER records secrets/tokens — identifiers/handles only). See docs/specs/2026-06-01-cloud-side-effect-tracking.md and the 'Cloud side-effects' section of .claude/agents/worker-implementation.md.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["resources"],
+  "properties": {
+    "resources": {
+      "type": "array",
+      "description": "One entry per live resource a worker provisioned. Append-only; never auto-pruned.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["kind", "provider", "identifier", "ticket", "created_at", "disposition"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Resource type, e.g. 'project', 'deployment', 'bucket', 'function', 'db-rows', 'test-user', 'compute', 'api-key'."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Cloud provider / platform the resource lives in, e.g. 'insforge', 'aws', 'vercel'."
+          },
+          "identifier": {
+            "type": "string",
+            "description": "Provider-side handle that identifies the resource: a project ref, bucket name, deployment URL, function name, etc. NEVER a token, key, or secret."
+          },
+          "ticket": {
+            "type": "string",
+            "description": "Ticket ref that provisioned this resource, e.g. '#189' or 'LIN-123'."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO-8601 timestamp of when the resource was created."
+          },
+          "disposition": {
+            "type": "string",
+            "enum": ["ephemeral-cleaned", "persists", "pending-teardown"],
+            "description": "ephemeral-cleaned = throwaway test data the worker removed before opening the PR. persists = intentionally kept (must have a reason in notes). pending-teardown = still live and awaiting a deliberate teardown (the review gate blocks a PR that leaves this with no plan)."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Short free-text justification. Required in spirit for 'persists' (why it stays) and 'pending-teardown' (the teardown plan)."
+          }
+        }
+      }
+    }
+  }
+}

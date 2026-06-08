@@ -13,6 +13,7 @@ state/linear.json
 state/autopickup.json
 state/commander.lock
 state/pending-dispatches.json
+state/live-resources.json
 state/slack-notified-prs.json
 state/discord-notified-prs.json
 state/webhook-triggers/
