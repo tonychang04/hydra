@@ -103,8 +103,40 @@ Coordinator-Implementor-Verifier pattern).
    GitHub ticket — the PR body is always a usable source.
 2. **Verification gate (b) — attach evidence per criterion.** For each row, pick
    a verdict and cite the evidence that justifies it:
-   - `PASS` — REQUIRES concrete evidence: a command + its output, a test name +
-     its pass line, or a diff `file:line`. Never `PASS` on "looks right".
+   - `PASS` — REQUIRES a **behavioral-assertion signal** in the evidence cell.
+     The checker (`validate-evidence-table.sh`, #191 redesign) accepts a `PASS`
+     ONLY if the evidence carries at least one of these — phrase your evidence so
+     it matches at least one:
+     - **exit code** — `exit 0`, `exit=0`, `exit code 0`
+     - **HTTP status** — `HTTP 200`, `200 OK`, `→ 200`, `status 204`, `204 on /x`
+     - **test / assert construct** — `assert…`, `expect(x).toBe(3)`,
+       `expect(r).toEqual(…)`, `3 passed`, `0 failed`, `all tests passing`
+     - **comparison on observed state** — `==`, `===`, `>=`, `<=`, `!=`,
+       `count == 3`, `rows: 5`. A verb (`returned`/`equals`) needs an **observed
+       operand**: `returned 200` / `returned 5 rows` / `x equals y` — NOT a bare
+       verb (`returns home`, `values are equal in the UI` carry no signal).
+     - **source / trace reference** — `src/x.ts:42` (`file.ext:NN`),
+       `trace:<id>` (and `session:`/`req:`/`resp:`/`sha:`/`commit:`)
+     - **observed REST / DOM / SDK state** — `5 rows`, `2 audit rows`,
+       `rows returned`, `.ok`, `res.ok`, `verify_chain`, a quoted JSON body
+       `[{"id":1}]` / `{"ok":true}`, **or a DOM-state assertion** — a CSS selector
+       (`.toast-success`, `#main`, `[data-testid=row]`) or a state phrase
+       (`element visible`, `#main visible`, `text content matches "Saved"`).
+
+     A `PASS` whose evidence is a **screenshot alone**, or a **bare prose claim**
+     ("it works", "renders correctly", "looks right"), carries NO assertion
+     signal and is rejected exactly like an empty cell. This is the #191 redesign
+     (inverted from a screenshot denylist to a positive allowlist — fails closed,
+     see "Verification flexibility" below); it also closes the #196/#209
+     bare-claim gap.
+
+     > **Put the assertion in the cell text, NOT in an image.** Image references
+     > are stripped before the signal scan (#191 re-work) — a markdown image
+     > `![alt](url)` is dropped WHOLE (alt-text AND url) and bare `name.ext`
+     > image tokens are dropped. So an assertion hidden in a screenshot's filename
+     > or alt-text (`![HTTP 200](x.png)`, `Screen Shot exit 0.png`,
+     > `![assert all good](shot.png)`) does NOT count and the `PASS` is rejected.
+     > Write the assertion as cell text; let the screenshot ride along beside it.
    - `FAIL` — the criterion is not met; say what's wrong (evidence optional).
    - `UNVERIFIED` — you could not verify it (no fixture, needs a live service,
      out of review scope); say why. **A criterion you can't verify is
@@ -116,13 +148,36 @@ Coordinator-Implementor-Verifier pattern).
    is empty. Fix the table until it exits 0, THEN post. (See "Verification"
    below for the exact invocation.)
 
-> **#197 extension point.** Evidence today is a command+output, a test+pass
-> line, or a diff `file:line`. When #197 (session trace) lands, a fourth kind —
-> `trace:<step-id>` pointing at a recorded session-trace step — becomes an
-> *additional* evidence source. The checker already treats any non-empty
-> Evidence cell as valid regardless of kind, so `trace:` references will work
-> with NO checker change. Do NOT depend on #197 being present — gather evidence
-> from test output / diffs / command output directly until it lands.
+> **#197 extension point.** The evidence kinds above ARE the assertion-signal
+> allowlist the checker enforces (`ASSERTION_SIGNALS` in
+> `validate-evidence-table.sh`). The `trace:<id>` kind for #197 (session trace)
+> is ALREADY a recognized signal (the `trace:` pattern), so a recorded
+> session-trace step works with NO checker change. To extend the allowlist with a
+> genuinely new evidence shape, add one regex to `ASSERTION_SIGNALS` (single
+> source of truth) and a test case. Do NOT depend on #197 being present — gather
+> evidence from test output / diffs / command output directly until it lands.
+
+> **Verification flexibility — behavioral assertion + one screenshot (#191).**
+> You do NOT need a screenshot at every step. A **behavioral assertion** (any
+> signal in the allowlist above — exit code / HTTP status / test+assert /
+> comparison / file:line / trace: / observed REST/DOM/SDK state) is sufficient
+> evidence for a `PASS`; **one representative screenshot** corroborates it but is
+> optional. A screenshot proves a render happened, not that the state is correct
+> — so a `PASS` whose evidence is a **screenshot ALONE** carries no assertion
+> signal and is rejected exactly like an empty cell (`validate-evidence-table.sh`
+> exit 1). The detector is a POSITIVE allowlist (#191 redesign): it requires a
+> signal rather than denylisting screenshot words, so it fails CLOSED — an
+> unenumerated screenshot word (the macOS default `Screen Shot … PM.png`, any new
+> image form) has no signal and fails by construction. A **bare prose claim**
+> ("it works") likewise has no signal and is rejected (this closes #196/#209).
+> And a **flaky evidence-capture tool** (e.g. the browse daemon down) must NOT
+> block a criterion whose behavior is proven by a non-visual assertion — fall
+> back to the assertion + (if you can get one) a single screenshot, mark the row
+> `PASS` on the assertion, and move on. This is the review-gate counterpart of
+> the watchdog's flaky-tool fallback
+> (`docs/specs/2026-05-21-flaky-tool-probe-verdict.md` → "curl/SDK + single
+> screenshot"). Spec: `docs/specs/2026-05-21-evidence-based-review-gate.md`
+> (#191 amendments 1 + 2).
 
 ### Adversarial pass for SECURITY findings only (Refute-or-Promote, #199)
 
@@ -188,8 +243,9 @@ Commander review of PR #<n>
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
 | 1 | <criterion text, from the ticket> | PASS | `<cmd>` -> `<output>` / test `<name>` -> `1 passed` / diff `file:line` |
-| 2 | <criterion text> | FAIL | <what's wrong> |
-| 3 | <criterion text> | UNVERIFIED | <why you couldn't verify it> |
+| 2 | <criterion, UI behavior> | PASS | REST `GET /items` -> `200 [{"id":1}]`; screenshot `dash.png` (one shot corroborates) |
+| 3 | <criterion text> | FAIL | <what's wrong> |
+| 4 | <criterion text> | UNVERIFIED | <why you couldn't verify it> |
 
 <!-- SECURITY PRs ONLY (security-trigger diff + ≥1 finding raised) — omit otherwise -->
 **Security findings — adversarial pass (kill mandate)**
@@ -317,9 +373,11 @@ only after it exits 0 do the `REPORTED` rows become `SECURITY:` blockers.
   printf '%s' "$comment_body" | bash scripts/validate-evidence-table.sh
   ```
 
-  Exit 0 = every `PASS` carries evidence (post it). Exit 1 = a `PASS` lacks
-  evidence / illegal verdict / zero criteria (fix the table). Exit 2 = no table
-  found (you forgot it). Regression test: `bash scripts/test-validate-evidence-table.sh`.
+  Exit 0 = every `PASS` carries a behavioral-assertion signal (post it). Exit 1 =
+  a `PASS` lacks evidence / carries no assertion signal — a screenshot ALONE or a
+  bare claim (#191) / illegal verdict / zero criteria (fix the table). Exit 2 =
+  no table found (you forgot it). Regression test:
+  `bash scripts/test-validate-evidence-table.sh`.
 - **Findings table enforced (security PRs only):** for a `security-trigger` diff
   with ≥1 raised finding, the comment carries a FINDINGS TABLE and passes the
   adversarial checker. Validate the body before escalating:

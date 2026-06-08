@@ -210,7 +210,7 @@ Commander review of PR #42
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
 | 1 | digest command added | PASS | test `digest channel` -> `4 passed`; diff `scripts/build-daily-digest.sh:1` |
-| 2 | composer renders sections | PASS | `bash scripts/build-daily-digest.sh --dry-run` -> non-empty digest |
+| 2 | composer renders sections | PASS | `bash scripts/build-daily-digest.sh --dry-run` -> exit 0, 5 rows rendered |
 | 3 | autopickup step-1.6 hook fires | UNVERIFIED | scheduler not exercised in CI |
 
 **Blockers** (must fix before merge)
@@ -266,7 +266,7 @@ Commander review of PR #42
 
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
-| 1 | a | pass | `cmd` -> ok |
+| 1 | a | pass | `cmd` -> exit 0 |
 | 2 | b | fail |  |
 | 3 | c | unverified |  |
 EOF
@@ -283,7 +283,7 @@ Commander review of PR #42
 
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
-| 1 | counts matching lines with `grep x \| wc -l` | PASS | ran `grep x f \| wc -l` -> `3` |
+| 1 | counts matching lines with `grep x \| wc -l` | PASS | ran `grep x f \| wc -l` -> count == 3 |
 EOF
 run_stdin "$tmpdir/t14.md"
 if [[ "$EC" -eq 0 ]]; then
@@ -311,6 +311,611 @@ if [[ "$EC" -eq 1 ]]; then
 else
   bad "expected exit 1 (empty evidence), got $EC; out: $(cat "$tmpdir/out")"
 fi
+
+# ---------- Test 16: screenshot-ONLY PASS -> exit 1 (#191 meaningful-bar rule) ----------
+# A screenshot is corroboration, not an assertion. A PASS whose ONLY evidence is
+# a screenshot reference (a picture with no asserted state) is rejected exactly
+# like an empty cell — this keeps the #191 flexibility from re-opening the
+# "tests claimed not run" hole (#118). The behavioral assertion is load-bearing.
+say "Test 16: a PASS whose ONLY evidence is a screenshot -> exit 1 (screenshot is not an assertion)"
+for shot in \
+  "screenshot" \
+  "screenshot dashboard.png" \
+  "see screenshot" \
+  "screencap of the page" \
+  "![dashboard](./shots/dash.png)" \
+  "shots/login.png" \
+  "evidence.jpg"; do
+  cat > "$tmpdir/t16.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t16.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "screenshot-only evidence '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+# stderr should explain a screenshot is not a behavioral assertion.
+cat > "$tmpdir/t16b.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | screenshot dashboard.png |
+EOF
+run_stdin "$tmpdir/t16b.md"
+if grep -qiE "screenshot|assertion|behaviou?ral" "$tmpdir/out"; then
+  ok "stderr explains a screenshot alone is not an assertion"
+else
+  bad "expected screenshot/assertion guidance; got: $(cat "$tmpdir/out")"
+fi
+
+# ---------- Test 17: behavioral assertion + ONE screenshot -> exit 0 (#191 happy path) ----------
+# The #191 policy: behavioral assertion (REST/DOM/SDK/exit-code/HTTP state) is the
+# evidence; a single representative screenshot rides along. This PASSES.
+say "Test 17: behavioral assertion + one screenshot -> exit 0 (assertion carries it)"
+for ev in \
+  "\`curl localhost:3000/items\` -> \`[{\"id\":1}]\` 200; screenshot dashboard.png" \
+  "REST GET /items -> 200 \`[{\"id\":1}]\`; ![dash](shots/dash.png)" \
+  "exit 0 from \`andb query\`; screenshot of result.png" \
+  "DOM \`.items li\` count = 3 (asserted); see screenshot login.png"; do
+  cat > "$tmpdir/t17.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t17.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "assertion + screenshot accepted (exit 0): '$ev'"
+  else
+    bad "expected exit 0 for assertion+screenshot, got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 18: behavioral assertion ALONE -> exit 0 (screenshots optional) ----------
+# Non-goal: screenshots are NOT mandatory. An assertion-only PASS stays valid.
+say "Test 18: behavioral assertion alone, no screenshot -> exit 0 (screenshots optional)"
+cat > "$tmpdir/t18.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Health endpoint returns 200 | PASS | `curl localhost:3000/health` -> `{"ok":true}` 200 |
+| 2 | exit code is 0 | PASS | `andb migrate` -> exit 0 |
+EOF
+run_stdin "$tmpdir/t18.md"
+if [[ "$EC" -eq 0 ]]; then ok "assertion-only PASS still valid (screenshots optional)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 19: messy screenshot-ONLY forms -> exit 1 (the leak fix) ----------
+# Tests 16-18 only covered clean single-filename screenshot refs. The #191 fix
+# shipped a leak: any space / quote / paren / comma / *, @, ?, or URL adjacent to
+# the image filename left a bare token (png/jpg, a URL scheme, a query string)
+# that survived the strip and was mistaken for a behavioral assertion -> a
+# screenshot-ONLY PASS was WRONGLY accepted. These forms MUST be rejected (exit 1)
+# exactly like an empty cell, preserving the #118 "tests claimed not run" guard.
+# The most important case is the literal default macOS screenshot filename, which
+# carries spaces.
+say "Test 19: messy screenshot-only forms (spaces / punctuation / URL / query) -> exit 1"
+for shot in \
+  "Screenshot 2026-06-01 at 1.23.45 PM.png" \
+  "foo@2x.png" \
+  "screenshots: a.png" \
+  "*.png" \
+  "https://example.com/x.png" \
+  "x.png?raw=1" \
+  '"a.png"' \
+  "(a.png)" \
+  "screenshot, a.png" \
+  "see Screenshot 2026-06-01 at 1.23.45 PM.png attached"; do
+  cat > "$tmpdir/t19.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t19.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "messy screenshot-only '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for messy screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 20: assertion text in markdown image alt-text -> exit 1 (#191 re-work) ----------
+# Amendment 3 (#191 re-work, BLOCKER 3): a markdown image `![alt](url)` is stripped
+# WHOLE — alt-text AND url — before scanning. Preserving alt-text was itself a
+# fail-open hole: `![assert all good](shot.png)` has only a screenshot, but its
+# alt-text matched an assertion signal and WRONGLY passed. Evidence belongs in the
+# cell text, not buried in an image's alt attribute. So an assertion that lives
+# ONLY in alt-text now FAILS like a screenshot-only cell. (This INVERTS the prior
+# amendment-2 "alt-text preserved -> PASS" behavior.)
+say "Test 20: assertion ONLY in markdown image alt-text -> exit 1 (alt-text dropped, #191 re-work)"
+for alt in \
+  "![HTTP 200](x.png)" \
+  "![exit 0](run.png)" \
+  "![curl /items -> 200 \`[{\"id\":1}]\`](shots/items.png)"; do
+  cat > "$tmpdir/t20.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | $alt |
+EOF
+  run_stdin "$tmpdir/t20.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "alt-text-only assertion '$alt' rejected -> exit 1"
+  else
+    bad "expected exit 1 for alt-text-only assertion '$alt', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# A markdown image whose alt-text is ITSELF just a screenshot label (no assertion)
+# must still be rejected — dropping alt-text keeps this a FAIL too.
+say "Test 20b: markdown image with screenshot-only alt-text -> exit 1 (still no assertion)"
+for alt in \
+  "![dashboard screenshot](shots/dash.png)" \
+  "![screenshot](x.png)" \
+  "![login page](login.png)"; do
+  cat > "$tmpdir/t20b.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders | PASS | $alt |
+EOF
+  run_stdin "$tmpdir/t20b.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "screenshot-only alt-text '$alt' rejected (exit 1)"
+  else
+    bad "expected exit 1 for screenshot-only alt-text '$alt', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 21: image types BEYOND png/jpg + adjacency forms -> exit 1 ----------
+# #191 re-work FINAL, BLOCKER A. The first leak fix hard-coded a 5-extension set
+# (png|jpg|jpeg|gif|webp) layered under a `*.png*` SUBSTRING rule. Image types
+# outside that set (bmp, svg, heic, tif, tiff, avif) were never recognized as
+# screenshots, so a screenshot-ONLY PASS using them was WRONGLY accepted. A couple
+# of adjacency forms (a trailing resolution string, a path glued to "Screen Shot")
+# also leaked. All of these are screenshots with NO behavioral assertion and MUST
+# be rejected (exit 1), exactly like an empty cell.
+say "Test 21: screenshot-only with broader image types + adjacency -> exit 1 (BLOCKER A)"
+for shot in \
+  "capture.bmp" \
+  "diagram.svg" \
+  "photo.heic" \
+  "grab.tif" \
+  "grab.tiff" \
+  "screenshots/login.avif" \
+  "shot.png (1920x1080)" \
+  "~/Desktop/Screen Shot.png"; do
+  cat > "$tmpdir/t21.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t21.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "screenshot-only (broad ext / adjacency) '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 22: file:line / trace: assertion whose PATH contains an image ext -> exit 0 ----------
+# #191 re-work FINAL, BLOCKER B (NEW false-reject introduced by the `*.png*`
+# SUBSTRING rule). A genuine `file:line` source reference or a `trace:` id can have
+# a path component that merely CONTAINS an image extension (`app.png.ts`,
+# `logo.png.tsx`, `shot.png` inside a trace id). The SUBSTRING rule dropped these
+# real assertions. The principled rule — a token is an image reference only when it
+# ENDS in a known image extension after stripping query/fragment + trailing punct —
+# keeps `app.png.ts` (ends in `.ts`, not an image) as a real assertion. These MUST
+# PASS (exit 0).
+say "Test 22: real assertion whose path CONTAINS (but does not end in) an image ext -> exit 0 (BLOCKER B)"
+for ev in \
+  "src/app.png.ts:42" \
+  "src/icons/logo.png.tsx:42" \
+  "trace:shot.png"; do
+  cat > "$tmpdir/t22.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Behavior asserted at source | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t22.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "assertion with image-ext-in-path '$ev' preserved (exit 0)"
+  else
+    bad "expected exit 0 for assertion '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 23: adversarial messy forms (uppercase ext / trailing comma / bare URL) ----------
+# Stress the principled "ends in a known image ext after stripping query/fragment +
+# trailing punctuation" rule with case + punctuation noise, so a reviewer cannot
+# find a 3rd leak class. Each of these is a screenshot-ONLY reference -> exit 1.
+say "Test 23: adversarial screenshot-only forms (uppercase / trailing comma / bare URL) -> exit 1"
+for shot in \
+  "evidence.PNG" \
+  "a.png," \
+  "https://example.com/path/to/shot.jpeg" \
+  "Capture.HEIC" \
+  "render.WEBP" \
+  "diagram.SVG." \
+  "shot.tiff?raw=1"; do
+  cat > "$tmpdir/t23.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t23.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "adversarial screenshot-only '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for adversarial screenshot-only '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# =============================================================================
+# Amendment 2 (#191 redesign): the detector is now a POSITIVE assertion-signal
+# allowlist, not a screenshot denylist. A PASS cell is valid ONLY if, after
+# stripping image refs, it carries >=1 behavioral-assertion signal. This block
+# pins the inversion: the macOS default filename fails BY CONSTRUCTION, the 3
+# historical leak inputs fail for the structural (no-signal) reason, a broad
+# spread of genuine assertion phrasings each PASS, and bare-claim-only now FAILs
+# (the intentional, desirable #196/#209 side effect).
+# =============================================================================
+
+# ---------- Test 24: the macOS default screenshot filename ALONE -> exit 1 ----------
+# THE headline of the redesign. `Screen Shot 2026-06-01 at 3.04.55 PM.png` (and
+# the newer `Screenshot ...` form) carry NO assertion signal, so they fail by
+# construction — with zero special-casing of the filename. This is the leak
+# class the denylist kept re-opening; the allowlist closes it structurally.
+say "Test 24: macOS default screenshot filename ALONE -> exit 1 (fails by construction)"
+for shot in \
+  "Screen Shot 2026-06-01 at 3.04.55 PM.png" \
+  "Screenshot 2026-06-01 at 3.04.55 PM.png" \
+  "Screen Shot 2026-06-01 at 3.04.55 PM.png attached"; do
+  cat > "$tmpdir/t24.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t24.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "macOS default filename '$shot' rejected (exit 1, no assertion signal)"
+  else
+    bad "expected exit 1 for '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 25: a broad spread of GENUINE assertion phrasings -> exit 0 ----------
+# Each carries at least one documented assertion signal (exit code / HTTP status /
+# test+assert construct / comparison operator / source-or-trace ref / DOM-SDK-REST
+# state). All must PASS — the allowlist is broad, not just exit-code+200.
+say "Test 25: genuine assertion phrasings (each carries a signal) -> exit 0"
+for ev in \
+  "exit 0" \
+  "exit=0" \
+  "EXIT=0" \
+  "exit code 0" \
+  "exit code: 0" \
+  "HTTP 200" \
+  "HTTP 204 on /x" \
+  "200 OK" \
+  "201 Created" \
+  "-> 200" \
+  "status 204" \
+  "assert dashboard visible" \
+  "expect(x).toBe(3)" \
+  "expect(res).toEqual({ ok: true })" \
+  "3 passed, 0 failed" \
+  "12 passed" \
+  "count == 3" \
+  "len === 5" \
+  "value >= 10" \
+  "x != null" \
+  "returned 5 rows" \
+  "query returned rows" \
+  "equals 42" \
+  "src/app.ts:42" \
+  "scripts/x.sh:128" \
+  "trace:abc123" \
+  ".ok === true" \
+  "res.ok" \
+  "verify_chain passed" \
+  'GET /items -> `[{"id":1}]`'; do
+  cat > "$tmpdir/t25.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Behavior asserted | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t25.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "assertion '$ev' accepted (exit 0)"
+  else
+    bad "expected exit 0 for assertion '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 26: bare-claim-only PASS -> exit 1 (intentional #196/#209 flip) ----------
+# The inversion ALSO makes bare prose with no asserted state FAIL — this is the
+# pre-existing #196/#209 "bare claim still passes" gap, now closed as a DESIRABLE
+# side effect that strengthens #118. None of these carry an assertion signal.
+say "Test 26: bare-claim-only PASS (prose, no asserted state) -> exit 1 (#196/#209 closed)"
+for claim in \
+  "it works as expected" \
+  "renders correctly" \
+  "looks right" \
+  "verified manually, all good" \
+  "the feature works" \
+  "tested and working" \
+  "implemented per the ticket" \
+  "no issues found" \
+  "behaves as described in the spec"; do
+  cat > "$tmpdir/t26.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Some criterion | PASS | $claim |
+EOF
+  run_stdin "$tmpdir/t26.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "bare claim '$claim' rejected (exit 1, no assertion signal)"
+  else
+    bad "expected exit 1 for bare claim '$claim', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+# stderr should point the reviewer at the missing assertion.
+cat > "$tmpdir/t26b.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Some criterion | PASS | it works as expected |
+EOF
+run_stdin "$tmpdir/t26b.md"
+if grep -qiE "assertion|behaviou?ral|signal|exit code|HTTP|file:line" "$tmpdir/out"; then
+  ok "stderr explains a behavioral assertion is required"
+else
+  bad "expected assertion guidance in stderr; got: $(cat "$tmpdir/out")"
+fi
+
+# ---------- Test 27: the 3 historical leak inputs -> exit 1 (now fail structurally) ----------
+# These are the inputs that slipped past the denylist across 3 review cycles. Under
+# the allowlist they fail for the STRUCTURAL reason (no assertion signal), not
+# because each was individually denylisted. Regression pins so a future edit can't
+# silently re-open any of them.
+say "Test 27: 3 historical leak inputs -> exit 1 (structural: no assertion signal)"
+for shot in \
+  "Screen Shot 2026-06-01 at 3.04.55 PM.png" \
+  "capture.bmp" \
+  "x.png?raw=1"; do
+  cat > "$tmpdir/t27.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t27.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "historical leak input '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for historical leak '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 28: assertion + screenshot stays PASS; screenshot alone FAILs ----------
+# The four-corner invariant in one place: assertion+screenshot -> PASS,
+# assertion-only -> PASS, screenshot-only -> FAIL, bare-claim-only -> FAIL.
+say "Test 28: four-corner invariant (assertion[+screenshot]->PASS, screenshot/claim-only->FAIL)"
+# assertion + screenshot -> PASS
+cat > "$tmpdir/t28.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | `curl /items` -> 200 `[{"id":1}]`; Screen Shot 2026-06-01 at 3.04.55 PM.png |
+EOF
+run_stdin "$tmpdir/t28.md"
+if [[ "$EC" -eq 0 ]]; then ok "assertion + screenshot -> PASS"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+# assertion only -> PASS
+cat > "$tmpdir/t28b.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | `curl /items` -> 200 |
+EOF
+run_stdin "$tmpdir/t28b.md"
+if [[ "$EC" -eq 0 ]]; then ok "assertion only -> PASS"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+# screenshot only -> FAIL
+cat > "$tmpdir/t28c.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | Screen Shot 2026-06-01 at 3.04.55 PM.png |
+EOF
+run_stdin "$tmpdir/t28c.md"
+if [[ "$EC" -eq 1 ]]; then ok "screenshot only -> FAIL"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+# bare-claim only -> FAIL
+cat > "$tmpdir/t28d.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | it works |
+EOF
+run_stdin "$tmpdir/t28d.md"
+if [[ "$EC" -eq 1 ]]; then ok "bare-claim only -> FAIL"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# =============================================================================
+# Amendment 3 (#191 re-work): close the four under-delivery defects.
+#   B1: broaden rows/count so an intervening noun no longer breaks the signal.
+#   B2: recognize a DOM-state / CSS-selector assertion.
+#   B3: STRIP image refs (markdown ![alt](url) whole — alt AND url — and bare
+#       name.ext tokens) BEFORE scanning, so an assertion-looking word hidden in
+#       a screenshot filename / alt-text can no longer manufacture a false PASS.
+#   C : tighten returned/equals to require an observed operand, not the bare verb.
+# =============================================================================
+
+# ---------- Test 29: advertised rows/count phrasings (B1) -> exit 0 ----------
+# All three docs advertise "N rows" as evidence. An intervening noun ("audit")
+# between the number and "rows" must NOT break the signal. count == N is also a
+# count assertion.
+say "Test 29: advertised rows/count phrasings (B1) -> exit 0"
+for ev in \
+  "2 audit rows" \
+  "5 rows returned" \
+  "rows: 5" \
+  "count == 3" \
+  "7 matching rows" \
+  "1 row"; do
+  cat > "$tmpdir/t29.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Query returns the expected rows | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t29.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "rows/count phrasing '$ev' accepted (exit 0)"
+  else
+    bad "expected exit 0 for rows/count '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 30: DOM-state / CSS-selector assertions (B2) -> exit 0 ----------
+# DOM state is a first-class advertised evidence category. A CSS selector or a
+# DOM-state phrase is a behavioral assertion.
+say "Test 30: DOM-state / CSS-selector assertions (B2) -> exit 0"
+for ev in \
+  "DOM shows .toast-success" \
+  "#main visible" \
+  "element .error-banner present" \
+  '[data-testid="row"] present' \
+  "text content matches 'Saved'"; do
+  cat > "$tmpdir/t30.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Toast renders on save | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t30.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "DOM assertion '$ev' accepted (exit 0)"
+  else
+    bad "expected exit 0 for DOM assertion '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# ---------- Test 31: assertion-looking text HIDDEN in an image ref (B3) -> exit 1 ----------
+# Image references (markdown ![alt](url) — alt AND url — and bare name.ext tokens)
+# are stripped BEFORE scanning. So an HTTP status / exit code / assert word that
+# appears only inside a screenshot filename or its alt-text is NOT a real
+# assertion and the PASS must FAIL like a screenshot-only cell.
+say "Test 31: assertion text hidden in a screenshot filename / alt-text (B3) -> exit 1"
+for shot in \
+  "![dashboard](shots/HTTP 200.png)" \
+  "Screen Shot exit 0.png" \
+  "![assert all good](shot.png)" \
+  "![HTTP 200](x.png)"; do
+  cat > "$tmpdir/t31.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Dashboard renders the items list | PASS | $shot |
+EOF
+  run_stdin "$tmpdir/t31.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "image-hidden assertion '$shot' rejected (exit 1)"
+  else
+    bad "expected exit 1 for image-hidden assertion '$shot', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# A real assertion ALONGSIDE an image whose name contains assertion-y words still
+# PASSes — the strip removes only the image token, leaving the real assertion.
+say "Test 31b: real assertion next to an assertion-named screenshot -> exit 0"
+cat > "$tmpdir/t31b.md" <<'EOF'
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Items list loads | PASS | `curl /items` -> 200; ![exit 0](shots/HTTP 200.png) |
+EOF
+run_stdin "$tmpdir/t31b.md"
+if [[ "$EC" -eq 0 ]]; then ok "real assertion survives image strip (exit 0)"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 32: bare verb with no operand (CONCERN) -> exit 1 ----------
+# `returns home` / `values are equal in the UI` carry a stray verb but assert no
+# observed value. They must FAIL — the verb alone is not an assertion.
+say "Test 32: bare verb with no operand (returns/equals) -> exit 1"
+for claim in \
+  "values are equal in the UI" \
+  "returns home" \
+  "it equals the design" \
+  "the page returns"; do
+  cat > "$tmpdir/t32.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Some criterion | PASS | $claim |
+EOF
+  run_stdin "$tmpdir/t32.md"
+  if [[ "$EC" -eq 1 ]]; then
+    ok "bare-verb claim '$claim' rejected (exit 1)"
+  else
+    bad "expected exit 1 for bare-verb claim '$claim', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
+
+# A verb WITH an observed operand still PASSes (regression: keep genuine cases).
+say "Test 32b: verb WITH an operand still PASSes -> exit 0"
+for ev in \
+  "returned 5 rows" \
+  "returned 200" \
+  "query returned rows" \
+  "equals 42" \
+  "x equals y"; do
+  cat > "$tmpdir/t32b.md" <<EOF
+Commander review of PR #42
+
+| # | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| 1 | Behavior asserted | PASS | $ev |
+EOF
+  run_stdin "$tmpdir/t32b.md"
+  if [[ "$EC" -eq 0 ]]; then
+    ok "verb+operand '$ev' accepted (exit 0)"
+  else
+    bad "expected exit 0 for verb+operand '$ev', got $EC; out: $(cat "$tmpdir/out")"
+  fi
+done
 
 # ---------- summary ----------
 echo ""

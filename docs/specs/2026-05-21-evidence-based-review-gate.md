@@ -177,3 +177,286 @@ Run the test, paste output, attach to the PR.
   opt-in from the agent flow; nothing else calls it, so removal is clean. The
   evidence table degrades gracefully to "extra section in a comment" if the
   checker is removed.
+
+---
+
+## Amendment — verification flexibility (#191, 2026-06-01)
+
+### Problem (the #191 delta)
+
+A dogfood run proved an app worked end-to-end via **behavioral assertions
+(REST/SDK/DOM state checks) + one representative screenshot**, despite a flaky
+browser daemon. Read rigidly, a "screenshot at every step" expectation would
+have *blocked a genuinely-verified ticket*: the behavior was proven, but the
+capture tool that takes the pretty pictures was flaky. The original gate above
+already accepts "command + output / test + pass line / diff `file:line`" as
+evidence kinds — but it never named **behavioral assertions** as a first-class
+kind, never said **one screenshot is enough** (vs. one per step), and gave no
+guidance that **a flaky evidence-capture tool must not block** a ticket whose
+behavior is otherwise proven.
+
+This amendment makes that policy explicit AND keeps the bar meaningful, so the
+flexibility does NOT re-open the "tests claimed not run" regression that #118
+just closed.
+
+### Goals (amendment)
+
+1. Name **behavioral assertion** as a first-class evidence kind: a *real
+   asserted state check* — an exit code, a DOM/SDK/REST body value, an HTTP
+   status — observed and quoted. NOT a claim ("it works", "looks right").
+2. State that **one representative screenshot is sufficient corroboration**, not
+   a screenshot at every step. A screenshot supplements a behavioral assertion;
+   it is never the *sole* proof of a PASS.
+3. State that **a flaky evidence-capture tool (e.g. the browse daemon) must not
+   block** a criterion whose behavior is proven by a non-visual assertion. This
+   reuses the existing flaky-tool fallback already wired at the watchdog layer
+   (`docs/specs/2026-05-21-flaky-tool-probe-verdict.md` → "curl/SDK + single
+   screenshot") and brings the same posture into the *review gate*.
+4. **Keep the bar meaningful (the load-bearing constraint).** A PASS backed by
+   *only* a screenshot reference — a picture with no asserted state — is NOT a
+   clean pass. A screenshot is not an assertion; it can show a rendered page
+   while the underlying state is wrong. So: a **screenshot-only** evidence cell
+   is rejected exactly like an empty one. The behavioral assertion is the
+   load-bearing evidence; the screenshot rides along.
+
+### Non-goals (amendment)
+
+- Do **not** weaken the core invariant. PASS still REQUIRES non-empty,
+  non-placeholder evidence. We are *adding* a rejected sub-case
+  (screenshot-only), not removing any.
+- Do **not** make screenshots mandatory. A behavioral assertion alone is a
+  valid PASS — the screenshot is optional corroboration. We accept assertion-only
+  and assertion+screenshot; we reject screenshot-only and empty.
+- No change to the security FINDINGS TABLE, the `/cso` trigger set, or the
+  `Commander review` body-prefix contract.
+
+### Approach (amendment) — where the pieces change, in lock-step
+
+| File | Change |
+|---|---|
+| `scripts/validate-evidence-table.sh` | Add a **screenshot-only PASS → exit 1** rule: if a PASS row's evidence, after stripping a leading/embedded screenshot reference (`screenshot`, `screencap`, an image link `![…](…)`, a `.png`/`.jpg` path), has no remaining asserted content, it is treated as EMPTY. Any behavioral assertion in the cell (an exit code, an HTTP status, a quoted body, a `file:line`, a command+output, a `trace:<id>`) keeps the PASS valid. Pure non-screenshot evidence is unaffected. |
+| `scripts/test-validate-evidence-table.sh` | New cases: (a) **screenshot-only PASS → exit 1** (the new meaningful-bar assertion); (b) **behavioral assertion + one screenshot → exit 0** (the #191 happy path); (c) **behavioral assertion alone → exit 0** (screenshots stay optional). |
+| `.claude/skills/classify-pr-for-review/SKILL.md` | Evidence-kind list + template gain "behavioral assertion (exit code / DOM / SDK / REST body / HTTP status)" and the "one screenshot corroborates, never proves; a flaky capture tool does not block a proven behavior" note. |
+| `.claude/agents/worker-review.md` | Verification-gate step (9) names the behavioral-assertion + one-screenshot policy and the flaky-capture-tool-does-not-block rule. |
+| `.github/PULL_REQUEST_TEMPLATE.md` | The "Screenshot or log evidence for UI/CLI output changes" line softens to "Behavioral assertion (exit code / DOM / REST state) — plus one screenshot if useful — for UI/CLI output changes; a flaky capture tool doesn't block a proven behavior." |
+
+### Why a screenshot-only PASS is the right thing to reject (alternatives)
+
+- **Alternative A — accept screenshot-only as evidence (any non-empty cell).**
+  Rejected: that is exactly the "looks right" pass the gate exists to prevent. A
+  screenshot proves a render happened, not that the state is correct (a page can
+  render a stale or wrong value). #191 asks for *behavioral assertion + one
+  screenshot*, where the assertion is load-bearing — accepting screenshot-only
+  would invert that.
+- **Alternative B — require a screenshot on every UI PASS.** Rejected: that is
+  the rigid "screenshot at every step" rule #191 is removing; it blocks a proven
+  ticket when the capture tool is flaky.
+- **Chosen:** behavioral assertion is required for a PASS; a screenshot is
+  optional corroboration; screenshot-*only* is rejected like empty. The checker
+  enforces presence-of-an-assertion deterministically; the human merger still
+  sees the screenshot for the human-eyeball check.
+
+### Test plan (amendment)
+
+Extends `scripts/test-validate-evidence-table.sh` (same bash/pass-fail-counter
+shape). New assertions, all in the one suite, run + paste output in the PR:
+
+- **Screenshot-only PASS → exit 1.** `| 1 | … | PASS | screenshot dashboard.png |`
+  is rejected; stderr names the row and says a screenshot is not an assertion.
+- **Behavioral assertion + one screenshot → exit 0.** `… PASS | `curl …/items`
+  -> `[{"id":1}]` 200; screenshot dashboard.png |` passes — the assertion
+  carries it, the screenshot rides along.
+- **Behavioral assertion alone → exit 0.** Screenshots stay optional; an
+  assertion-only PASS is still valid (regression guard for non-goal #2).
+- All **pre-existing** cases still pass unchanged (the core invariant, the
+  trace: forward-compat case, the placeholder cases) — proves additive.
+
+### Risks / rollback (amendment)
+
+- **Risk: the screenshot-detector strips a legitimately-named criterion.** e.g.
+  a PASS whose real evidence is the string "screenshot" in a command name.
+  Mitigation: the detector only strips a *leading/standalone* screenshot
+  reference and an image link; an exit code, HTTP status, quoted body, command
+  output, `file:line`, or `trace:` token anywhere in the cell keeps the PASS
+  valid. The rejected set is narrow: a cell that is *nothing but* a screenshot
+  reference.
+- **Risk: re-opening "claimed not run".** Mitigation: this amendment only widens
+  the *accepted assertion kinds* (REST/DOM/SDK/exit-code already counted as
+  "command + output") and *narrows* PASS by rejecting screenshot-only. The
+  non-empty-assertion requirement that #118 relies on is strictly preserved.
+- **Rollback:** revert the checker hunk + the new test cases + the three prose
+  edits. The core gate is untouched, so rollback returns to the pre-#191 gate
+  with no residue.
+
+---
+
+## Amendment 2 — invert the detector: require a positive assertion signal (#191 redesign, 2026-06-01)
+
+### Problem (why the denylist kept leaking)
+
+Amendment 1 implemented the "screenshot-only PASS → reject" rule as a
+**denylist**: `is_screenshot_only_evidence` stripped away every *known*
+screenshot/filler token (image extensions, the words `screenshot`/`screencap`,
+date/time/resolution fragments, a hand-maintained list of UI nouns like
+`dashboard`/`login`) and rejected the cell only if **nothing was left**. That
+shape is structurally leak-prone: it FAILS OPEN. Any screenshot-y token the
+denylist did not anticipate *survives the strip* and is then mistaken for a
+behavioral assertion, so a screenshot-only PASS sneaks through. Three review
+cycles found three distinct leak classes (bare image extensions beyond the
+original five; the URL/query/punctuation-adjacent forms; the macOS default
+two-word `Screen Shot …` filename), each patched by *adding another entry to the
+denylist*. A denylist of "things that are NOT evidence" can never be complete —
+the next unanticipated screenshot word is the next leak.
+
+### Goals (amendment 2)
+
+1. **Invert the test.** A PASS cell is VALID only if, after stripping image
+   references (reuse amendment 1's image/alt-text handling unchanged), it
+   contains **at least one token/pattern matching a behavioral-assertion
+   signal**. No assertion signal present → INVALID (exit 1), regardless of what
+   filler/screenshot words are there. This **fails closed**: an unenumerated
+   screenshot word has no assertion signal, so it fails *by construction* —
+   structurally closing the entire "unenumerated screenshot word looks like an
+   assertion" leak class. `Screen Shot 2026-06-01 at 3.04.55 PM.png` alone has
+   no assertion signal → FAIL, with zero special-casing of that filename.
+2. **Define the assertion-signal set as a clear, documented allowlist** — one
+   regex list, easy to extend — covering: exit codes, HTTP status, test/assert
+   constructs, comparison operators on observed state, source/trace refs, and
+   DOM/SDK/REST state. (Full enumeration in the script's `ASSERTION_SIGNALS`
+   block.) Broad enough to avoid false-rejecting genuine evidence.
+
+### Desirable side effect: bare-claim-only now FAILs (#196/#209)
+
+Inverting the test ALSO makes a PASS whose evidence is **bare prose with no
+asserted state** ("it works as expected", "renders correctly") FAIL — because
+prose carries no assertion signal. That is the pre-existing #196/#209 "bare
+claim still passes" gap, and closing it strengthens the #118 "tests claimed not
+run" guarantee. This is intentional and is NOT suppressed; #196/#209 are
+incidentally addressed. The four-corner invariant is now:
+
+| Evidence cell | Verdict |
+|---|---|
+| assertion + screenshot | PASS |
+| assertion only | PASS |
+| screenshot only | FAIL |
+| bare-claim only (prose, no asserted state) | FAIL |
+
+### Approach (amendment 2) — where the pieces change, in lock-step
+
+| File | Change |
+|---|---|
+| `scripts/validate-evidence-table.sh` | Replace the screenshot-only denylist with `cell_has_assertion_signal`: strip image refs (keep amendment-1 alt-text handling), then require ≥1 match against the documented `ASSERTION_SIGNALS` regex list. A PASS with no signal → exit 1. `is_screenshot_only_evidence` is removed; `token_is_image_ref` / `IMAGE_EXT_GLOB` are retained (still used to strip the screenshot before checking for a signal). |
+| `scripts/test-validate-evidence-table.sh` | Bare-claim-only PASS rows that previously passed are updated to FAIL (commented as the intentional #196/#209 flip) or given a real signal where the test's purpose is something else (e.g. case-insensitivity). New cases pin: the 3 historical leak inputs, the macOS two-word filename, a spread of genuine assertion phrasings each → PASS, and screenshot-only / bare-claim-only → FAIL. |
+| `.claude/skills/classify-pr-for-review/SKILL.md` | The evidence-kind prose now describes POSITIVELY what counts as a behavioral assertion (the allowlist), so workers phrase evidence to match. |
+| `.claude/agents/worker-review.md` | Verification-gate step names the positive-assertion requirement + the allowlist categories. |
+
+### Why a positive allowlist (alternatives)
+
+- **Alternative A — keep extending the screenshot denylist.** Rejected: three
+  cycles proved it fails open; completeness is unreachable.
+- **Alternative B — LLM judges "is this an assertion".** Rejected:
+  non-deterministic, untestable; the checker must stay a pure deterministic
+  text validator.
+- **Chosen:** a documented regex allowlist of assertion signals, checked
+  *after* stripping image refs. Fails closed, deterministic, one extensible
+  list. The cost is that genuinely-novel assertion phrasings the allowlist
+  doesn't cover get a false-reject — mitigated by making the list broad and
+  easy to extend, and by the skill teaching workers the phrasing that matches.
+
+### Test plan (amendment 2)
+
+Extends the one bash suite. New / changed assertions:
+
+- **`Screen Shot 2026-06-01 at 3.04.55 PM.png` alone → exit 1** (the headline:
+  the macOS default filename fails by construction, no denylist entry).
+- **The 3 historical leak inputs → exit 1** (regression pins; they now fail for
+  the *structural* reason — no signal — not because each was denylisted).
+- **A spread of genuine assertion phrasings, each → exit 0**: `exit 0`,
+  `HTTP 204 on /x`, `200 OK`, `→ 200`, `assert`, `expect(x).toBe(3)`,
+  `3 passed, 0 failed`, `count == 3`, `returned 5 rows`, `src/x.ts:42`,
+  `trace:abc`, `.ok === true`.
+- **Bare-claim-only PASS → exit 1** (the intentional #196/#209 flip).
+- **Adversarial**: try to make a screenshot-only or claim-only cell pass — can't.
+
+### Risks / rollback (amendment 2)
+
+- **Risk: false-reject a genuine but novel assertion phrasing.** Mitigation: the
+  allowlist is deliberately broad (operators of the gate phrase evidence with
+  one of the documented signals; the skill teaches this). Adding a signal is a
+  one-line edit to `ASSERTION_SIGNALS`. This is the deliberate trade — fail
+  closed and occasionally ask the reviewer to phrase evidence concretely, rather
+  than fail open and leak screenshots.
+- **Risk: a PASS row's only evidence is a `file:line` whose path contains an
+  image ext** (`app.png.ts:42`). Mitigation: the `file:line` signal matches the
+  `:NN` suffix directly, independent of image-stripping, so it is preserved.
+- **Rollback:** revert the checker hunk + the test changes + the prose edits.
+  Amendment-1 behavior is fully contained in the replaced function, so reverting
+  amendment 2 restores the denylist with no residue.
+
+## Amendment 3 — close the under-delivery: image-strip BEFORE scanning, broaden advertised signals (#191 re-work, 2026-06-01)
+
+### Problem (the allowlist under-delivers vs. the docs)
+
+Amendment 2's `cell_has_assertion_signal` was shipped scanning the **whole cell**
+(the `:298` comment claimed "no image-stripping needed"). A code review found
+four defects where the implementation diverges from what the SKILL/agent/template
+docs advertise:
+
+1. **False-REJECT `2 audit rows`.** The rows signal `\b[0-9]+ +rows?\b` requires
+   the number *immediately adjacent* to `rows`; an intervening noun breaks it. All
+   three docs advertise "N rows" as a valid evidence form, but `2 audit rows`,
+   `5 rows returned`, `rows: 5`, `count == 3` did not all match.
+2. **False-REJECT `DOM shows .toast-success`.** DOM state is advertised as a
+   first-class evidence category, yet the only DOM signal was `.ok`/`verify_chain`.
+   A bare CSS selector / DOM-state assertion (`.some-class`, `#some-id`,
+   `[data-…]`, `element visible/present`, `text content`) was not recognized.
+3. **False-ACCEPT image-hidden text.** Because the cell was scanned *without*
+   stripping image references, the scanner fired on text INSIDE a screenshot
+   filename / alt-text: `![dashboard](shots/HTTP 200.png)`, `Screen Shot exit 0.png`,
+   and `![assert all good](shot.png)` all WRONGLY passed. The script header AND this
+   spec's amendment-2 say image refs must be stripped *first*; the implementation
+   skipped it and the `:298` comment contradicted the spec.
+4. **Over-broad bare verbs (CONCERN).** `\breturn(s|ed)\b` / `\bequals?\b` fired on
+   a stray verb with no operand: `returns home`, `values are equal in the UI`
+   passed on the bare verb, softening the #196/#209 bare-claim closure.
+
+### Decision: drop alt-text when stripping image references (supersedes amendment 2's "preserve alt-text")
+
+Amendment 2 reused amendment 1's alt-text-PRESERVING image handling (an assertion
+could live ONLY in `![alt](url)` alt-text). This re-work **inverts that**: a
+markdown image `![alt](url)` is stripped **whole — both alt-text AND url — before
+scanning**. Rationale: preserving alt-text is itself a fail-open hole. `![assert
+all good](shot.png)` has no real evidence, only a screenshot, but its alt-text
+`assert all good` matched the `assert` signal and PASSed. A reviewer's real
+evidence belongs in the cell text, not buried in an image's alt attribute; a
+screenshot (including its caption) corroborates, it does not assert. Dropping
+alt-text closes the alt-text leak class structurally. This retires amendment-2
+goal-1's "image/alt-text handling unchanged" clause and the old Test 20
+("alt-text preserved → PASS"), which is inverted to a FAIL case.
+
+### Approach (amendment 3) — lock-step changes
+
+| File | Change |
+|---|---|
+| `scripts/validate-evidence-table.sh` | (a) Re-introduce image stripping in `cell_has_assertion_signal`: strip markdown `![alt](url)` whole (alt AND url) and bare `name.ext` image tokens (reusing the retained `token_is_image_ref` / `IMAGE_EXT_GLOB` rule) BEFORE the signal scan; update the contradictory `:298` comment. (b) Broaden the rows/count signal so `2 audit rows`, `5 rows returned`, `rows: 5`, `count == 3` all match. (c) Add a DOM-assertion signal: a CSS selector (`.class`, `#id`, `[data-…]`) or DOM-state phrase (`element visible/present`, `text content`), guarded so it cannot match a bare filename (image refs already stripped). (d) Tighten `returned`/`equals` to require an observed operand nearby (`returned <value>`, `X equals Y`), not the bare verb. |
+| `scripts/test-validate-evidence-table.sh` | Add must-PASS: `2 audit rows`, `5 rows returned`, `DOM shows .toast-success`, `#main visible`. Add must-FAIL: `![dashboard](shots/HTTP 200.png)`, `Screen Shot exit 0.png`, `values are equal in the UI`, `returns home`. Invert Test 20 (alt-text now dropped → screenshot-only alt-text FAILs). Keep all genuinely-valid prior cases green. |
+| `.claude/skills/classify-pr-for-review/SKILL.md` / `.claude/agents/worker-review.md` | Note that evidence in image alt-text is NOT counted; put assertions in the cell text. |
+
+### Test plan (amendment 3)
+
+Watch RED→GREEN on each new case. Full invariant re-confirmed:
+assertion(any advertised form: exit/HTTP/test+assert/comparison/file:line/trace/rows/DOM)
+→ PASS; assertion+screenshot → PASS; screenshot-only → FAIL; bare-claim-only → FAIL;
+**assertion-text-hidden-in-a-filename-or-alt-text → FAIL**. Run
+`scripts/test-validate-evidence-table.sh` + `scripts/validate-state-all.sh`.
+
+### Risks / rollback (amendment 3)
+
+- **Risk: dropping alt-text false-rejects a reviewer who put a real assertion only
+  in alt-text.** Accepted: that phrasing is discouraged by the skill/agent prose;
+  put the assertion in the cell. Failing closed here is the point.
+- **Risk: the DOM-selector signal matches a stray dotted/hashed token.** Mitigation:
+  image refs are stripped first, and the selector pattern requires a CSS-identifier
+  shape, not any dotted token.
+- **Rollback:** revert the checker hunk + the test changes. Amendment-2's whole-cell
+  scan is restored by removing the strip call.
