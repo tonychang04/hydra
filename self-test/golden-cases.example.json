@@ -733,6 +733,54 @@
           "cmd": "NO_COLOR=1 scripts/validate-state-all.sh --help",
           "expected_exit": 0,
           "expected_stdout_contains": "Usage: validate-state-all.sh"
+        },
+        {
+          "name": "#260 reconciliation: repos.json with NO ticket_trigger on an entry now VALIDATES (schema no longer requires it)",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas --schema state/schemas/repos.schema.json self-test/fixtures/state-schemas/migrate/repos.before.json",
+          "expected_exit": 0,
+          "expected_stdout_contains": "passes"
+        },
+        {
+          "name": "#260 RED: citations.before.json (numeric tickets[]) is structurally valid JSON",
+          "cmd": "jq empty self-test/fixtures/state-schemas/migrate/citations.before.json && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "#260 RED: validate-state.sh REJECTS numeric tickets[] under ajv-strict (self-skips without ajv; the fallback accepts since it's only a top-level required check)",
+          "cmd": "scripts/validate-state.sh --schema-dir state/schemas --schema state/schemas/memory-citations.schema.json self-test/fixtures/state-schemas/migrate/citations.before.json >/dev/null 2>&1; ec=$?; if command -v ajv >/dev/null 2>&1; then [ \"$ec\" -eq 1 ] && echo STRICT_REJECTS_OK; else [ \"$ec\" -eq 0 ] && echo SKIP_NO_AJV_STRICT_REJECTS_OK; fi",
+          "expected_exit": 0,
+          "expected_stdout_contains": "STRICT_REJECTS_OK"
+        },
+        {
+          "name": "#260 GREEN: --migrate repairs numeric tickets[] then the repaired file validates clean",
+          "cmd": "set -euo pipefail; TMP=$(mktemp -d); trap 'rm -rf \"$TMP\"' EXIT; cp self-test/fixtures/state-schemas/migrate/citations.before.json \"$TMP/memory-citations.json\"; scripts/validate-state.sh --schema-dir state/schemas --migrate \"$TMP/memory-citations.json\" >/dev/null 2>&1 || { echo MIGRATE_OR_VALIDATE_FAILED; exit 1; }; jq -e '[.citations[].tickets[] | select(type==\"number\")] | length == 0' \"$TMP/memory-citations.json\" >/dev/null && echo MIGRATE_GREEN_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MIGRATE_GREEN_OK"
+        },
+        {
+          "name": "#260 GREEN: --migrate backfills missing repos[].ticket_trigger with the documented default, leaving explicit ones untouched",
+          "cmd": "set -euo pipefail; TMP=$(mktemp -d); trap 'rm -rf \"$TMP\"' EXIT; cp self-test/fixtures/state-schemas/migrate/repos.before.json \"$TMP/repos.json\"; scripts/validate-state.sh --schema-dir state/schemas --migrate \"$TMP/repos.json\" >/dev/null 2>&1; jq -e '(.repos[0].ticket_trigger==\"assignee\") and (.repos[1].ticket_trigger==\"label\")' \"$TMP/repos.json\" >/dev/null && echo BACKFILL_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "BACKFILL_OK"
+        },
+        {
+          "name": "#260 --migrate is idempotent — a second run yields a byte-identical file",
+          "cmd": "set -euo pipefail; TMP=$(mktemp -d); trap 'rm -rf \"$TMP\"' EXIT; cp self-test/fixtures/state-schemas/migrate/repos.before.json \"$TMP/repos.json\"; scripts/validate-state.sh --schema-dir state/schemas --migrate \"$TMP/repos.json\" >/dev/null 2>&1; A=$(jq -S . \"$TMP/repos.json\"); scripts/validate-state.sh --schema-dir state/schemas --migrate \"$TMP/repos.json\" >/dev/null 2>&1; B=$(jq -S . \"$TMP/repos.json\"); [ \"$A\" = \"$B\" ] && echo IDEMPOTENT_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "IDEMPOTENT_OK"
+        },
+        {
+          "name": "#260 --migrate is a no-op on already-valid state (reports no repairs, leaves file unchanged)",
+          "cmd": "set -euo pipefail; TMP=$(mktemp -d); trap 'rm -rf \"$TMP\"' EXIT; cp self-test/fixtures/state-schemas/valid/repos.json \"$TMP/repos.json\"; migrate_out=$(scripts/validate-state.sh --schema-dir state/schemas --migrate \"$TMP/repos.json\" 2>&1); printf '%s\\n' \"$migrate_out\" | grep -q 'no repairs needed' && echo NOOP_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NOOP_OK"
+        },
+        {
+          "name": "#260 --migrate flag is documented in validate-state.sh --help",
+          "cmd": "NO_COLOR=1 scripts/validate-state.sh --help | grep -q -- '--migrate' && echo MIGRATE_DOCUMENTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "MIGRATE_DOCUMENTED"
         }
       ],
       "last_run": null,

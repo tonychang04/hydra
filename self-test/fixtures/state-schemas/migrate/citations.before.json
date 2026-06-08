@@ -1,0 +1,10 @@
+{
+  "citations": {
+    "learnings-hydra.md#numeric ticket id drift": {
+      "count": 3,
+      "last_cited": "2026-06-07",
+      "tickets": ["#50", 191, "#64"],
+      "promotion_threshold_reached": true
+    }
+  }
+}

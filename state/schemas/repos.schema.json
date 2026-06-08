@@ -16,7 +16,7 @@
       "items": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["owner", "name", "local_path", "enabled", "ticket_trigger"],
+        "required": ["owner", "name", "local_path", "enabled"],
         "properties": {
           "owner": {
             "type": "string",
@@ -46,7 +46,8 @@
           },
           "ticket_trigger": {
             "type": "string",
-            "enum": ["assignee", "label", "linear"]
+            "enum": ["assignee", "label", "linear"],
+            "description": "Optional. How Commander picks tickets for this repo: 'assignee' (gh issue list --assignee @me / assignee_override), 'label' (commander-ready), or 'linear' (MCP). ABSENT = the documented default: the file's top-level default_ticket_trigger if set, else 'assignee'. Every consumer already reads it as `(.ticket_trigger // \"assignee\")` (scripts/hydra-mcp-server.py, hydra-status.sh, hydra-list-repos.sh) so an entry without this key is fully supported — making it required would contradict CLAUDE.md operating-loop step 3 + docs/specs/2026-04-17-assignee-override.md. Backfill explicitly with `scripts/validate-state.sh --migrate`. See docs/specs/2026-06-08-state-validation-migration.md (ticket #260)."
           },
           "assignee_override": {
             "type": "string",

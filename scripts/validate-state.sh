@@ -34,7 +34,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: validate-state.sh [--schema <file> | --schema-dir <dir>] [--strict] <state-file>
+Usage: validate-state.sh [--schema <file> | --schema-dir <dir>] [--strict] [--migrate] <state-file>
 
 Validates a state/*.json file against its schema in state/schemas/.
 
@@ -44,6 +44,17 @@ Options:
   --strict              Require ajv-cli. Fail with exit 2 if ajv isn't reachable.
                         Without --strict, the script uses ajv when available
                         and falls back to a minimal bash+jq check otherwise.
+  --migrate             Repair-then-validate. Before validating, apply known-safe,
+                        documented-default repairs to <state-file> IN PLACE (atomic
+                        write), report each repair, then validate the result. The
+                        remediation for a schema tightening that rejects valid-by-docs
+                        pre-existing state. WRITES the file; plain validation never
+                        does. Idempotent. Repairs (only these — never invents values
+                        for arbitrary missing keys):
+                          repos.json            backfill repos[].ticket_trigger with
+                                                default_ticket_trigger // "assignee"
+                          memory-citations.json coerce citations[].tickets[] numbers
+                                                to strings (191 -> "191")
   -h, --help            Show this help.
 
 Exit codes:
@@ -54,6 +65,7 @@ EOF
 schema_override=""
 schema_dir_override=""
 strict=0
+migrate=0
 state_file=""
 
 while [[ $# -gt 0 ]]; do
@@ -74,6 +86,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --strict)
       strict=1; shift
+      ;;
+    --migrate)
+      migrate=1; shift
       ;;
     -h|--help)
       usage; exit 0
@@ -120,6 +135,95 @@ fi
 # JSON validity (both files) — always run, regardless of validator path.
 jq empty "$state_file" 2>/dev/null || { echo "✗ $state_file is not valid JSON" >&2; exit 1; }
 jq empty "$schema_file" 2>/dev/null || { echo "✗ $schema_file is not valid JSON" >&2; exit 2; }
+
+# -----------------------------------------------------------------------------
+# --migrate: repair-then-validate. Apply known-safe, documented-default repairs
+# to <state-file> IN PLACE, report each one, then fall through to validation.
+#
+# Why a flag and not a separate script: keeps "validate fails -> re-run with
+# --migrate" one tool, one mental model. Why opt-in + write-on-purpose: plain
+# validation must stay read-only (preflight runs it every tick). The repairs are
+# narrow on purpose — only drift classes with a *documented* correct value
+# (#260). Anything else still fails validation loudly; --migrate never papers
+# over a genuinely malformed file. Pure jq, atomic write, idempotent.
+# Spec: docs/specs/2026-06-08-state-validation-migration.md
+# -----------------------------------------------------------------------------
+if [[ "$migrate" -eq 1 ]]; then
+  state_base="$(basename "$state_file" .json)"
+  migrate_filter=""
+  case "$state_base" in
+    repos)
+      # Backfill repos[].ticket_trigger with the documented default: the file's
+      # own default_ticket_trigger if present, else "assignee" — exactly the
+      # `(.ticket_trigger // $dt)` / `// "assignee"` logic every consumer uses.
+      migrate_filter='
+        (.default_ticket_trigger // "assignee") as $dt
+        | .repos = ((.repos // []) | map(
+            if (type == "object") and (has("ticket_trigger") | not)
+            then . + {ticket_trigger: $dt}
+            else .
+            end))
+      '
+      ;;
+    memory-citations)
+      # Coerce numeric tickets[] elements to strings (191 -> "191"). Strings are
+      # left untouched, so the transform is idempotent.
+      migrate_filter='
+        .citations = ((.citations // {}) | with_entries(
+          if (.value | type) == "object" and (.value | has("tickets"))
+          then .value.tickets = ((.value.tickets // []) | map(
+                 if type == "number" then tostring else . end))
+          else .
+          end))
+      '
+      ;;
+    *)
+      echo "validate-state: --migrate has no repairs for '$state_base' (only repos / memory-citations); validating as-is" >&2
+      ;;
+  esac
+
+  if [[ -n "$migrate_filter" ]]; then
+    migrated_tmp="$(mktemp "${TMPDIR:-/tmp}/validate-state.migrate.XXXXXX")"
+    # shellcheck disable=SC2064
+    trap 'rm -f "$migrated_tmp"' EXIT
+    if ! jq "$migrate_filter" "$state_file" > "$migrated_tmp" 2>/tmp/migrate.err.$$; then
+      echo "✗ --migrate failed to transform $state_file" >&2
+      sed 's/^/  /' "/tmp/migrate.err.$$" >&2 || true
+      rm -f "/tmp/migrate.err.$$"
+      exit 2
+    fi
+    rm -f "/tmp/migrate.err.$$"
+
+    # Report repairs by diffing the canonicalized before/after, and only write
+    # when something actually changed (keeps mtime stable on no-op runs).
+    before_canon="$(jq -S . "$state_file")"
+    after_canon="$(jq -S . "$migrated_tmp")"
+    if [[ "$before_canon" == "$after_canon" ]]; then
+      echo "• --migrate: no repairs needed for $state_file (already conforms to documented defaults)"
+    else
+      case "$state_base" in
+        repos)
+          n="$(jq '[.repos[]? | select(has("ticket_trigger") | not)] | length' "$state_file")"
+          echo "• --migrate: backfilled ticket_trigger on $n repos entr$([[ "$n" == "1" ]] && echo y || echo ies) in $state_file"
+          ;;
+        memory-citations)
+          n="$(jq '[.citations[]?.tickets[]? | select(type=="number")] | length' "$state_file")"
+          echo "• --migrate: coerced $n numeric tickets[] element$([[ "$n" == "1" ]] && echo "" || echo s) to strings in $state_file"
+          ;;
+      esac
+      # Atomic in-place write: cp the temp content over (preserve target inode is
+      # not required; mv across same dir is atomic). Use cat>tmp2;mv to stay on
+      # the target's filesystem so mv is a rename, not a cross-device copy.
+      dest_dir="$(dirname "$state_file")"
+      final_tmp="$(mktemp "$dest_dir/.validate-state.migrate.XXXXXX")"
+      cat "$migrated_tmp" > "$final_tmp"
+      mv "$final_tmp" "$state_file"
+      echo "• --migrate: wrote repaired $state_file"
+    fi
+    rm -f "$migrated_tmp"
+    trap - EXIT
+  fi
+fi
 
 # Resolve ajv-cli binary if available.
 ajv_bin=""
