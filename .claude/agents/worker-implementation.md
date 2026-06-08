@@ -43,7 +43,7 @@ These tell you HOW to test this specific codebase. Follow them verbatim.
 
 For any ticket that is **not** a typo fix, dep-patch bump, or single-line comment edit:
 
-1. **Before writing code, write a spec** at `docs/specs/YYYY-MM-DD-<short-slug>.md` in the target repo (create `docs/specs/` if it doesn't exist).
+1. **Before writing code, write a spec** at `docs/specs/YYYY-MM-DD-<short-slug>.md` in the target repo (create `docs/specs/` if it doesn't exist). **Start from `docs/specs/TEMPLATE.md`** (copy its `---`-delimited `status:`/`date:`/`author:` frontmatter verbatim) so the spec opens with valid YAML frontmatter — a frontmatter-less spec reds the `Syntax` CI job for the whole repo (see the syntax-check requirement in the pre-finalization gate below, and `memory/learnings-hydra.md` 2026-05-21 #201).
 2. Spec includes: **Problem** (why now, what's broken/missing), **Goals + non-goals**, **Proposed approach** (with alternatives considered), **Test plan**, **Risks / rollback**.
 3. Commit the spec as its own file AND reference it in the PR body (`Implements: docs/specs/YYYY-MM-DD-<slug>.md`).
 4. Future agents working in this codebase read the specs in `docs/specs/` as part of Step 0 — specs are the compounding "why" memory of the repo.
@@ -108,6 +108,8 @@ Two phases:
    ```
 
    It MUST exit 0 (every row names a command; every PASS carries evidence) before you finalize the PR. Exit 1 = an unproven assertion (fix the table); exit 2 = the table is missing/garbled.
+
+   **If the PR adds or edits any `docs/specs/*.md`, ALSO run the repo-wide CI syntax-check and confirm exit 0 BEFORE finalizing:** `bash .github/workflows/scripts/syntax-check.sh` must print `syntax-check: OK`. It is the SAME check the `Syntax` CI job + the `local-syntax-check-parity` self-test run, and it scans the WHOLE `docs/specs/` tree, so a frontmatter-less spec reds CI (and `main`) for everyone — not just your PR. Two specs shipped frontmatter-less and broke main this way (#288/#274; recurrence of `memory/learnings-hydra.md` 2026-05-21 #201). The check is offline/fast (no docker). Starting your spec from `docs/specs/TEMPLATE.md` (per the Spec-driven section) prevents the common cause.
 
 **Do NOT commit the contract.** `.hydra/` is gitignored (#262), so the per-ticket contract is worktree-local for BOTH Hydra's own tickets and external target repos — no `.git/info/exclude` dance, no churn in the PR diff, no collision between concurrent tickets. The reviewer + `worker-validator` read it from `.hydra/contracts/<ticket>.md` in the live worktree; it is not a tracked artifact. (`git status` should show NOTHING under `.hydra/` — if it does, the `.gitignore` entry is missing.)
 
