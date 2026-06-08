@@ -1,3 +1,14 @@
+---
+status: accepted
+date: 2026-06-07
+ticket: https://github.com/tonychang04/hydra/issues/273
+area: observability / cost + quota visibility
+size: S
+authors: [worker-implementation]
+supersedes: []
+extends: []
+---
+
 # Cost + quota visibility: `quota-watch.sh` + `quota-health.json` + operator one-liner
 
 Ticket: [#273](https://github.com/tonychang04/hydra/issues/273) — P1/observability, Tier 1.
