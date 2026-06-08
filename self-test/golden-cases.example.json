@@ -3285,6 +3285,41 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "anti-drift-parallelism-partition",
+      "_description": "Script-only self-test for anti-drift parallelism (spec: docs/specs/2026-06-07-anti-drift-parallelism.md, ticket #257). Proves scripts/plan-parallel-batch.sh deterministically partitions a candidate ticket batch into a parallel-safe set (disjoint file footprints) + serialized groups (overlapping footprints), report-only and offline, so Commander auto-serializes conflicting tickets BEFORE spawn instead of relying on manual coordinate-with hints + the after-the-fact worker-conflict-resolver. Runs the full assertion driver (33 assertions incl. the headline acceptance criterion: 3 tickets, 2 sharing a file -> parallel{the disjoint one} + serialize{the 2 overlapping}) and the fixture roundtrip. No network, no docker, no Claude auth.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "plan-parallel-batch.sh bash -n clean",
+          "cmd": "bash -n scripts/plan-parallel-batch.sh && echo OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "OK"
+        },
+        {
+          "name": "full plan-parallel-batch assertion driver is green",
+          "cmd": "scripts/test-plan-parallel-batch.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "0 failed"
+        },
+        {
+          "name": "anti-drift-parallelism fixture roundtrip (acceptance criterion)",
+          "cmd": "self-test/fixtures/anti-drift-parallelism/run.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "ALL TESTS PASS"
+        },
+        {
+          "name": "acceptance criterion: 3 tickets, 2 share a file -> parallel{301} + serialize{302,303}",
+          "cmd": "printf '%s' '{\"tickets\":[{\"number\":301,\"title\":\"a\",\"body\":\"scripts/status.sh\"},{\"number\":302,\"title\":\"b\",\"body\":\"scripts/autopickup-tick.sh\"},{\"number\":303,\"title\":\"c\",\"body\":\"scripts/autopickup-tick.sh\"}]}' | NO_COLOR=1 bash scripts/plan-parallel-batch.sh --json",
+          "expected_exit": 0,
+          "expected_stdout_jq": ".parallel == [301] and .serialize_groups[0].group == [302,303]"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

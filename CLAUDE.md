@@ -39,11 +39,11 @@ Invoke with `Agent(subagent_type="worker-implementation", isolation="worktree", 
    - `scripts/validate-state-all.sh` exits 0 (schema drift + CLAUDE.md size gate).
    - `active.json` worker count < `budget.json:phase1_subscription_caps.max_concurrent_workers`.
    - Today's ticket count < `daily_ticket_cap`.
-   - No recent rate-limit error in `state/quota-health.json` (auto-pause 1 hr if flagged).
+   - No recent rate-limit error in `state/quota-health.json` (auto-pause 1 hr).
 3. **Pick tickets** per `state/repos.json:ticket_trigger` — `assignee` (`@me` / `assignee_override`), `label` (`commander-ready`), or `linear` (`scripts/linear-pickup-dispatch.sh`). Skip `commander-working` / `commander-pause` / `commander-stuck`. Triggers: `docs/specs/2026-04-17-assignee-override.md`, `docs/specs/2026-04-17-linear-ticket-trigger.md`.
 4. **Classify tier** per `policy.md`. T3 → skip. Unclear → ask.
-5. **Spawn** worker with the slim spawn template — ticket URL (not inlined body), repo+path, tier, Memory Brief, `Fetch full body via gh issue view`, worker type, coordinate-with. Exact format: `docs/specs/2026-04-17-slim-worker-prompts.md`.
-6. **Track** in `state/active.json` (schema tolerates pre-migration entries: `docs/specs/2026-04-17-active-schema-drift.md`).
+5. **Spawn** worker with the slim spawn template — ticket URL (not inlined body), repo+path, tier, Memory Brief, `Fetch full body via gh issue view`, worker type, coordinate-with. Exact format: `docs/specs/2026-04-17-slim-worker-prompts.md`. Multi-ticket spawn: first run `scripts/plan-parallel-batch.sh` (report-only) to partition by file-footprint overlap into parallel-safe vs serialize groups — complements `worker-conflict-resolver`; spec `docs/specs/2026-06-07-anti-drift-parallelism.md`.
+6. **Track** in `state/active.json` (pre-migration entries OK: `docs/specs/2026-04-17-active-schema-drift.md`).
 7. **Report** one-line status.
 
 ## Auto-dispatch: worker-test-discovery on repeat "test procedure unclear"
