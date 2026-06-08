@@ -236,6 +236,15 @@ footprint_for() {
   done
 
   # 3. keyword buckets
+  # NOTE (#257 review): matching is plain SUBSTRING (grep -qF), not word-boundary
+  # aware. A short keyword can therefore match inside a longer unrelated word —
+  # e.g. ' docs' matches ' docstring' and would mis-bucket it under docs/. This
+  # is deliberately tolerated: a false keyword hit can only ADD a bucket, which
+  # at worst over-serializes two tickets (the cheaper error this helper biases
+  # toward — see "Risks / rollback" in the spec), never causes a missed
+  # collision. If a specific keyword proves too greedy, tighten it in the
+  # KEYWORD_BUCKETS table above (e.g. add surrounding spaces, as ' tick ' and
+  # ' docs' already do) rather than reworking the matcher.
   local entry kw bucket
   for entry in "${KEYWORD_BUCKETS[@]}"; do
     kw="${entry%%=*}"

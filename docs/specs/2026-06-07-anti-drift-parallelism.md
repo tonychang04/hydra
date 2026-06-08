@@ -84,10 +84,13 @@ workers.
   un-offline-testable. A future ticket could add an optional `--explore` mode that
   shells out to a real grep over a checked-out repo, but v1 is title/body-only +
   an optional explicit footprint override per ticket.
-- **Touching `self-test/golden-cases.example.json`.** Operator-pinned (per
-  `docs/specs/2026-04-17-slim-worker-prompts.md`). The fixture lives under
-  `self-test/fixtures/anti-drift-parallelism/` and runs standalone + via the
-  `local-syntax-check` self-test case; no golden-cases edit.
+- **Reworking the self-test harness or golden-cases format.** The fixture lives
+  under `self-test/fixtures/anti-drift-parallelism/` and runs standalone. We
+  *append* one new `script`-kind golden case
+  (`anti-drift-parallelism-partition`) to `self-test/golden-cases.example.json`
+  so the partition logic is covered by the existing self-test runner — an
+  additive entry only, no change to the file's schema, no edits to pre-existing
+  cases, and no change to how the runner consumes the file.
 
 ## Proposed approach
 
@@ -263,8 +266,9 @@ Plus the standard gates the ticket requires (all RUN, real output):
 
 - `bash scripts/test-plan-parallel-batch.sh` → exit 0.
 - `bash -n scripts/plan-parallel-batch.sh` (and `scripts/preflight-syntax.sh`).
-- `self-test/fixtures/anti-drift-parallelism/run.sh` → exit 0 (wired into the
-  `local-syntax-check` self-test discovery, not into golden-cases.example.json).
+- `self-test/fixtures/anti-drift-parallelism/run.sh` → exit 0 (runs standalone,
+  and is also exercised by the appended `anti-drift-parallelism-partition`
+  `script`-kind golden case in `self-test/golden-cases.example.json`).
 - `self-test/run.sh --kind script` → no NEW failures (state-schemas/ajv is the
   known pre-existing case).
 - `scripts/validate-state-all.sh` → exit 0.
