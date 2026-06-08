@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+#
+# hydra-recent-failures.sh — scan recent logs/*.json for repeated worker
+# failure patterns (stuck / flaky / rescue / bug), grouped by repo + type.
+#
+# Feeds Commander's DYNAMIC session preamble: instead of only counts, surface
+# "the last 3 workers on <repo> hit flaky-tool-retry → prefer codex". Modeled
+# on gstack's recent-event timeline extraction.
+#
+# The logs/*.json corpus is heterogeneous (100+ distinct keys; .result is null
+# in most files). So failure detection is SIGNAL-TOLERANT: a log counts as a
+# failure observation if ANY of these hold —
+#   - .result matches stuck|flaky|rescue|fail|stop|timeout|error (case-insens),
+#   - a rescue marker key is present/truthy
+#     (.rescued / .rescue_commit / .resumed_from_rescue / .rescue_resumed_from),
+#   - .bug_class / .is_bug is truthy,
+#   - the rendered JSON text contains commander-stuck / flaky-tool-retry /
+#     rescue-worker / commander-rescued.
+# The derived failure_type is the FIRST matching signal, normalized to one of
+# stuck | flaky | rescue | bug | other. Groups with count >= threshold are
+# "repeated" and surfaced.
+#
+# Output: text (default, one WATCH line per repeated pattern) or JSON (--json):
+#   {
+#     "scanned":   <int>,            # log files inspected
+#     "window":    <int>,            # --last K
+#     "threshold": <int>,            # --min
+#     "patterns": [
+#       { "repo": "<repo>", "failure_type": "<type>",
+#         "count": <int>, "tickets": [ <ticket>, ... ] },
+#       ...
+#     ]
+#   }
+#
+# Read-only: never writes to logs/. No logs / no failures → exit 0, empty
+# patterns (a clean run is normal, not an error).
+#
+# Spec: docs/specs/2026-06-08-dynamic-session-preamble.md
+# Ticket: https://github.com/tonychang04/hydra/issues/274
+
+set -euo pipefail
+
+LOGS_DIR_DEFAULT="./logs"
+DEFAULT_WINDOW=20   # consider the K most-recently-modified log files
+DEFAULT_MIN=2       # a (repo,type) group is "repeated" at >= this many
+
+usage() {
+  cat <<'EOF'
+Usage: hydra-recent-failures.sh [options]
+
+Scan recent logs/*.json for repeated worker failure patterns by repo + type.
+
+Options:
+  --logs-dir <path>   Override logs directory (default: ./logs).
+  --last <K>          Inspect the K most-recently-modified logs (default: 20).
+  --min <N>           Minimum group size to surface as repeated (default: 2).
+  --json              Emit JSON instead of compact text.
+  -h, --help          Show this help.
+
+Exit codes:
+  0  success (may be empty — a clean run is normal, not an error)
+  2  usage error
+EOF
+}
+
+logs_dir=""
+window="$DEFAULT_WINDOW"
+threshold="$DEFAULT_MIN"
+as_json=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --logs-dir)
+      [[ $# -ge 2 ]] || { echo "hydra-recent-failures: --logs-dir needs a value" >&2; usage >&2; exit 2; }
+      logs_dir="$2"; shift 2 ;;
+    --last)
+      [[ $# -ge 2 ]] || { echo "hydra-recent-failures: --last needs a value" >&2; usage >&2; exit 2; }
+      window="$2"; shift 2 ;;
+    --min)
+      [[ $# -ge 2 ]] || { echo "hydra-recent-failures: --min needs a value" >&2; usage >&2; exit 2; }
+      threshold="$2"; shift 2 ;;
+    --json)
+      as_json=true; shift ;;
+    -h|--help)
+      usage; exit 0 ;;
+    --)
+      shift; break ;;
+    -*)
+      echo "hydra-recent-failures: unknown option: $1" >&2; usage >&2; exit 2 ;;
+    *)
+      echo "hydra-recent-failures: unexpected argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+for name in window threshold; do
+  val="${!name}"
+  if ! [[ "$val" =~ ^[0-9]+$ ]] || [[ "$val" -lt 1 ]]; then
+    echo "hydra-recent-failures: --${name/window/last} must be a positive integer (got: $val)" >&2
+    exit 2
+  fi
+done
+
+[[ -z "$logs_dir" ]] && logs_dir="$LOGS_DIR_DEFAULT"
+
+# ---------------------------------------------------------------------------
+# Pick the K most-recently-modified *.json under logs_dir.
+# Portable mtime sort: stat differs across macOS/Linux, so use `ls -t` which
+# both support, restricted to *.json.
+# ---------------------------------------------------------------------------
+files=()
+scanned=0
+if [[ -d "$logs_dir" ]]; then
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    files+=("$f")
+  done < <(ls -t -- "$logs_dir"/*.json 2>/dev/null | head -n "$window" || true)
+fi
+scanned="${#files[@]}"
+
+# ---------------------------------------------------------------------------
+# For each file, derive (repo, failure_type, ticket) IF it is a failure obs.
+# Emit "<repo>\t<type>\t<ticket>" lines for the grouping pass.
+# All detection is done in jq from the parsed JSON + a grep fallback for the
+# free-text tokens (covers logs where the marker lives in surprises/status).
+# Malformed JSON files are skipped silently (read-only, best-effort preamble).
+# ---------------------------------------------------------------------------
+obs_tsv=""
+for f in "${files[@]:-}"; do
+  [[ -z "$f" ]] && continue
+  [[ -f "$f" ]] || continue
+
+  # Free-text token signal from the raw bytes (independent of JSON shape).
+  # Only genuine *label/marker values* (hyphenated) go here — NOT field names
+  # like rescue_commit, which can appear with a null/false value and would give
+  # a false positive on an otherwise-clean log. Field-name signals are handled
+  # in jq below with an explicit non-null/truthy value check.
+  text_signal=""
+  if grep -qiE 'flaky-tool-retry' "$f" 2>/dev/null; then
+    text_signal="flaky"
+  elif grep -qiE 'commander-stuck' "$f" 2>/dev/null; then
+    text_signal="stuck"
+  elif grep -qiE 'rescue-worker|commander-rescued' "$f" 2>/dev/null; then
+    text_signal="rescue"
+  fi
+
+  line="$(jq -r --arg textsig "$text_signal" '
+    # A value counts as "set" if it is present AND not null/false/empty-string.
+    def truthy($v): ($v != null) and ($v != false) and (($v | tostring) != "");
+    # repo fallback to "unknown"
+    (.repo // "unknown") as $repo |
+    ((.ticket // .ticket_number // .ticket_num // "") | tostring) as $ticket |
+    ((.result // "") | tostring | ascii_downcase) as $res |
+    # rescue marker keys — require a truthy VALUE, not mere key presence, so
+    # {"rescued": false} / {"rescue_commit": null} do NOT classify as rescue.
+    ( truthy(.rescued) or truthy(.rescue_commit) or truthy(.resumed_from_rescue)
+      or truthy(.rescue_resumed_from) ) as $rescue_key |
+    # bug class: any non-null/non-false/non-empty value (incl. classification
+    # strings like "product" / "test"), not only the literal true/1.
+    ( truthy(.bug_class) or truthy(.is_bug) ) as $bug |
+    (
+      if   ($res | test("flaky"))   then "flaky"
+      elif ($res | test("rescue"))  then "rescue"
+      elif ($res | test("stuck|stop")) then "stuck"
+      elif ($res | test("fail|timeout|error")) then "other"
+      elif ($textsig | length) > 0 then $textsig
+      elif $rescue_key then "rescue"
+      elif $bug then "bug"
+      else ""
+      end
+    ) as $type |
+    if ($type | length) > 0
+    then "\($repo)\t\($type)\t\($ticket)"
+    else empty
+    end
+  ' "$f" 2>/dev/null || true)"
+
+  [[ -n "$line" ]] && obs_tsv+="$line"$'\n'
+done
+
+# ---------------------------------------------------------------------------
+# Group by (repo, type); keep groups with count >= threshold. Build JSON.
+# ---------------------------------------------------------------------------
+patterns_arr='[]'
+if [[ -n "$obs_tsv" ]]; then
+  patterns_arr="$(printf '%s' "$obs_tsv" \
+    | jq -R -s --argjson min "$threshold" '
+        split("\n") | map(select(length > 0)) |
+        map(split("\t") | {repo: .[0], failure_type: .[1], ticket: .[2]}) |
+        group_by([.repo, .failure_type]) |
+        map({
+          repo:         .[0].repo,
+          failure_type: .[0].failure_type,
+          count:        length,
+          tickets:      ( map(.ticket) | map(select(length > 0)) | unique )
+        }) |
+        map(select(.count >= $min)) |
+        sort_by(-.count)
+      ')"
+  [[ -z "$patterns_arr" ]] && patterns_arr='[]'
+fi
+
+if [[ "$as_json" == true ]]; then
+  jq -n \
+    --argjson scanned "$scanned" \
+    --argjson window "$window" \
+    --argjson threshold "$threshold" \
+    --argjson patterns "$patterns_arr" \
+    '{scanned:$scanned, window:$window, threshold:$threshold, patterns:$patterns}'
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Compact text rendering.
+# ---------------------------------------------------------------------------
+n="$(printf '%s' "$patterns_arr" | jq 'length')"
+if [[ "$n" -eq 0 ]]; then
+  echo "No repeated failure patterns in the last $scanned log(s)."
+  exit 0
+fi
+
+echo "Recent failure patterns (last $scanned logs, >= $threshold each):"
+printf '%s' "$patterns_arr" | jq -r '
+  .[] |
+  "  ⚠ \(.repo): \(.count)× \(.failure_type)" +
+  (if (.tickets | length) > 0 then "  [#\(.tickets | join(", #"))]" else "" end)
+'
+exit 0
