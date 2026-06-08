@@ -123,6 +123,8 @@ gh api --method POST /repos/<owner>/<repo>/issues/<pr_number>/labels -f "labels[
 
 Do **not** use `gh pr edit --add-label` — GraphQL path fails with a Projects-classic deprecation error on most repos. `gh issue edit <n> --add-label` on plain issues is fine. Use `gh label create <name> --color <hex> --description "..."` to create labels.
 
+On a worker's `LIVE_RESOURCES:` marker, apply `commander-live-state` (ticket + PR) so the review gate runs its teardown-verify step. Spec: `docs/specs/2026-06-01-cloud-side-effect-tracking.md`.
+
 ## Scheduled autopickup (runs silently)
 
 `autopickup every N min` runs a cron-like `/loop` (no daemon; `state/autopickup.json`; default-on, opt out via `./hydra --no-autopickup` / `HYDRA_NO_AUTOPICKUP=1`). Each tick runs report-only `scripts/autopickup-tick.sh --json`, then ACTS on it: spawn to headroom, dispatch review/rescue, merge per `merge_surface`, run retro/compaction when due, apply the watchdog actuations above (gc, interval-warn). The tick reports but never spawns/merges/writes-retro/stamps. T3 / safety-rail PRs NEVER auto-merge (`surface-for-human`). Two consecutive rate-limit hits auto-disable. Specs: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `2026-06-06-autopickup-tick-orchestrator.md`, `2026-04-16-scheduled-autopickup.md`, `2026-04-16-autopickup-default-on.md`, `2026-04-17-scheduled-retro.md`, `2026-04-17-daily-digest.md`.

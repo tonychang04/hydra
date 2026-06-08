@@ -304,6 +304,54 @@ Place the trap once at the top of any script or tool invocation that calls `dock
 - **If `docker compose up` fails with a port error even with Layer 2 applied,** check that your override used `!override`, not a plain list. This is the #1 failure mode.
 - **If tests in the target repo hardcode `localhost:5432`** (rather than reading a `$PG_PORT` env var), your remapped port won't be reachable. Fallback: run without Layer 2 (accept the collision risk and ask commander to serialize on that repo), or file a follow-up ticket to make the tests honor the env var. Do NOT paper over this by editing the test code without the commander's say-so.
 
+## Cloud side-effects (live-resource hygiene, MANDATORY when you provision)
+
+**Problem:** the Commander review gate is **diff-bound** — it inspects your git
+diff and nothing else. If implementing or testing a ticket spins up **live cloud
+resources** (an InsForge project / deployment / storage bucket / function, seeded
+DB rows, test users, EC2 / compute, an externally-billable API key), that residue
+is invisible to PR review. It can cost money, widen the security surface, or exhaust
+quota — and merge clean with nobody tracking it. This happened on the 2026-05-21
+dogfood (a worker left a real InsForge project + deployment + test users; ticket
+#189). Spec: `docs/specs/2026-06-01-cloud-side-effect-tracking.md`.
+
+**Rule:** if your work provisions ANY live cloud resource, you MUST follow this
+checklist before opening/finalizing the PR. This is the live-cloud analog of the
+Docker-isolation section above — both manage external side-effects a diff can't show.
+
+1. **Detect.** The ticket is *live-state-bearing* the moment you create something
+   that outlives your worktree on a provider: a project, deployment, bucket,
+   function, seeded rows, a test user, compute, or a billable key. (Pure local
+   Docker containers torn down by the cleanup trap do NOT count — those are
+   ephemeral and already handled by Docker isolation.)
+
+2. **Record.** Append one entry per resource to `$COMMANDER_ROOT/state/live-resources.json`
+   (create it as `{"resources": []}` if absent). Each entry — schema at
+   `state/schemas/live-resources.schema.json` — needs:
+   `kind, provider, identifier, ticket, created_at, disposition`, optional `notes`.
+   **NEVER record secrets/tokens/keys** — identifiers and handles only (project ref,
+   bucket name, deployment URL, function name). `disposition` is one of:
+   - `ephemeral-cleaned` — throwaway test data you removed before opening the PR.
+   - `persists` — intentionally kept; put the reason in `notes`.
+   - `pending-teardown` — still live, awaiting a deliberate teardown; put the plan
+     in `notes`.
+
+3. **Clean up ephemeral data BEFORE opening the PR.** Delete test users, seeded
+   rows, and throwaway buckets/projects you created only to test. Mark those entries
+   `ephemeral-cleaned`. Do NOT auto-destroy anything the ticket is *about* — that's a
+   deliberate, logged action, never automatic (see the hard rails).
+
+4. **Declare persistence.** Anything that intentionally stays gets `persists` with a
+   one-line `notes` justification. Anything you couldn't tear down yet gets
+   `pending-teardown` with a plan.
+
+5. **Signal Commander.** Emit a final-report marker line:
+   `LIVE_RESOURCES: <n> recorded (<k> persist, <p> pending-teardown)`.
+   This tells Commander to apply the `commander-live-state` label to the ticket + PR
+   so the review gate runs its teardown-verification step. (Same marker convention as
+   `MEMORY_CITED:` / `QUESTION:`.) If you provisioned nothing live, omit the marker —
+   no label, no extra gate.
+
 ## Worktree git discipline (mandatory)
 
 The Bash tool's cwd RESETS to the main repo dir between calls, and shell variables do NOT persist between separate Bash calls — a `cd <worktree>` in one call is gone by the next. If you run a bare `git commit` (or `cd "$WT" && git commit` split across calls), you commit in the MAIN repo, on whatever branch it currently has checked out — often another in-flight worker's branch. This corrupted two workers on 2026-05-20 (incident in ticket #185). Rules:
