@@ -173,7 +173,10 @@ now_epoch() {
 }
 
 GEN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-[[ -n "$now_override" ]] && GEN_TS="${now_override%Z}Z" && GEN_TS="${GEN_TS/%ZZ/Z}"
+# With --now, echo it back as the generated_at (normalize to exactly one trailing
+# Z: strip any existing Z, then append one). %Z strips at most one trailing Z, so
+# the result has precisely one — deterministic for tests.
+[[ -n "$now_override" ]] && GEN_TS="${now_override%Z}Z"
 
 now_e="$(now_epoch)"
 if [[ -z "$now_e" ]]; then
