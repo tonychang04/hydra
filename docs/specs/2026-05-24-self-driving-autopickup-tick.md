@@ -84,10 +84,24 @@ scripts/autopickup-tick.sh [--repo <owner>/<name>] [--tier <T1|T2|T3>] [--json]
 Flow:
 
 1. **Preflight block.** PAUSE file check; `validate-state-all.sh --state-dir`;
-   concurrency headroom = `max_concurrent_workers - active_workers`. Each sub-check is a
+   concurrency headroom = `max_concurrent_workers - active_workers`; **base-readiness
+   gate** (`scripts/assert-spawn-readiness.sh`, see below). Each sub-check is a
    pass/fail line. If preflight fails, the tick still RUNS the read-only shepherd/rescue
    scans (so the operator sees state) but marks `preflight.ok=false` and
    `spawn_blocked=true` in the report — Commander must not spawn.
+
+   **Base-readiness gate (#308 — preflight item, report-only).** Before spawning ANY
+   worker, Commander runs `scripts/assert-spawn-readiness.sh --json` against the repo
+   checkout it cuts worktrees from. The gate reports whether the base is *current* (not
+   behind `origin/<default>`) and *clean* (no dirty TRACKED changes); untracked files
+   never block (they're listed, not fatal). On `ready:false` Commander must NOT spawn —
+   it actuates the surfaced remediation (`git merge --ff-only origin/<base>`) first, then
+   re-checks. The gate is REPORT-ONLY: it never runs `git merge`, never spawns, never
+   mutates state (same boundary as `plan-parallel-batch.sh` / this tick). It is the
+   missing half of anti-drift — `plan-parallel-batch.sh` (#257) prevents *file-overlap*
+   collisions; this prevents *stale-base* collisions that caused #305 and the
+   16+ wrong/stale-base worker incidents (#177/#185/#203/#231/#262/#267/#285). Full
+   contract: `docs/specs/2026-06-18-pre-spawn-readiness-gate.md`.
 
 2. **Shepherd block.** Shell out to `pr-shepherd.sh --json` (passing through `--repo`,
    `--state-dir`, `--gh-mock`). Carry the per-PR rows + summary into the tick report.
