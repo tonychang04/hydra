@@ -257,4 +257,9 @@ else
 fi
 
 [[ "$ready" == true ]] && exit 0
+# Distinguish "infra problem, retry" from "stale/dirty base, remediate". A fetch
+# failure means the base could not be VERIFIED (un-runnable check), so a caller
+# must be able to tell it apart from a verified-but-stale base: exit 2 (retry the
+# fetch) vs exit 1 (run the ff-only remediation). Both keep ready:false.
+[[ "$fetch_failed" -eq 1 ]] && exit 2
 exit 1

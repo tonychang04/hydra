@@ -157,6 +157,22 @@ set -e
 if [[ "$H1" -eq 0 ]] && grep -qi "READY" "$tmproot/human1"; then ok "ready case prints READY (exit 0)"; else bad "human1 exit $H1: $(cat "$tmproot/human1")"; fi
 if [[ "$H2" -eq 1 ]] && grep -qi "NOT READY" "$tmproot/human2" && grep -q "ff-only" "$tmproot/human2"; then ok "behind case prints NOT READY + ff-only remediation (exit 1)"; else bad "human2 exit $H2: $(cat "$tmproot/human2")"; fi
 
+# ---------- Test 9: fetch failure -> ready:false reason:fetch-failed, exit 2 ----------
+# exit 2 (infra problem, retry) is DISTINCT from exit 1 (verified stale/dirty
+# base, run the ff-only remediation). Point the clone at a bogus remote so the
+# real `git fetch origin main` fails; do NOT pass --no-fetch (we want the fetch).
+say "Test 9: fetch failure -> ready:false reason:fetch-failed, exit 2 (distinct from stale exit 1)"
+read -r _o9 c9 <<<"$(new_pair t9)"
+git -C "$c9" remote set-url origin "https://example.invalid/nope.git"
+set +e
+NO_COLOR=1 bash "$HELPER" --repo-dir "$c9" --base main --json > "$tmproot/out" 2>"$tmproot/err"
+EC=$?
+set -e
+if [[ "$EC" -eq 2 ]]; then ok "exit 2 (fetch failure, not exit 1)"; else bad "expected 2, got $EC; err: $(cat "$tmproot/err")"; fi
+if [[ "$(jq_get '.ready')" == "false" ]]; then ok "ready:false (fail-closed)"; else bad "ready was $(jq_get '.ready')"; fi
+if [[ "$(jq_get '.reason')" == "fetch-failed" ]]; then ok "reason:fetch-failed"; else bad "reason was $(jq_get '.reason')"; fi
+if jq empty "$tmproot/out" >/dev/null 2>&1; then ok "still emits valid JSON on fetch failure"; else bad "invalid JSON on fetch failure"; fi
+
 # -----------------------------------------------------------------------------
 printf "\n${C_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
 printf "${C_BOLD}%d passed · %d failed${C_RESET}\n" "$passed" "$failed"

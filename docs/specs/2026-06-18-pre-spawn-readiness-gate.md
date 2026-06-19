@@ -101,9 +101,12 @@ Output:
 - human (default): a one-line verdict (`READY` / `NOT READY: <reason>`) + the
   exact remediation command when not ready.
 
-Exit codes (mirroring the ticket): `0` when `ready:true`; non-zero
-(`1`) when `ready:false` with a clear reason; `2` on usage / parse error
-(bad flag, not a git repo, missing jq).
+Exit codes (mirroring the ticket): `0` when `ready:true`; `1` when `ready:false`
+for a *verified* stale/dirty base (run the `git merge --ff-only` remediation);
+`2` on usage / parse error (bad flag, not a git repo, missing jq) **or a fetch
+failure** (the base could not be VERIFIED — an infra problem to retry, distinct
+from a verified-stale base). The `2` fetch-failure path still emits the full
+`--json` verdict with `reason:"fetch-failed"` and `ready:false` (fail-closed).
 
 ### Alternatives considered
 
