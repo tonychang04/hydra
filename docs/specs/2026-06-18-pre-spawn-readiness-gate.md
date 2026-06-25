@@ -165,4 +165,17 @@ spec adds a `docs/specs/*.md` so the repo-wide syntax-check must stay green).
 
 ## Implementation notes
 
-(Fill in after the PR lands.)
+- Shipped as `scripts/assert-spawn-readiness.sh` (bash + jq, mirroring
+  `plan-parallel-batch.sh`) with `scripts/test-assert-spawn-readiness.sh`
+  (9 cases, 27 assertions, fully offline via throwaway repos in `mktemp -d`).
+- Exit codes are three-way, not two-way: `0` ready, `1` verified stale/dirty
+  base (run the `git merge --ff-only` remediation), `2` usage error **or fetch
+  failure**. The fetch-failure branch (`reason:"fetch-failed"`, `ready:false`)
+  exits `2` explicitly *after* emitting the full verdict, so a caller can tell
+  "couldn't-verify, retry the fetch" (`2`) apart from "verified-not-ready,
+  remediate" (`1`). Test 9 locks this distinction in; review caught an earlier
+  revision that fell through to `1` on fetch failure (#308 review).
+- No in-repo caller keys on the exit code yet — the gate is wired into the
+  preflight prose of `docs/specs/2026-05-24-self-driving-autopickup-tick.md`;
+  Commander reads the verdict and actuates the ff-only remediation itself
+  (report-only boundary, same as `plan-parallel-batch.sh`).
