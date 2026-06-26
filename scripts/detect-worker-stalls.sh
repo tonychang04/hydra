@@ -41,7 +41,8 @@
 # Exit codes:
 #   0   ran (report printed) — a stall being present is reported IN the output,
 #       not via exit code (mirrors autopickup-tick.sh).
-#   1   I/O error (jq missing, state-dir unreadable)
+#   1   I/O error (jq missing, state-dir unreadable, or active.json
+#       missing/unparseable/.workers-not-an-array — never a silent "0 stalls")
 #   2   usage error (unknown flag / missing value / bad number)
 #
 # Spec: docs/specs/2026-06-18-worker-stall-observability.md (ticket #306)
@@ -286,34 +287,45 @@ threshold_secs=$(( threshold_min * 60 ))
 active_workers=0
 stalls_jsonl=""
 
-if [[ -f "$ACTIVE_FILE" ]]; then
-  active_workers="$(jq -r '(.workers // []) | length' "$ACTIVE_FILE" 2>/dev/null || echo 0)"
-  [[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-
-  # Iterate RUNNING workers. A paused-on-question worker is excluded — it is
-  # intentionally waiting on an operator answer ("no recent QUESTION").
-  while IFS= read -r w; do
-    [[ -n "$w" ]] || continue
-    wid="$(printf '%s' "$w" | jq -r '.id // ""')"
-    ticket="$(printf '%s' "$w" | jq -r '.ticket // ""')"
-    wrepo="$(printf '%s' "$w" | jq -r '.repo // ""')"
-    started="$(printf '%s' "$w" | jq -r '.started_at // ""')"
-    [[ -n "$started" ]] || continue
-    started_e="$(iso_to_epoch "$started")"
-    [[ -n "$started_e" ]] || continue
-    idle_secs=$(( now_e - started_e ))
-    (( idle_secs < 0 )) && idle_secs=0
-    idle_min=$(( idle_secs / 60 ))
-    (( idle_secs < threshold_secs )) && continue   # under threshold → not a stall
-
-    row="$(jq -nc \
-      --arg worker_id "$wid" --arg ticket "$ticket" --arg repo "$wrepo" \
-      --argjson idle_min "$idle_min" --arg status "running" \
-      '{worker_id:$worker_id, ticket:$ticket, repo:$repo, idle_min:$idle_min,
-        status:$status, verdict:"stalled"}')"
-    stalls_jsonl+="$row"$'\n'
-  done < <(jq -c '(.workers // [])[] | select(.status == "running")' "$ACTIVE_FILE" 2>/dev/null)
+# A failed scan must NEVER masquerade as a clean "0 stalls" result (the PR's
+# scan_ok:false contract — autopickup-tick.sh sets scan_ok=false on a non-zero
+# exit here). The state file must exist and parse to JSON whose .workers (when
+# present) is an array. A missing/unreadable file or a non-array .workers is a
+# hard I/O error → stderr + exit 1, NOT a silent fallback to active_workers=0.
+if [[ ! -f "$ACTIVE_FILE" ]]; then
+  echo "detect-worker-stalls.sh: ERROR: active.json not found at $ACTIVE_FILE — refusing to report a false-clean scan" >&2
+  exit 1
 fi
+if ! jq -e '(.workers // []) | type == "array"' "$ACTIVE_FILE" >/dev/null 2>&1; then
+  echo "detect-worker-stalls.sh: ERROR: $ACTIVE_FILE is unreadable or its .workers is not an array — refusing to report a false-clean scan" >&2
+  exit 1
+fi
+
+active_workers="$(jq -r '(.workers // []) | length' "$ACTIVE_FILE")"
+
+# Iterate RUNNING workers. A paused-on-question worker is excluded — it is
+# intentionally waiting on an operator answer ("no recent QUESTION").
+while IFS= read -r w; do
+  [[ -n "$w" ]] || continue
+  wid="$(printf '%s' "$w" | jq -r '.id // ""')"
+  ticket="$(printf '%s' "$w" | jq -r '.ticket // ""')"
+  wrepo="$(printf '%s' "$w" | jq -r '.repo // ""')"
+  started="$(printf '%s' "$w" | jq -r '.started_at // ""')"
+  [[ -n "$started" ]] || continue
+  started_e="$(iso_to_epoch "$started")"
+  [[ -n "$started_e" ]] || continue
+  idle_secs=$(( now_e - started_e ))
+  (( idle_secs < 0 )) && idle_secs=0
+  idle_min=$(( idle_secs / 60 ))
+  (( idle_secs < threshold_secs )) && continue   # under threshold → not a stall
+
+  row="$(jq -nc \
+    --arg worker_id "$wid" --arg ticket "$ticket" --arg repo "$wrepo" \
+    --argjson idle_min "$idle_min" --arg status "running" \
+    '{worker_id:$worker_id, ticket:$ticket, repo:$repo, idle_min:$idle_min,
+      status:$status, verdict:"stalled"}')"
+  stalls_jsonl+="$row"$'\n'
+done < <(jq -c '(.workers // [])[] | select(.status == "running")' "$ACTIVE_FILE")
 
 if [[ -n "${stalls_jsonl//[$'\n']/}" ]]; then
   stalls_array="$(printf '%s' "$stalls_jsonl" | jq -sc '.')"

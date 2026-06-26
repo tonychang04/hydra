@@ -117,12 +117,19 @@ mkdir -p "$TMP/t5/state" "$TMP/t5/logs"
 cp "$TMP/t2/state/active.json" "$TMP/t5/state/active.json"
 out="$("$SUBJECT" --json --state-dir "$TMP/t5/state" --logs-dir "$TMP/t5/logs" --now "$NOW")"
 logf="$TMP/t5/logs/stalls-2026-06.jsonl"
-if [[ -f "$logf" ]]; then ok "jsonl event log created"; else bad "jsonl event log created" "missing $logf"; fi
-assert_eq "$(wc -l < "$logf" | tr -d ' ')" "1" "exactly one event line written"
-assert_eq "$(jq -r '.verdict' < "$logf")" "stalled" "event verdict == stalled"
-assert_eq "$(jq -r '.worker_id' < "$logf")" "w-1" "event worker_id == w-1"
-assert_contains "$(jq -r 'keys|join(",")' < "$logf")" "idle_min" "event has idle_min field"
-assert_contains "$(jq -r 'keys|join(",")' < "$logf")" "ts" "event has ts field"
+# Guard the file-dependent assertions: under `set -e` a missing $logf would
+# abort the whole suite (e.g. `wc -l < "$logf"` redirection failure) before the
+# summary ever prints. Only run them when the log actually exists.
+if [[ -f "$logf" ]]; then
+  ok "jsonl event log created"
+  assert_eq "$(wc -l < "$logf" | tr -d ' ')" "1" "exactly one event line written"
+  assert_eq "$(jq -r '.verdict' < "$logf")" "stalled" "event verdict == stalled"
+  assert_eq "$(jq -r '.worker_id' < "$logf")" "w-1" "event worker_id == w-1"
+  assert_contains "$(jq -r 'keys|join(",")' < "$logf")" "idle_min" "event has idle_min field"
+  assert_contains "$(jq -r 'keys|join(",")' < "$logf")" "ts" "event has ts field"
+else
+  bad "jsonl event log created" "missing $logf — skipping dependent assertions"
+fi
 
 # -----------------------------------------------------------------------------
 echo "Test 6: --no-log suppresses the jsonl write"
@@ -174,6 +181,27 @@ set +e
 "$SUBJECT" --bogus >/dev/null 2>&1; rc=$?
 set -e
 assert_eq "$rc" "2" "unknown flag exits 2"
+
+# -----------------------------------------------------------------------------
+echo "Test 10: invalid active.json (.workers not an array) → exit 1, NOT false-clean"
+# -----------------------------------------------------------------------------
+mkdir -p "$TMP/t10/state" "$TMP/t10/logs"
+echo '{"workers":"oops"}' > "$TMP/t10/state/active.json"
+set +e
+out="$("$SUBJECT" --json --no-log --state-dir "$TMP/t10/state" --logs-dir "$TMP/t10/logs" --now "$NOW" 2>"$TMP/t10/err.txt")"; rc=$?
+set -e
+assert_eq "$rc" "1" "invalid .workers exits 1 (no silent 0)"
+assert_eq "$out" "" "no JSON emitted on a failed scan"
+assert_contains "$(cat "$TMP/t10/err.txt")" "false-clean" "error explains it refuses a false-clean scan"
+
+# -----------------------------------------------------------------------------
+echo "Test 11: missing active.json (nonexistent state dir) → exit 1, NOT false-clean"
+# -----------------------------------------------------------------------------
+set +e
+out="$("$SUBJECT" --json --no-log --state-dir "$TMP/t11-nope/state" --logs-dir "$TMP/t11/logs" --now "$NOW" 2>"$TMP/t11-err.txt")"; rc=$?
+set -e
+assert_eq "$rc" "1" "missing active.json exits 1 (no silent 0)"
+assert_contains "$(cat "$TMP/t11-err.txt")" "active.json not found" "error names the missing file"
 
 # -----------------------------------------------------------------------------
 echo

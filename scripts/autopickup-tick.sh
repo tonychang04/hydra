@@ -1024,7 +1024,7 @@ elif [[ -x "$DETECT_STALLS" ]]; then
   stalls_rc=$?
   set -e
 fi
-if [[ "$stalls_rc" -eq 0 ]] && printf '%s' "$stalls_raw" | jq empty 2>/dev/null; then
+if [[ "$stalls_rc" -eq 0 ]] && printf '%s' "$stalls_raw" | jq -e 'type=="object"' >/dev/null 2>&1; then
   stalls_json="$(printf '%s' "$stalls_raw" | jq -c \
     '{stall_count:(.stall_count // (.stalls|length) // 0),
       stalls:(.stalls // []),
