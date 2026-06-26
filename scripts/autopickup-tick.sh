@@ -113,6 +113,9 @@ Options:
                          worktrees scan inspects (default $ROOT/.claude/worktrees).
   --gc-script <path>     Test-only: override the gc-stale-worktrees.sh the gc
                          safety scan shells out to (default $ROOT/scripts/...).
+  --stalls-cmd <cmd>     Test-only: stub for detect-worker-stalls.sh; must emit
+                         the detector's --json object on stdout. Default shells
+                         out to scripts/detect-worker-stalls.sh --json --no-log.
   -h, --help             Show this help.
 
 AUTO-MERGE SAFETY RAILS:
@@ -162,6 +165,11 @@ hygiene_threshold=10       # --hygiene-threshold <n>
 # stall-robustness seams (ticket #242). Optional; default reads live state/tree.
 worktrees_dir_override=""  # --worktrees-dir <path> (gc-stale-worktrees scan root)
 gc_script_override=""       # --gc-script <path> Test-only: override gc-stale-worktrees.sh
+# worker-stall observability seam (ticket #306). Optional; default shells out to
+# scripts/detect-worker-stalls.sh. The detector is read-only/report-only; the
+# tick runs it with --no-log so the detector's OWN scheduled run owns the event
+# log (the tick must not double-write logs/stalls-*.jsonl).
+stalls_cmd=""              # --stalls-cmd <cmd> Test-only: stub the stall detector
 
 need_val() {
   if [[ $# -lt 2 ]]; then
@@ -216,6 +224,8 @@ while [[ $# -gt 0 ]]; do
     --worktrees-dir=*)    worktrees_dir_override="${1#--worktrees-dir=}"; shift ;;
     --gc-script)          need_val "$@"; gc_script_override="$2"; shift 2 ;;
     --gc-script=*)        gc_script_override="${1#--gc-script=}"; shift ;;
+    --stalls-cmd)         need_val "$@"; stalls_cmd="$2"; shift 2 ;;
+    --stalls-cmd=*)       stalls_cmd="${1#--stalls-cmd=}"; shift ;;
     *) echo "autopickup-tick: unknown arg '$1'" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -270,6 +280,7 @@ PROMOTE="$ROOT_DIR/scripts/promote-citations.sh"
 GC_WORKTREES="${gc_script_override:-$ROOT_DIR/scripts/gc-stale-worktrees.sh}"
 WORKTREES_DIR="${worktrees_dir_override:-$ROOT_DIR/.claude/worktrees}"
 RECORD_DECISION="$ROOT_DIR/scripts/record-decision.sh"
+DETECT_STALLS="$ROOT_DIR/scripts/detect-worker-stalls.sh"
 
 GEN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -989,6 +1000,43 @@ digest_json="$(jq -nc \
     digest_reason:$digest_reason, run_hint:$run_hint}')"
 
 # =============================================================================
+# 4g. WORKER-STALL SCAN  (forward-facing observability — report-only leg)
+# =============================================================================
+# REPORT-ONLY discipline (same as 4b–4f): shell out to detect-worker-stalls.sh
+# --json --no-log (read-only; --no-log so the detector's OWN scheduled run owns
+# the logs/stalls-*.jsonl event log — the tick must not double-write it). Surface
+# the standing stall list so the orchestrator can route it; the tick itself NEVER
+# kills/rescues/spawns — Commander cross-checks each stall with rescue-worker.sh
+# --probe and actuates. A detector failure is reported, never fatal (set +e), and
+# yields an explicit scan_ok=false rather than a silent "0 stalls".
+# Spec: docs/specs/2026-06-18-worker-stall-observability.md (ticket #306).
+stalls_json='{"stall_count":0,"stalls":[],"scan_ok":false,"scan_skipped_reason":"detector-not-executable"}'
+stalls_raw=""
+stalls_rc=1
+if [[ -n "$stalls_cmd" ]]; then
+  set +e
+  stalls_raw="$(bash -c "$stalls_cmd" 2>/dev/null)"
+  stalls_rc=$?
+  set -e
+elif [[ -x "$DETECT_STALLS" ]]; then
+  set +e
+  stalls_raw="$("$DETECT_STALLS" --json --no-log --state-dir "$STATE_DIR" 2>/dev/null)"
+  stalls_rc=$?
+  set -e
+fi
+if [[ "$stalls_rc" -eq 0 ]] && printf '%s' "$stalls_raw" | jq -e 'type=="object"' >/dev/null 2>&1; then
+  stalls_json="$(printf '%s' "$stalls_raw" | jq -c \
+    '{stall_count:(.stall_count // (.stalls|length) // 0),
+      stalls:(.stalls // []),
+      threshold_min:(.threshold_min // null),
+      scan_ok:true, scan_skipped_reason:null}')"
+elif [[ -n "$stalls_cmd" || -x "$DETECT_STALLS" ]]; then
+  stalls_json="$(jq -nc --argjson rc "$stalls_rc" \
+    '{stall_count:0, stalls:[], scan_ok:false,
+      scan_skipped_reason:("stall-scan-failed(exit \($rc))")}')"
+fi
+
+# =============================================================================
 # 5. ACTIONS ROLL-UP
 # =============================================================================
 actions_json="$(jq -nc \
@@ -1000,6 +1048,7 @@ actions_json="$(jq -nc \
   --argjson audit "$audit_json" \
   --argjson digest "$digest_json" \
   --argjson gc "$gc_json" \
+  --argjson stalls "$stalls_json" \
   '{
     needs_rescue:        ($rescue | map(select(.action == "needs-rescue")) | length),
     live_wait:           ($rescue | map(select(.action == "live-wait")) | length),
@@ -1013,7 +1062,8 @@ actions_json="$(jq -nc \
     hygiene_due:         ($hygiene.hygiene_due),
     audit_due:           ($audit.audit_due),
     digest_due:          ($digest.digest_due),
-    gc_stale_worktrees:  ($gc.candidates_count)
+    gc_stale_worktrees:  ($gc.candidates_count),
+    stalled_workers:     ($stalls.stall_count // 0)
   }')"
 
 # =============================================================================
@@ -1032,11 +1082,12 @@ if [[ "$json_mode" -eq 1 ]]; then
     --argjson audit "$audit_json" \
     --argjson digest "$digest_json" \
     --argjson gc "$gc_json" \
+    --argjson stalls "$stalls_json" \
     --argjson actions "$actions_json" \
     '{generated_at:$generated_at, repo:$repo, preflight:$preflight,
       shepherd:$shepherd, rescue:$rescue, merge_surface:$merge_surface,
       scheduled:$scheduled, hygiene:$hygiene, audit:$audit, digest:$digest,
-      gc:$gc, actions:$actions}'
+      gc:$gc, stalls:$stalls, actions:$actions}'
   exit 0
 fi
 
@@ -1140,12 +1191,28 @@ else
 fi
 echo
 
+# Worker stalls. A failed detector scan must look DISTINCT from a clean one —
+# never silently "(none)".
+echo "Worker stalls (forward-facing):"
+stalls_scan_ok="$(printf '%s' "$stalls_json" | jq -r '.scan_ok // false')"
+stalls_n="$(printf '%s' "$stalls_json" | jq '.stall_count // 0')"
+if [[ "$stalls_scan_ok" != "true" ]]; then
+  stalls_reason="$(printf '%s' "$stalls_json" | jq -r '.scan_skipped_reason // "unknown"')"
+  echo "  (stall scan-skipped — could not run: ${stalls_reason}; run detect-worker-stalls.sh directly)"
+elif [[ "$stalls_n" -eq 0 ]]; then
+  echo "  (none)"
+else
+  printf '%s' "$stalls_json" | jq -r '.stalls[] | "  \(.worker_id // "?") on \(.ticket // "?") [\(.repo // "?")]  idle \(.idle_min)m  → \(.verdict)"'
+fi
+echo
+
 # Actions roll-up
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 printf '%s' "$actions_json" | jq -r '
   "Actions: needs-rescue \(.needs_rescue) · live-wait \(.live_wait) · " +
   "auto-merge-eligible \(.auto_merge_eligible) · surface-for-human \(.surface_for_human) · " +
-  "needs-review-gate \(.needs_review_gate) · needs-fix \(.needs_fix) · orphaned \(.orphaned)"
+  "needs-review-gate \(.needs_review_gate) · needs-fix \(.needs_fix) · orphaned \(.orphaned) · " +
+  "stalled-workers \(.stalled_workers)"
 '
 [[ "$(printf '%s' "$actions_json" | jq '.auto_merge_eligible')" -gt 0 ]] \
   && echo "  ↳ Commander: verify CI green + obey merge-policy-lookup before merging eligible PRs."
@@ -1163,4 +1230,6 @@ printf '%s' "$actions_json" | jq -r '
   && echo "  ↳ Stale worktrees: run scripts/gc-stale-worktrees.sh --apply to reclaim."
 [[ "$(printf '%s' "$preflight_json" | jq -r '.interval_warn')" == "true" ]] \
   && echo "  ↳ Autopickup interval at/above the stream-idle ceiling — lower interval_min to <15 so the rescue probe can fire before workers time out."
+[[ "$(printf '%s' "$stalls_json" | jq '.stall_count // 0')" -gt 0 ]] \
+  && echo "  ↳ Stalled workers detected — Commander: cross-check each with rescue-worker.sh --probe, then rescue/escalate per its verdict."
 exit 0
