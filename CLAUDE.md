@@ -20,7 +20,7 @@ Authoritative content lives in these paths; CLAUDE.md only routes. Read the mark
 |---|---|
 | `policy.md` | Risk tiers (T1/T2/T3). **Read at session start.** |
 | `budget.json` | Concurrency + wall-clock + daily-ticket caps. |
-| `state/` | Live state: `active.json`, `repos.json` (`ticket_trigger` + `merge_policy`), `autopickup.json`, `budget-used.json`, `memory-citations.json`, `quota-health.json`, `setup-complete.json` — each has `state/schemas/*.schema.json`. |
+| `state/` | Live state: `active.json`, `repos.json` (`ticket_trigger` + `merge_policy`), `autopickup.json`, `digests.json`, `budget-used.json`, `memory-citations.json`, `quota-health.json`, `setup-complete.json` — each has `state/schemas/*.schema.json`. |
 | `docs/specs/` | The "why" + full procedures: one `YYYY-MM-DD-<slug>.md` per non-trivial behavior. |
 | `memory/` | `MEMORY.md` (index), `escalation-faq.md`, `learnings-<repo>.md`, `memory-lifecycle.md`, `retros/`, `archive/`. |
 | `scripts/` | All executable behavior + `scripts/README.md`. |
@@ -72,7 +72,7 @@ Triggers + terse action below; **full semantics → `docs/specs/2026-06-07-comma
 | `compact memory` / `promote learnings` / `archive stale` | Memory hygiene on demand |
 | `retro` | Weekly retro → `memory/retros/YYYY-WW.md` |
 | `self-test` / `self-test <id>` / `self-test --parallel` | Regression harness vs golden PRs |
-| `audit` | Spawn `worker-auditor` (files ≤3 issues; `docs/specs/2026-04-17-worker-auditor-subagent.md`) |
+| `audit` | Spawn `worker-auditor` (files ≤3 issues; `docs/specs/2026-04-17-worker-auditor-subagent.md`); also auto-recommended once/day on the autopickup tick |
 | `./hydra connect <x>` | Connector wizard `scripts/hydra-connect.sh` (`docs/specs/2026-04-17-connector-wizard.md`) |
 | `./hydra setup` | Setup wizard (`docs/specs/2026-04-17-setup-wizard.md`) |
 
@@ -106,7 +106,7 @@ Each line is the trigger/purpose only; the named spec(s) own the full steps. **R
 - **Worker timeout watchdog** — on each tick + worker completion, `scripts/rescue-worker.sh --probe` then act on its exit verdict (rescue / stuck / surface / `/review` / flaky-retry); apply tick actuations. Specs: `docs/specs/2026-04-16-worker-timeout-watchdog.md`, `2026-04-17-review-worker-rescue.md`, `2026-04-17-rescue-worker-index-lock.md`, `2026-05-23-auto-rescue-on-completion.md`, `2026-05-24-worker-anti-stall-discipline.md`, `docs/specs/2026-06-07-tick-stall-robustness.md`.
 - **Escalate to supervisor agent** — when memory can't resolve: scan `escalation-faq.md` + `learnings-<repo>.md`, else escalate per the do/don't list. Specs: `docs/specs/2026-04-16-mcp-agent-interface.md`, `2026-04-17-supervisor-escalate-client.md`, `docs/mcp-tool-contract.md`, `docs/specs/2026-04-17-main-agent-filing.md`.
 - **Auto-dispatch test-discovery** — `QUESTION: test procedure unclear` twice in a row on a repo → spawn `worker-test-discovery`, park the ticket. Spec: `docs/specs/2026-04-17-auto-dispatch-test-discovery.md`.
-- **Scheduled autopickup** — `autopickup every N min` runs a cron-like `/loop`; each tick runs report-only `scripts/autopickup-tick.sh --json`, then acts (spawn / review / rescue / merge / retro). Specs: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `2026-06-06-autopickup-tick-orchestrator.md`, `2026-04-16-scheduled-autopickup.md`, `2026-04-16-autopickup-default-on.md`, `2026-04-17-scheduled-retro.md`, `2026-04-17-daily-digest.md`.
+- **Scheduled autopickup** — `autopickup every N min` runs a cron-like `/loop`; each tick runs report-only `scripts/autopickup-tick.sh --json`, then acts (spawn / review / rescue / merge / audit / retro). Specs: `docs/specs/2026-05-24-self-driving-autopickup-tick.md`, `2026-06-06-autopickup-tick-orchestrator.md`, `2026-04-16-scheduled-autopickup.md`, `2026-04-16-autopickup-default-on.md`, `2026-04-17-scheduled-retro.md`, `2026-04-17-daily-digest.md`, `2026-06-07-scheduled-self-audit.md`.
 - **Memory hygiene** — per-ticket parse `MEMORY_CITED:` → bump citations; every 10 tickets merge/archive/promote; pre-spawn Memory Brief. Specs: `docs/specs/2026-04-16-external-memory-split.md`, `2026-04-17-memory-preloading.md`, `2026-04-17-skill-seed-list.md`, `2026-04-17-skill-promotion-automation.md`.
 - **Weekly retro** — `retro` (or Monday tick) writes `memory/retros/YYYY-WW.md`, then `scripts/retro-file-proposed-edits.sh <week>` auto-files each edit. Specs: `docs/specs/2026-04-16-retro-workflow.md`, `2026-04-17-scheduled-retro.md`, `2026-04-17-retro-auto-file.md`.
 - **Session greeting** — on session start enter autopickup if enabled, emit the one-line status, append three health one-liners, then wait for the `/loop` scheduler. Specs: `docs/specs/2026-04-16-autopickup-default-on.md`, `2026-04-17-connector-wizard.md`, `2026-04-17-skill-promotion-automation.md`.
