@@ -261,6 +261,30 @@ unrun_tick="$(NO_COLOR=1 "$TICK" "${tick_common[@]}" --state-dir "$UNRUN_TICK_ST
 echo "$unrun_tick" | jq -e '.gc.scan_ok == false' >/dev/null \
   || fail "tick gc.scan_ok must be false when the gc script could not run" "$unrun_tick"
 
+# 7c. gc-non-object regression (#315, twin of #307): a gc script that exits 0 but
+# emits valid-but-NON-OBJECT JSON (e.g. `[]`) must NOT crash the tick. Before the
+# fix, the bare `jq empty` gate passed `[]` (syntactically valid) and the
+# downstream `.candidates` deref aborted the whole tick under set -e (exit 5,
+# "jq: error ... Cannot index array with string \"candidates\""). The
+# `type=="object"` shape guard now routes it to the scan_ok:false branch: the tick
+# SURVIVES (exit 0) and reports a failed safety scan.
+NONOBJ_TICK_STATE="$TMP/nonobj-tick-state"
+mkdir -p "$NONOBJ_TICK_STATE"
+cp "$WARN_STATE/active.json" "$NONOBJ_TICK_STATE/active.json"
+mk_autopickup 10 "$NONOBJ_TICK_STATE"
+ARRAY_GC="$TMP/gc-array.sh"
+printf '#!/usr/bin/env bash\nprintf "[]"\nexit 0\n' > "$ARRAY_GC"
+chmod +x "$ARRAY_GC"
+set +e
+nonobj_tick="$(NO_COLOR=1 "$TICK" "${tick_common[@]}" --state-dir "$NONOBJ_TICK_STATE" \
+  --gc-script "$ARRAY_GC")"
+nonobj_rc=$?
+set -e
+[[ "$nonobj_rc" -eq 0 ]] \
+  || fail "tick must SURVIVE (exit 0) when gc emits non-object JSON; got exit $nonobj_rc" "$nonobj_tick"
+echo "$nonobj_tick" | jq -e '.gc.scan_ok == false' >/dev/null \
+  || fail "tick gc.scan_ok must be false when gc emits non-object JSON (failed-scan branch)" "$nonobj_tick"
+
 # =============================================================================
 # 8. LINUX-CI REGRESSION: mtime_epoch must survive GNU-coreutils stat (#254)
 # =============================================================================
