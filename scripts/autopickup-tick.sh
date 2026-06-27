@@ -116,6 +116,10 @@ Options:
   --stalls-cmd <cmd>     Test-only: stub for detect-worker-stalls.sh; must emit
                          the detector's --json object on stdout. Default shells
                          out to scripts/detect-worker-stalls.sh --json --no-log.
+  --shepherd-cmd <cmd>   Test-only: stub for pr-shepherd.sh; must emit the
+                         shepherd's --json object on stdout. Default shells out
+                         to scripts/pr-shepherd.sh. Used to exercise the
+                         non-object-JSON guard offline.
   -h, --help             Show this help.
 
 AUTO-MERGE SAFETY RAILS:
@@ -170,6 +174,7 @@ gc_script_override=""       # --gc-script <path> Test-only: override gc-stale-wo
 # tick runs it with --no-log so the detector's OWN scheduled run owns the event
 # log (the tick must not double-write logs/stalls-*.jsonl).
 stalls_cmd=""              # --stalls-cmd <cmd> Test-only: stub the stall detector
+shepherd_cmd=""            # --shepherd-cmd <cmd> Test-only: stub pr-shepherd.sh
 
 need_val() {
   if [[ $# -lt 2 ]]; then
@@ -226,6 +231,8 @@ while [[ $# -gt 0 ]]; do
     --gc-script=*)        gc_script_override="${1#--gc-script=}"; shift ;;
     --stalls-cmd)         need_val "$@"; stalls_cmd="$2"; shift 2 ;;
     --stalls-cmd=*)       stalls_cmd="${1#--stalls-cmd=}"; shift ;;
+    --shepherd-cmd)       need_val "$@"; shepherd_cmd="$2"; shift 2 ;;
+    --shepherd-cmd=*)     shepherd_cmd="${1#--shepherd-cmd=}"; shift ;;
     *) echo "autopickup-tick: unknown arg '$1'" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -367,7 +374,14 @@ shepherd_args=(--json --state-dir "$STATE_DIR")
 [[ -n "$gh_mock" ]] && shepherd_args+=(--gh-mock "$gh_mock")
 
 shepherd_json='{"prs":[],"summary":{}}'
-if [[ -x "$SHEPHERD" ]]; then
+if [[ -n "$shepherd_cmd" ]]; then
+  # Test-only seam (ticket #315): stub pr-shepherd.sh so the non-object-JSON
+  # guard below can be exercised offline. Mirrors the --stalls-cmd seam.
+  if ! shepherd_json="$(bash -c "$shepherd_cmd" 2>/dev/null)"; then
+    echo "autopickup-tick: --shepherd-cmd stub failed" >&2
+    exit 1
+  fi
+elif [[ -x "$SHEPHERD" ]]; then
   if ! shepherd_json="$("$SHEPHERD" "${shepherd_args[@]}" 2>/dev/null)"; then
     echo "autopickup-tick: pr-shepherd.sh failed" >&2
     exit 1
@@ -376,9 +390,15 @@ else
   echo "autopickup-tick: pr-shepherd.sh not found/executable" >&2
   exit 1
 fi
-# Validate it's JSON.
-printf '%s' "$shepherd_json" | jq empty 2>/dev/null \
-  || { echo "autopickup-tick: pr-shepherd produced non-JSON" >&2; exit 1; }
+# Validate it is a JSON OBJECT — not merely syntactically valid JSON. A
+# valid-but-non-object payload (e.g. `[]`) passes a bare `jq empty` syntax check
+# and then crashes the downstream `.summary`/`.prs` field-derefs under set -e.
+# The `type=="object"` shape guard routes such output to this path's OWN existing
+# controlled exit-1 diagnostic (shepherd is a mandatory reconcile; it has no
+# scan_ok soft-fail) instead of an uncontrolled mid-pipeline crash. Parity with
+# the #307 stall-scan guard; ticket #315.
+printf '%s' "$shepherd_json" | jq -e 'type=="object"' >/dev/null 2>&1 \
+  || { echo "autopickup-tick: pr-shepherd produced non-object JSON" >&2; exit 1; }
 
 # =============================================================================
 # 3. COMPLETION-RESCUE SCAN
@@ -892,7 +912,12 @@ if [[ -x "$GC_WORKTREES" ]]; then
     --worktrees-dir "$WORKTREES_DIR" --dry-run --json 2>/dev/null)"
   gc_rc=$?
   set -e
-  if [[ "$gc_rc" -eq 0 ]] && printf '%s' "$gc_raw" | jq empty 2>/dev/null; then
+  # Shape-guard with `type=="object"` (NOT a bare `jq empty`): a valid-but-non-
+  # object payload (e.g. `[]`) passes a syntax-only check and then crashes the
+  # `.candidates`/`.fail_closed` field-derefs below under set -e. The guard routes
+  # such output to the existing scan_ok:false branch — a reported failed safety
+  # scan, never a fatal tick crash. Parity with the #307 stall guard; ticket #315.
+  if [[ "$gc_rc" -eq 0 ]] && printf '%s' "$gc_raw" | jq -e 'type=="object"' >/dev/null 2>&1; then
     gc_json="$(printf '%s' "$gc_raw" | jq -c \
       '{candidates_count:(.candidates|length), candidates:.candidates,
         fail_closed:.fail_closed, scan_ok:true, scan_skipped_reason:null}')"
