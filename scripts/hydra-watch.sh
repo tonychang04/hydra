@@ -208,7 +208,7 @@ fetch_commander_state() {
   C_TODAY_DONE="$(jq_or "$budget_file" '.tickets_completed_today // 0' "0")"
   C_TODAY_FAILED="$(jq_or "$budget_file" '.tickets_failed_today // 0' "0")"
   C_AUTO_ENABLED="$(jq_or "$auto_file" '.enabled // false' "false")"
-  C_AUTO_INTERVAL="$(jq_or "$auto_file" '.interval_min // 30' "30")"
+  C_AUTO_INTERVAL="$(jq_or "$auto_file" '.interval_min // 15' "15")"
   C_MAX_WORKERS="$(jq_or "$budget_cfg" '.phase1_subscription_caps.max_concurrent_workers // 5' "5")"
 
   if [[ -f "$ROOT_DIR/PAUSE" ]] || [[ -f "$ROOT_DIR/commander/PAUSE" ]]; then

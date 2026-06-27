@@ -17,7 +17,7 @@ Every session where the operator forgets to arm autopickup is a session where Hy
 
 ## Goals
 
-- Launching `./hydra` enters autopickup mode automatically, using the existing `interval_min` from `state/autopickup.json` (default 30).
+- Launching `./hydra` enters autopickup mode automatically, using the existing `interval_min` from `state/autopickup.json` (default 15).
 - Opt-out path that is explicit, per-session, and discoverable: `./hydra --no-autopickup`.
 - Backward-compat for operators whose `state/autopickup.json` predates this change (no field → behave as default-on).
 - Zero change to the tick procedure, preflight gate, rate-limit auto-disable, or merge policy. Default-on is purely a session-start flip of `enabled`.
@@ -33,7 +33,7 @@ Every session where the operator forgets to arm autopickup is a session where Hy
 Three tiny pieces of state and one prompt change:
 
 1. **`state/autopickup.json` gains `auto_enable_on_session_start: true`.** Defaults `true`. Operators who specifically want opt-in behavior set it to `false` and live with the previous workflow.
-2. **`setup.sh` seeds `state/autopickup.json` on first run** with `{enabled: false, interval_min: 30, auto_enable_on_session_start: true, ...}`. Existing autopickup files are left untouched (idempotent setup).
+2. **`setup.sh` seeds `state/autopickup.json` on first run** with `{enabled: false, interval_min: 15, auto_enable_on_session_start: true, ...}`. Existing autopickup files are left untouched (idempotent setup).
 3. **`./hydra` launcher accepts `--no-autopickup`**, which exports `HYDRA_NO_AUTOPICKUP=1` before `exec claude`. Environment-level override, scoped to the single session.
 4. **Commander's session-start greeting** (`CLAUDE.md` → "Session greeting") runs a default-on check:
    - Read `state/autopickup.json`. Missing → skip (nothing to auto-enable yet).
@@ -51,7 +51,7 @@ The tick procedure itself is unchanged. Default-on is a cheap session-start hook
 
 ## Test plan
 
-1. **Fresh install.** Delete `state/autopickup.json`, run `./setup.sh`. Verify `state/autopickup.json` exists with `auto_enable_on_session_start: true` and `interval_min: 30`.
+1. **Fresh install.** Delete `state/autopickup.json`, run `./setup.sh`. Verify `state/autopickup.json` exists with `auto_enable_on_session_start: true` and `interval_min: 15`.
 2. **Default launch.** `./hydra`. Greeting should include `Autopickup: on (every 30 min)` and note the auto-enable. `state/autopickup.json:enabled` should flip to `true`.
 3. **Opt-out launch.** `./hydra --no-autopickup`. `HYDRA_NO_AUTOPICKUP` should be `1` in the commander env; greeting should show `Autopickup: off`; `state/autopickup.json:enabled` stays `false`.
 4. **Backward compat.** Hand-write a `state/autopickup.json` with the old 5-field schema (no `auto_enable_on_session_start`). Launch `./hydra`. Commander should treat the missing field as `true` and auto-enable.

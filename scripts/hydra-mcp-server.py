@@ -277,7 +277,7 @@ def _handler_get_status(params: Dict[str, Any], agent: Dict[str, Any]) -> Dict[s
     active = _read_json_safe(root / "state" / "active.json", {"workers": []})
     autopickup = _read_json_safe(
         root / "state" / "autopickup.json",
-        {"enabled": False, "interval_min": 30, "last_run": None},
+        {"enabled": False, "interval_min": 15, "last_run": None},
     )
     budget = _read_json_safe(
         root / "state" / "budget-used.json",
@@ -308,7 +308,7 @@ def _handler_get_status(params: Dict[str, Any], agent: Dict[str, Any]) -> Dict[s
         "paused": paused,
         "autopickup": {
             "enabled": bool(autopickup.get("enabled", False)),
-            "interval_min": int(autopickup.get("interval_min", 30)),
+            "interval_min": int(autopickup.get("interval_min", 15)),
             "last_run": autopickup.get("last_run"),
         },
         "quota_health": {

@@ -58,7 +58,7 @@ Triggers + terse action below; **full semantics → `docs/specs/2026-06-07-comma
 | `retry #42` | Drop `commander-stuck`, re-spawn w/ failure hint |
 | `undo #501` | Revert a merged PR → `commander-undo`, surface |
 | `pause` / `resume` | Toggle `PAUSE` file |
-| `autopickup every N min` | Scheduled auto-pickup (N∈[5,120], default 30) |
+| `autopickup every N min` | Scheduled auto-pickup (N∈[5,120], default 15) |
 | `autopickup off` | `state/autopickup.json:enabled=false` |
 | `resolve conflicts #A #B [...]` | Spawn `worker-conflict-resolver` on the set |
 | `resolve all conflicts` | Batch conflicting PRs, resolver per batch |

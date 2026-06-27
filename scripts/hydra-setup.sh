@@ -283,12 +283,12 @@ step "Step 3 — autopickup interval"
 
 if [[ -z "$autopickup_interval" ]]; then
   if [[ "$non_interactive" -eq 1 ]]; then
-    autopickup_interval=30
+    autopickup_interval=15
   else
     while :; do
-      printf "  %sinterval in minutes%s [30]: " "$C_BOLD" "$C_RESET"
+      printf "  %sinterval in minutes%s [15]: " "$C_BOLD" "$C_RESET"
       IFS= read -r line || line=""
-      line="${line:-30}"
+      line="${line:-15}"
       if validate_interval "$line"; then
         autopickup_interval="$line"
         break
