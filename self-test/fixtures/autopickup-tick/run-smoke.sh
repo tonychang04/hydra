@@ -233,4 +233,36 @@ NO_COLOR=1 "$SCRIPT" --bogus >/dev/null 2>&1; ec=$?
 set -e
 [[ "$ec" -eq 2 ]] || fail "--bogus should exit 2, got $ec"
 
+# -----------------------------------------------------------------------------
+# SHEPHERD NON-OBJECT-JSON GUARD (#315, twin of #307). pr-shepherd is a MANDATORY
+# reconcile: its convention on bad output is a controlled `exit 1` diagnostic (no
+# scan_ok soft-fail field). Before the fix, the bare `jq empty` gate passed a
+# valid-but-non-object payload (e.g. `[]`) and the downstream `.summary`/`.prs`
+# derefs then crashed the tick under set -e (exit 5, "jq: error ... Cannot index
+# array with string \"summary\""). The `type=="object"` shape guard now routes a
+# non-object payload to that SAME controlled exit-1 branch — a clean, diagnosed
+# stop, never an uncontrolled mid-pipeline crash. Driven via the --shepherd-cmd
+# test seam.
+set +e
+sh_nonobj_err="$(NO_COLOR=1 "$SCRIPT" "${common_args[@]}" --shepherd-cmd "printf '[]'" --json 2>&1 >/dev/null)"
+sh_nonobj_rc=$?
+set -e
+[[ "$sh_nonobj_rc" -eq 1 ]] \
+  || fail "shepherd non-object JSON must exit 1 (controlled), got $sh_nonobj_rc" "$sh_nonobj_err"
+grep -q "produced non-object JSON" <<<"$sh_nonobj_err" \
+  || fail "shepherd non-object JSON must emit the 'produced non-object JSON' diagnostic" "$sh_nonobj_err"
+# The exit must be the controlled guard, NOT a raw jq deref crash leaking through.
+grep -qi "Cannot index array" <<<"$sh_nonobj_err" \
+  && fail "shepherd guard must pre-empt the raw jq deref crash (set -e), not leak it" "$sh_nonobj_err"
+# Sanity: a well-formed OBJECT stub still flows through to exit 0.
+set +e
+sh_obj_out="$(NO_COLOR=1 "$SCRIPT" "${common_args[@]}" \
+  --shepherd-cmd 'printf "{\"prs\":[],\"summary\":{\"total\":0}}"' --json 2>/dev/null)"
+sh_obj_rc=$?
+set -e
+[[ "$sh_obj_rc" -eq 0 ]] \
+  || fail "shepherd object stub must exit 0 (happy path unchanged), got $sh_obj_rc" "$sh_obj_out"
+echo "$sh_obj_out" | jq -e '.shepherd.summary.total == 0' >/dev/null \
+  || fail "shepherd object stub summary must flow through to .shepherd.summary" "$sh_obj_out"
+
 echo "SMOKE_OK"
