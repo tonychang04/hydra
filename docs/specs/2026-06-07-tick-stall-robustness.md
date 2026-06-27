@@ -287,3 +287,53 @@ seam lets the smoke harness point the scan at a non-existent binary to assert
   guard fields, new fixture, two appended golden steps, one CLAUDE.md routing
   clause offset by a trim). Reverting the commit restores #240 behavior with no
   migration.
+
+## 2026-06-26 — jq-empty shape-guard parity (#315, twin of #307)
+
+#307 (`docs/specs/2026-06-18-worker-stall-observability.md`) replaced the stall
+scan's bare `jq empty` syntax-only gate with a `jq -e 'type=="object"'` shape
+guard so a detector that emits valid-but-non-object JSON (e.g. `[]`) falls
+through to `scan_ok:false` instead of crashing the tick under `set -e` at the
+first downstream field-deref. The same unguarded `jq empty` pattern survived on
+two sibling paths in `scripts/autopickup-tick.sh`; #315 brings them to parity:
+
+- **gc-stale-worktrees normalization (`scripts/autopickup-tick.sh`, section 4e).**
+  The `jq empty` gate becomes `jq -e 'type=="object"'`. Non-object output now
+  routes to the path's *own existing* failure branch — `scan_ok:false` with
+  `scan_skipped_reason: "gc-scan-failed(exit N)"` — so the tick reports a failed
+  safety scan and continues (exit 0), exactly as it already does for a non-zero
+  gc exit. The happy path (well-formed object) and the rc!=0 path are unchanged.
+
+- **pr-shepherd normalization (`scripts/autopickup-tick.sh`, section 2).** The
+  `jq empty` gate becomes `jq -e 'type=="object"'`. Shepherd is a *mandatory*
+  reconcile, so its existing convention on bad output is a controlled `exit 1`
+  with a stderr diagnostic (not a soft `scan_ok:false` — shepherd has no such
+  field). Non-object output now routes to that same controlled `exit 1`
+  ("pr-shepherd produced non-object JSON") instead of crashing later at
+  `$shepherd.summary` deref under `set -e`. This keeps the shepherd path's own
+  convention per the ticket's "keep each path's convention" constraint: the
+  improvement is a clean, diagnosed exit replacing an uncontrolled `set -e`
+  crash — both non-zero, but the former is intentional and legible.
+
+  *Interpretation note:* the ticket acceptance reads "the tick SURVIVE[s] (exit
+  0)" for both paths. That phrasing fits the gc/stall `scan_ok` model; the
+  shepherd path has no exit-0 failure branch (it deliberately hard-stops when the
+  mandatory reconcile is unusable). Converting shepherd to a soft exit-0 fallback
+  would *invent* a new convention and weaken a safety property, contradicting the
+  "copy the existing fix, don't invent" / "don't change the rc!=0 path" / "keep
+  each path's convention" constraints. So gc gets exit-0 continuation (its
+  convention) and shepherd gets a clean exit-1 diagnostic (its convention); both
+  satisfy the core intent — "does NOT die under `set -e`."
+
+- **Test seam.** A `--shepherd-cmd <cmd>` test-only override is added to
+  `scripts/autopickup-tick.sh`, mirroring the existing `--stalls-cmd` /
+  `--gc-script` seams, so the shepherd normalization can be driven with stub
+  output offline. Production default is unchanged (shells out to
+  `scripts/pr-shepherd.sh`).
+
+- **Regression coverage.** `self-test/fixtures/gc-stale-worktrees/run-smoke.sh`
+  feeds the gc path `[]` via `--gc-script` and asserts `.gc.scan_ok==false` +
+  tick exit 0; `self-test/fixtures/autopickup-tick/run-smoke.sh` feeds the
+  shepherd path `[]` via `--shepherd-cmd` and asserts a controlled exit 1 (not a
+  `set -e` crash). Both reproduce the pre-patch crash on the unguarded gate
+  first.
