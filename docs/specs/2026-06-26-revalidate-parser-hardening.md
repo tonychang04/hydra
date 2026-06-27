@@ -135,4 +135,28 @@ the validation-contract spec edit have valid frontmatter).
 
 ## Implementation notes
 
-(Fill in after the PR lands.)
+- Implemented in `scripts/revalidate-contract.sh`:
+  - `expected_lead()` (new) returns the structured leading clause of Expected;
+    `expected_exit()` now anchors `^(arrow )?exit[s]? (code)? <N>` against that
+    clause only, and `expected_says_nonzero()` also reads the leading clause —
+    so no exit expectation is ever scraped from free-text prose.
+  - `command_authoring_error()` (new) flags an unfilled `<placeholder>` (a
+    `<word>` token preceded by start/space/`(`, inner begins with a letter — the
+    left boundary keeps shell redirection `< file` / `<(…)` / `2>&1` / `<<EOF`
+    and quoted markup like `grep '<html>'` from matching) or a bare `$VAR` with
+    no inline binding (`VAR=`, `for VAR`, `read/local/declare/export/typeset/
+    readonly … VAR`) that is also not allowlisted and not present in the
+    environment. Flagged rows are reported `AUTHORING-ERROR`, not executed, and
+    fail the gate with **exit 3**; a real MISMATCH (exit 1) takes precedence.
+- The PR #307 fixture surfaced a subtlety: the bare-`$VAR` row did not even error
+  when run — `echo "$UNBOUND…/out.txt"` expanded the unset var to empty and
+  exited 0, so the OLD gate marked it a false **PASS** (treating a placeholder as
+  a real value). The authoring-error pre-flight catches both the erroring and the
+  silently-empty case.
+- Consumer wiring: `.claude/agents/worker-validator.md` gained an exit-3 routing
+  bullet (treat as `UNVALIDATED` Concern / fix the contract — never
+  `commander-stuck`), so the new distinct exit code does not get misrouted as a
+  code BLOCKER (which would re-introduce the false-positive paging this fixes).
+- No table-schema change: the 6-column header shared with `validate-contract.sh`
+  / `contract-path.sh` / every existing contract is untouched; the "structured
+  exit field" is the pre-existing leading `exit <N>` clause, parsed strictly.
