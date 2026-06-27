@@ -32,7 +32,7 @@ Hermes has this as built-in cron + natural-language task scheduling. Gstack's `/
 
 Leverage the existing `/loop` skill which already handles interval-based re-entry into a commander session. The `autopickup every N min` command:
 
-1. Validates N (clamp to [5, 120] minutes; default 30)
+1. Validates N (clamp to [5, 120] minutes; default 15)
 2. Records scheduler state in `state/autopickup.json`: `{enabled: true, interval_min: N, last_run: <ts>, last_picked_count: K}`
 3. Invokes the `/loop` skill with a prompt template: "check queue + pick up ≤ max_concurrent_workers, then sleep N min, unless state/autopickup.json:enabled is false"
 
@@ -92,7 +92,7 @@ Short follow-up so the operator never has to type `autopickup every N min` to ge
 Summary of the change:
 
 - `state/autopickup.json` gains `auto_enable_on_session_start` (default `true`). Backward-compat: missing field → treat as `true`.
-- `setup.sh` seeds `state/autopickup.json` on first run with `{enabled: false, interval_min: 30, auto_enable_on_session_start: true, ...}` — same defaults as the template.
+- `setup.sh` seeds `state/autopickup.json` on first run with `{enabled: false, interval_min: 15, auto_enable_on_session_start: true, ...}` — same defaults as the template.
 - The generated `./hydra` launcher accepts `--no-autopickup`, which exports `HYDRA_NO_AUTOPICKUP=1` before `exec claude`. Commander's session-start check reads that env var to suppress auto-enable for the current session only.
 - `CLAUDE.md` "Session greeting" section gained the default-on check and extended the greeting line to include autopickup status.
 

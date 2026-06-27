@@ -101,7 +101,7 @@ wall_clock_min="$(jq_or "$budget_file" '.total_worker_wall_clock_minutes_today /
 
 auto_file="$STATE_DIR/autopickup.json"
 auto_enabled="$(jq_or "$auto_file" '.enabled // false' "false")"
-auto_interval="$(jq_or "$auto_file" '.interval_min // 30' "30")"
+auto_interval="$(jq_or "$auto_file" '.interval_min // 15' "15")"
 auto_last="$(jq_or "$auto_file" '.last_run // "never"' "never")"
 auto_streak="$(jq_or "$auto_file" '.consecutive_rate_limit_hits // 0' "0")"
 
