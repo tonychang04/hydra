@@ -44,8 +44,20 @@
 #   - Otherwise RE-RUN the Command in --cwd, bounded by a portable
 #     `sleep N && kill` watchdog (macOS lacks `timeout`; never assume it),
 #     capturing the ACTUAL exit code + an output snippet.
-#   - Compare actual vs claimed (Expected parsing is lenient — it is human prose):
-#       * Expected names `exit <N>`  -> require actual exit == N.
+#   - BEFORE re-running, a row's Command is checked for self-containment (#310).
+#     A Command that is NOT runnable as written — an unfilled `<placeholder>`, or
+#     a bare `$VAR` with no inline binding and not in the environment — is a
+#     CONTRACT AUTHORING ERROR, NOT a code failure. It is reported with the
+#     distinct status AUTHORING-ERROR, is NOT executed (running it would produce
+#     a shell error that masquerades as a code MISMATCH — the #307 false
+#     positive), and fails the gate with the distinct exit 3.
+#   - Compare actual vs claimed. The expected exit code is read ONLY from the
+#     STRUCTURED leading clause of Expected — the `exit <N>` token before the
+#     first ` / ` output separator — never scraped from free-text prose elsewhere
+#     in the cell (the #309 false positive, where `exit 1` appeared in a grep
+#     row's description). Rules:
+#       * leading clause names `exit <N>` -> require actual exit == N.
+#       * leading clause says `exits nonzero`/`nonzero exit` -> require nonzero.
 #       * else (no parseable exit)   -> claimed PASS requires actual exit 0;
 #                                       claimed FAIL requires actual nonzero.
 #       * Expected ALSO quotes an output substring (backtick/quote-wrapped) ->
@@ -65,6 +77,10 @@
 #       ran nothing, so it emits NO-RUNS/UNVALIDATED and refuses to certify; a
 #       truth-checker that ran nothing must never report success).
 #   2 = usage / parse error (no contract table, unreadable file, bad header).
+#   3 = contract AUTHORING error (#310): a row's Command is not self-contained /
+#       not runnable (unfilled <placeholder> or bare unbound $VAR). The contract
+#       must be fixed; this is NOT a code MISMATCH. A real MISMATCH takes
+#       precedence (exit 1) when both are present in the same contract.
 
 set -euo pipefail
 
@@ -111,8 +127,11 @@ Options:
 
 Re-run rules:
   - UNVERIFIED rows are SKIPPED (not run).
-  - PASS rows are re-run; the row reproduces if actual exit matches Expected
-    `exit <N>`, else (no parseable exit) PASS requires exit 0 / FAIL nonzero.
+  - A Command that is not self-contained (an unfilled <placeholder> or a bare
+    unbound $VAR) is an AUTHORING-ERROR: reported distinctly, NOT executed.
+  - PASS rows are re-run; the row reproduces if actual exit matches the Expected
+    cell's structured leading `exit <N>` clause, else (no parseable exit) PASS
+    requires exit 0 / FAIL nonzero. The exit code is never scraped from prose.
   - An Expected output substring that is missing (but exit matches) is a WARN.
   - A claimed-PASS row that does not reproduce is a MISMATCH.
 
@@ -121,6 +140,8 @@ Exit codes:
   1 = a claimed-PASS row did not reproduce, OR zero commands re-ran
       (all rows UNVERIFIED/prose-only -> NO-RUNS/UNVALIDATED, never certified)
   2 = usage / parse error (no table found, bad header, unreadable file)
+  3 = contract AUTHORING error (a Command is not self-contained / not runnable);
+      fix the contract, not the code. exit 1 (MISMATCH) takes precedence.
 
 Spec: docs/specs/2026-06-07-worker-validator.md
 Sibling (presence gate): scripts/validate-contract.sh (#255).
@@ -403,15 +424,35 @@ run_bounded() {
 }
 
 # -----------------------------------------------------------------------------
-# expected_exit — parse an `exit <N>` token from the Expected cell. Echoes N, or
-# empty if none. Recognizes "exit 0", "exit 1", "exits 0", "-> exit 2", etc.
+# expected_lead — the STRUCTURED leading clause of an Expected cell: the segment
+# before the first ` / ` output-substring separator (or the whole cell if there
+# is none), with a leading code-fence backtick tolerated. The documented Expected
+# grammar is `exit <N>[ / <output substring>]`, so any structured exit
+# declaration lives here. Exit parsing reads ONLY this clause — never free-text
+# prose elsewhere in the cell (the #309 false positive, where a grep row's
+# description mentioned `exit 1`). #310.
+# -----------------------------------------------------------------------------
+expected_lead() {
+  local exp lead
+  exp="$(trim "$1")"
+  if [[ "$exp" == *" / "* ]]; then lead="${exp%%" / "*}"; else lead="$exp"; fi
+  lead="$(trim "$lead")"
+  lead="${lead#\`}"
+  printf '%s' "$(trim "$lead")"
+}
+
+# -----------------------------------------------------------------------------
+# expected_exit — parse an `exit <N>` token ANCHORED at the start of the Expected
+# cell's structured leading clause (expected_lead). Echoes N, or empty if none.
+# Recognizes "exit 0", "exit 1", "exits 0", "exit code: 2", "-> exit 2". A bare
+# "exit 1" buried in prose is NOT parsed (#310 / #309) — only the leading clause.
 # -----------------------------------------------------------------------------
 expected_exit() {
-  local exp lower
-  exp="$(trim "$1")"
-  lower="$(printf '%s' "$exp" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
-  if [[ "$lower" =~ exit[s]?[[:space:]]+([0-9]+) ]]; then
-    printf '%s' "${BASH_REMATCH[1]}"
+  local lead lower
+  lead="$(expected_lead "$1")"
+  lower="$(printf '%s' "$lead" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  if [[ "$lower" =~ ^((->|=>|→)[[:space:]]*)?exit[s]?([[:space:]]+code)?[:]?[[:space:]]+([0-9]+) ]]; then
+    printf '%s' "${BASH_REMATCH[4]}"
   fi
 }
 
@@ -428,8 +469,11 @@ expected_exit() {
 # adjacent to "exit"/"exit code" so arbitrary prose never trips it.
 # -----------------------------------------------------------------------------
 expected_says_nonzero() {
-  local lower
-  lower="$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  local lead lower
+  # Read only the structured leading clause (#310): never infer a nonzero-exit
+  # expectation from free-text prose elsewhere in the cell.
+  lead="$(expected_lead "$1")"
+  lower="$(printf '%s' "$lead" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   # "exits nonzero", "exit nonzero", "exits non-zero", "exit non-zero"
   if [[ "$lower" =~ exit[s]?[[:space:]]+non-?zero ]]; then return 0; fi
   # "nonzero exit", "non-zero exit", "nonzero exit code"
@@ -471,9 +515,72 @@ expected_substring() {
 }
 
 # -----------------------------------------------------------------------------
+# command_authoring_error — true (0) if the Command string is NOT self-contained
+# / not runnable as written, i.e. a CONTRACT AUTHORING error rather than a code
+# failure (#310). Sets $AUTHORING_REASON. Two classes (the #307 false-MISMATCH
+# causes):
+#   1. an unfilled angle-bracket placeholder: a `<token>` whose inner begins with
+#      a letter (`<fixture>`, `<fixture-logs>`, `<n>`), preceded by start / space
+#      / `(`. The left boundary keeps shell redirection (`< file`, `<(...)`,
+#      `2>&1`, `<<EOF`) and quoted markup (`grep '<html>'`) from matching.
+#   2. a bare `$VAR` / `${VAR}` referenced with NO inline binding in the same
+#      command (`VAR=`, `for VAR`, `read [-flags] VAR`, `local/declare/export/
+#      typeset/readonly VAR`) and not an allowlisted env/special var and not
+#      actually present in the environment.
+# Returns 1 (not an authoring error) otherwise.
+# -----------------------------------------------------------------------------
+AUTHORING_REASON=""
+command_authoring_error() {
+  local cmd="$1"
+  AUTHORING_REASON=""
+
+  # (1) unfilled angle-bracket placeholder.
+  local ph_re='(^|[[:space:](])<[A-Za-z][A-Za-z0-9_-]*>'
+  if [[ "$cmd" =~ $ph_re ]]; then
+    local hit="$(trim "${BASH_REMATCH[0]}")"
+    AUTHORING_REASON="unfilled placeholder '$hit' — a <...> token is not runnable shell"
+    return 0
+  fi
+
+  # (2) bare unbound variable reference.
+  local names v
+  names="$(printf '%s\n' "$cmd" | grep -oE '\$\{?[A-Za-z_][A-Za-z0-9_]*' 2>/dev/null \
+            | sed -E 's/^\$\{?//' || true)"
+  local seen=" "
+  while IFS= read -r v; do
+    [[ -n "$v" ]] || continue
+    case "$seen" in *" $v "*) continue ;; esac
+    seen+="$v "
+    # allowlist: common env/special vars that are not contract-specific.
+    case "$v" in
+      HOME|PWD|OLDPWD|USER|LOGNAME|PATH|SHELL|TERM|TMPDIR|TMP|TEMP|LANG|LC_ALL|\
+      LC_CTYPE|HOSTNAME|COMMANDER_ROOT|CI|IFS|RANDOM|SECONDS|LINENO|PPID|UID|EUID|\
+      GROUPS|COLUMNS|LINES|EDITOR|PAGER)
+        continue ;;
+      HYDRA_*|GITHUB_*|RUNNER_*|BASH|BASH_*|FUNCNAME)
+        continue ;;
+    esac
+    # inline binding in the same command? (assignment / for / read / declare-ish)
+    local assign_re="(^|[^A-Za-z0-9_])${v}="
+    if [[ "$cmd" =~ $assign_re ]]; then continue; fi
+    local for_re="(^|[^A-Za-z0-9_])for[[:space:]]+${v}([^A-Za-z0-9_]|$)"
+    if [[ "$cmd" =~ $for_re ]]; then continue; fi
+    local decl_re="(^|[^A-Za-z0-9_])(read|local|declare|typeset|export|readonly)([[:space:]]+-[A-Za-z]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*)*[[:space:]]+${v}([^A-Za-z0-9_]|$)"
+    if [[ "$cmd" =~ $decl_re ]]; then continue; fi
+    # actually present in the environment (set, possibly empty)?
+    if eval "[[ -n \"\${$v+x}\" ]]"; then continue; fi
+    AUTHORING_REASON="bare unbound variable \$$v — no inline assignment, not in environment"
+    return 0
+  done <<< "$names"
+
+  return 1
+}
+
+# -----------------------------------------------------------------------------
 # walk data rows: re-run + compare
 # -----------------------------------------------------------------------------
 mismatches=0
+authoring_errors=0
 warns=0
 ran=0
 skipped=0
@@ -505,6 +612,21 @@ for ((ln = data_start; ln <= ${#LINES[@]}; ln++)); do
   if [[ "$norm_verdict" == "UNVERIFIED" ]] || is_placeholder "$command"; then
     echo "${C_YELLOW}SKIP${C_RESET} row $rownum (${norm_verdict:-?}): $(trim "$assertion")"
     skipped=$((skipped + 1))
+    continue
+  fi
+
+  # Contract authoring-error pre-flight (#310): a Command that is not
+  # self-contained / not runnable (unfilled <placeholder> or a bare unbound
+  # $VAR) is a CONTRACT authoring defect, NOT a code MISMATCH. Report it with a
+  # DISTINCT status and do NOT execute it — running it would produce a shell
+  # error (or a silently-empty expansion) that masquerades as a code failure
+  # (the #307 false positive). This is never reported as a MISMATCH.
+  if command_authoring_error "$cmd_str"; then
+    echo "${C_YELLOW}AUTHORING-ERROR${C_RESET} row $rownum: $(trim "$assertion")" >&2
+    echo "${C_DIM}    command : $cmd_str${C_RESET}" >&2
+    echo "${C_DIM}    $AUTHORING_REASON${C_RESET}" >&2
+    echo "${C_DIM}    -> the contract names a non-runnable command; fix the contract, not the code (NOT a MISMATCH).${C_RESET}" >&2
+    authoring_errors=$((authoring_errors + 1))
     continue
   fi
 
@@ -597,9 +719,22 @@ fi
 # -----------------------------------------------------------------------------
 echo ""
 if [[ "$mismatches" -gt 0 ]]; then
-  echo "${C_RED}${C_BOLD}revalidate-contract: FAIL${C_RESET} ($mismatches mismatch(es); $ran re-run, $skipped skipped, $warns warn) over $row_count row(s)" >&2
+  echo "${C_RED}${C_BOLD}revalidate-contract: FAIL${C_RESET} ($mismatches mismatch(es); $ran re-run, $skipped skipped, $authoring_errors authoring-error(s), $warns warn) over $row_count row(s)" >&2
   echo "${C_DIM}  A claimed-PASS assertion did not reproduce when re-run — the pasted evidence is stale or false.${C_RESET}" >&2
   exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# contract authoring-error verdict (#310). A non-self-contained Command is a
+# defect in the CONTRACT, not a lie about the code — so it gets a DISTINCT exit
+# (3), never confused with a MISMATCH (1) or a parse error (2). Checked AFTER
+# mismatches (a real lie is the more serious headline) and BEFORE the no-runs
+# guard (if rows were all authoring errors, that is WHY nothing ran).
+# -----------------------------------------------------------------------------
+if [[ "$authoring_errors" -gt 0 ]]; then
+  echo "${C_RED}${C_BOLD}revalidate-contract: CONTRACT-AUTHORING-ERROR${C_RESET} ($authoring_errors non-runnable command(s); $ran re-run, $skipped skipped, $warns warn) over $row_count row(s)" >&2
+  echo "${C_DIM}  A Command cell is not self-contained (unfilled <placeholder> or bare unbound \$VAR). Fix the contract; this is NOT a code MISMATCH. See docs/specs/2026-06-26-revalidate-parser-hardening.md${C_RESET}" >&2
+  exit 3
 fi
 
 # -----------------------------------------------------------------------------
@@ -618,5 +753,5 @@ if [[ "$ran" -eq 0 ]]; then
   exit 1
 fi
 
-echo "${C_GREEN}${C_BOLD}revalidate-contract: OK${C_RESET} ($ran re-run reproduced, $skipped skipped, $warns warn) over $row_count row(s)"
+echo "${C_GREEN}${C_BOLD}revalidate-contract: OK${C_RESET} ($ran re-run reproduced, $skipped skipped, $authoring_errors authoring-error(s), $warns warn) over $row_count row(s)"
 exit 0
