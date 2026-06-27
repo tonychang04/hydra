@@ -187,7 +187,7 @@
       "assertions": {
         "clamp_interval_min": 5,
         "clamp_interval_max": 120,
-        "default_interval_min": 30,
+        "default_interval_min": 15,
         "quiet_by_default": true,
         "auto_disable_threshold": 2,
         "never_auto_merges_above_T1": true,
@@ -215,10 +215,10 @@
           "expected_stdout_contains": "true"
         },
         {
-          "name": "fresh setup.sh seeds interval_min=30",
+          "name": "fresh setup.sh seeds interval_min=15",
           "cmd": "jq -r .interval_min state/autopickup.json",
           "expected_exit": 0,
-          "expected_stdout_contains": "30"
+          "expected_stdout_contains": "15"
         },
         {
           "name": "fresh setup.sh seeds enabled=false (session-start logic flips it, not setup)",
@@ -3500,14 +3500,20 @@
       "tier": "T1",
       "steps": [
         {
-          "name": "real sources: default (15) < watchdog threshold (18) — guard green",
+          "name": "real sources: example + setup.sh seeds (15) < watchdog threshold (18) — guard green",
           "cmd": "scripts/test-autopickup-interval-default.sh",
           "expected_exit": 0,
           "expected_stdout_contains": "0 failed"
         },
         {
-          "name": "tampered default at threshold (30) is CAUGHT — guard reds",
+          "name": "tampered example seed at threshold (30) is CAUGHT — guard reds",
           "cmd": "EXAMPLE_SRC=self-test/fixtures/autopickup-interval-default/over-threshold.json scripts/test-autopickup-interval-default.sh",
+          "expected_exit": 1,
+          "expected_stdout_contains": "1 failed"
+        },
+        {
+          "name": "tampered setup.sh installer seed at threshold (30) is CAUGHT — guard reds (the #316 miss the guard now structurally catches)",
+          "cmd": "SETUP_SRC=self-test/fixtures/autopickup-interval-default/over-threshold-setup.sh scripts/test-autopickup-interval-default.sh",
           "expected_exit": 1,
           "expected_stdout_contains": "1 failed"
         }

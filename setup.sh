@@ -272,7 +272,7 @@ for f in state/active.json state/budget-used.json state/memory-citations.json st
       */active.json)           echo '{"workers": [], "last_updated": null}' > "$f" ;;
       */budget-used.json)      echo '{"date": null, "tickets_completed_today": 0, "tickets_failed_today": 0, "total_worker_wall_clock_minutes_today": 0, "rate_limit_hits_today": 0, "phase2_spend_usd_today": 0}' > "$f" ;;
       */memory-citations.json) echo '{"_schema": "key = learnings-<repo>.md#<quote>, value = {count, last_cited, tickets, promotion_threshold_reached}", "citations": {}}' > "$f" ;;
-      */autopickup.json)       echo '{"enabled": false, "interval_min": 30, "auto_enable_on_session_start": true, "last_run": null, "last_picked_count": 0, "consecutive_rate_limit_hits": 0}' > "$f" ;;
+      */autopickup.json)       echo '{"enabled": false, "interval_min": 15, "auto_enable_on_session_start": true, "last_run": null, "last_picked_count": 0, "consecutive_rate_limit_hits": 0}' > "$f" ;;
     esac
     ok "$f"
   fi

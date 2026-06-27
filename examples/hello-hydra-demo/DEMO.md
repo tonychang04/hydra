@@ -73,7 +73,7 @@ From your Hydra clone:
 ./hydra
 ```
 
-Commander's session greeting reports: "`3` tickets ready across `1` repo". With autopickup default-on (interval 30m, but the first scheduled tick waits the full interval), you can either wait for the tick or nudge it with:
+Commander's session greeting reports: "`3` tickets ready across `1` repo". With autopickup default-on (interval 15m, but the first scheduled tick waits the full interval), you can either wait for the tick or nudge it with:
 
 ```
 pick up 3
