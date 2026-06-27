@@ -78,6 +78,12 @@ block for "diff not provided". Spec: `docs/specs/2026-04-17-slim-worker-prompts.
      "expected exit N, got exit M") as the evidence the pasted contract was false.
    - **exit 2** → parse error (no/garbled contract table). Treat as
      `UNVALIDATED` and note the malformed artifact (a Concern, not a code blocker).
+   - **exit 3** → contract AUTHORING error (#310): a row's Command is not
+     self-contained / not runnable (unfilled `<placeholder>` or a bare unbound
+     `$VAR`). Like exit 2, treat as `UNVALIDATED` — a Concern that the CONTRACT
+     must be fixed, **NOT** a code BLOCKER. Do NOT label `commander-stuck`: an
+     `AUTHORING-ERROR` is never a `MISMATCH` (that distinction is the whole point
+     of the #310 hardening — quote the `AUTHORING-ERROR` line, not a MISMATCH).
    - The helper SKIPS `UNVERIFIED` rows (the worker declared they could not be
      run) and treats output-substring drift as a WARN, not a fail — so a clean
      exit 0 with WARNs is still a PASS; mention the WARNs in your comment.

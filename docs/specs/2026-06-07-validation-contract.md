@@ -135,6 +135,37 @@ Column contract (the helper enforces it):
   why it couldn't run).
 - **At least one assertion row** must exist.
 
+#### Command + Expected cell authoring rules (hardened by #310)
+
+The **truth gate** (`scripts/revalidate-contract.sh`, #256) RE-RUNS each row's
+Command and compares the actual exit/output to Expected. For that to be reliable,
+the cells must be machine-checkable, not free prose. These rules are enforced by
+the gate (a violation surfaces as a distinct `AUTHORING-ERROR`, exit 3 — NOT a
+code `MISMATCH`). See `docs/specs/2026-06-26-revalidate-parser-hardening.md`.
+
+- **Command cells MUST be self-contained and copy-paste runnable.** The gate runs
+  the cell verbatim via `bash -c` in the worktree. Do NOT leave:
+  - an unfilled angle-bracket placeholder (`<fixture>`, `<fixture-logs>`, `<n>`) —
+    fill in the real value before you run the contract; and
+  - a bare `$VAR` / `${VAR}` with no inline binding in the same command — either
+    bind it inline (`T=foo; … "$T"`), use a well-known env var (`$HOME`,
+    `$COMMANDER_ROOT`, …), or inline the literal value.
+  A non-self-contained Command is a **contract authoring error**, reported
+  distinctly and never confused with a real failure. (Root cause of the PR #307
+  false positive: placeholder/unbound cells ran and their shell errors looked like
+  code MISMATCHes.)
+- **The expected exit code lives in its own structured field** — the leading
+  `exit <N>` clause of the Expected cell, before the first ` / ` output separator.
+  The documented Expected grammar is `exit <N>[ / <output substring>]`. The gate
+  reads the exit code ONLY from that leading clause; it never scrapes an `exit <N>`
+  token out of free-text prose elsewhere in the cell. So describing what *another*
+  exit code would mean ("`exit 1` would mean no match") is safe prose, not a
+  competing expectation. (Root cause of the PR #309 false positive: `exit 1` in a
+  grep row's description was scraped and demanded.)
+- **Escape a literal pipe as `\|`** inside any cell (Command, Expected, Evidence)
+  — that is how GitHub renders a pipe in a table cell, and the shared splitter
+  restores it as a literal `|` so it never shifts columns.
+
 The two-phase lifecycle the artifact encodes:
 
 1. **Phase 1 (verify-first, before code):** the worker writes the table with

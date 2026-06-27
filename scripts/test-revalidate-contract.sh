@@ -24,6 +24,11 @@
 #   - no / garbled table header                                      -> exit 2
 #   - escaped pipe \| in a Command cell (shared splitter, no shift)  -> exit 0
 #   - --help                                                         -> exit 0
+#   - #310 (a) well-formed self-contained row                        -> exit 0
+#   - #310 (b) exit code in Expected PROSE (#309 repro) no false MM   -> exit 0
+#   - #310 (c) non-runnable Command (#307 repro) AUTHORING-ERROR      -> exit 3
+#   - #310 (d) genuine wrong exit STILL a MISMATCH (no-regression)    -> exit 1
+#   - #310 over-flagging guards (bound/env/loop var, quoted markup)   -> exit 0
 #
 # Style: matches scripts/test-validate-contract.sh (bash, colored output,
 # pass/fail counter, no external harness). Spec:
@@ -336,6 +341,93 @@ cat > "$tmpdir/t17b.md" <<'EOF'
 EOF
 run --file "$tmpdir/t17b.md"
 if [[ "$EC" -eq 1 ]]; then ok "explicit 'exits nonzero' disagreement still caught"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# =============================================================================
+# #310 — parser hardening: stop false-positive MISMATCHes that erode the gate.
+# The four acceptance cases (a)-(d) + over-flagging guards. Committed fixtures
+# under self-test/fixtures/revalidate-contract/ reconstruct #307 and #309.
+# =============================================================================
+
+# ---------- Test 18 (a): well-formed self-contained row -> PASS reproduces ----------
+say "Test 18 (a): well-formed self-contained PASS row -> exit 0"
+cat > "$tmpdir/t18.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | a self-contained command reproduces | `sh -c 'exit 0'` | exit 0 | PASS | ran it -> exit 0 |
+EOF
+run --file "$tmpdir/t18.md"
+if [[ "$EC" -eq 0 ]]; then ok "well-formed row -> exit 0"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 19 (b): #309 — exit code in Expected PROSE must NOT false-MISMATCH ----------
+# A grep row exits 0 on a match; its Expected cell merely *mentions* `exit 1` in
+# prose. The OLD parser scraped `exit 1` and demanded the pipeline exit 1 (false
+# MISMATCH). The hardened parser reads the exit code only from the structured
+# leading clause (absent here) and falls back to the verdict (PASS => exit 0).
+say "Test 19 (b): grep row, 'exit 1' in Expected prose, command exits 0 -> NOT a false MISMATCH (exit 0)"
+run --file "$FIXDIR/issue-309-grep-prose.md"
+if [[ "$EC" -eq 0 ]]; then ok "#309 reconstruction -> exit 0 (no false mismatch)"; else bad "FALSE MISMATCH on Expected prose; expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qiE "mismatch" "$tmpdir/out"; then bad "wrongly reported MISMATCH (exit code scraped from prose)"; else ok "no MISMATCH reported for prose 'exit 1'"; fi
+# inline variant (not just the committed fixture) for robustness
+cat > "$tmpdir/t19.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | grep matches and exits 0 | `printf 'hay needle\n' \| grep -q needle` | matches the line; exit 1 would only mean the token was absent | PASS | ran it -> exit 0 |
+EOF
+run --file "$tmpdir/t19.md"
+if [[ "$EC" -eq 0 ]]; then ok "inline prose-exit variant -> exit 0"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 20 (c): #307 — non-runnable Command -> AUTHORING-ERROR (exit 3), not MISMATCH ----------
+say "Test 20 (c): placeholder + bare-unbound-var Command -> AUTHORING-ERROR, not run, exit 3"
+run --file "$FIXDIR/issue-307-authoring.md"
+if [[ "$EC" -eq 3 ]]; then ok "authoring errors -> exit 3 (distinct code)"; else bad "expected 3, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qE "AUTHORING-ERROR row " "$tmpdir/out"; then ok "reports a distinct AUTHORING-ERROR status"; else bad "expected AUTHORING-ERROR in output; out: $(cat "$tmpdir/out")"; fi
+if grep -qE "MISMATCH row " "$tmpdir/out"; then bad "a non-runnable Command was wrongly reported as MISMATCH"; else ok "never reported as MISMATCH (the #307 fix)"; fi
+# 20a: a placeholder-only contract (no other rows) still exits 3, not the no-runs exit 1.
+cat > "$tmpdir/t20a.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | placeholder not filled in | `cat <fixture>` | exit 0 | PASS | (left a placeholder) |
+EOF
+run --file "$tmpdir/t20a.md"
+if [[ "$EC" -eq 3 ]]; then ok "single placeholder row -> exit 3 (not no-runs exit 1)"; else bad "expected 3, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# 20b: over-flagging GUARDS — legitimate self-contained commands must NOT be flagged.
+say "Test 20b: inline-bound \$VAR and allowlisted env \$VAR are NOT authoring errors -> exit 0"
+cat > "$tmpdir/t20b.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | inline-assigned var is fine | `sh -c 'T=ok; test "$T" = ok'` | exit 0 | PASS | ran it -> exit 0 |
+| 2 | allowlisted env var is fine | `sh -c 'test -n "$HOME"'` | exit 0 | PASS | ran it -> exit 0 |
+| 3 | for-loop var is fine | `sh -c 'for x in a b; do printf "%s" "$x"; done'` | exit 0 | PASS | ran it -> ab |
+EOF
+run --file "$tmpdir/t20b.md"
+if [[ "$EC" -eq 0 ]]; then ok "bound/env/loop vars not flagged -> exit 0"; else bad "over-flagged a legit command; expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qE "AUTHORING-ERROR row " "$tmpdir/out"; then bad "wrongly flagged a self-contained command as AUTHORING-ERROR"; else ok "no false AUTHORING-ERROR on legit vars"; fi
+# 20c: quoted markup like '<html>' (not a placeholder, not preceded by space/() must NOT flag.
+cat > "$tmpdir/t20c.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | quoted angle markup is not a placeholder | `sh -c "printf '<html>\n' \| grep -q '<html>'"` | exit 0 | PASS | ran it -> exit 0 |
+EOF
+run --file "$tmpdir/t20c.md"
+if [[ "$EC" -eq 0 ]]; then ok "quoted '<html>' not flagged -> exit 0"; else bad "over-flagged quoted markup; expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 21 (d): NO-REGRESSION — a genuine wrong exit is STILL a MISMATCH ----------
+# The load-bearing safety check: hardening must not silence REAL failures.
+say "Test 21 (d): self-contained command genuinely exits wrong -> STILL MISMATCH (exit 1)"
+run --file "$FIXDIR/genuine-mismatch.md"
+if [[ "$EC" -eq 1 ]]; then ok "genuine mismatch still caught -> exit 1"; else bad "REGRESSION: genuine mismatch not caught; expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qiE "mismatch" "$tmpdir/out"; then ok "reports MISMATCH for the real failure"; else bad "expected MISMATCH in output; out: $(cat "$tmpdir/out")"; fi
+# 21b: a real MISMATCH takes precedence over an authoring error in the same contract.
+say "Test 21b: real MISMATCH + an authoring-error row in one contract -> exit 1 (mismatch wins)"
+cat > "$tmpdir/t21b.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | genuinely wrong exit | `sh -c 'exit 5'` | exit 0 | PASS | claimed exit 0 |
+| 2 | non-runnable placeholder | `cat <fixture>` | exit 0 | PASS | (placeholder) |
+EOF
+run --file "$tmpdir/t21b.md"
+if [[ "$EC" -eq 1 ]]; then ok "MISMATCH takes precedence over authoring-error -> exit 1"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
 
 # ---------- summary ----------
 echo ""
