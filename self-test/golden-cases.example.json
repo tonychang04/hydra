@@ -3491,6 +3491,29 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "autopickup-interval-default",
+      "_description": "Drift guard (#316): the scheduled-autopickup default interval must stay below the tick's 18-min stream-idle stall-watchdog threshold, else a fresh-install tick trips its own interval_warn (the bug #316 fixed by lowering the default 30 -> 15). scripts/test-autopickup-interval-default.sh reads the threshold from scripts/autopickup-tick.sh and the default from state/autopickup.json.example and asserts default < threshold. Spec: docs/specs/2026-06-26-autopickup-default-interval.md",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T1",
+      "steps": [
+        {
+          "name": "real sources: default (15) < watchdog threshold (18) — guard green",
+          "cmd": "scripts/test-autopickup-interval-default.sh",
+          "expected_exit": 0,
+          "expected_stdout_contains": "0 failed"
+        },
+        {
+          "name": "tampered default at threshold (30) is CAUGHT — guard reds",
+          "cmd": "EXAMPLE_SRC=self-test/fixtures/autopickup-interval-default/over-threshold.json scripts/test-autopickup-interval-default.sh",
+          "expected_exit": 1,
+          "expected_stdout_contains": "1 failed"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
