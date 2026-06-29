@@ -82,6 +82,66 @@ fly ssh console --app <app> -C 'tmux attach -t commander'
 # Detach with Ctrl-b d (don't Ctrl-c — that kills commander).
 ```
 
+## Running the cloud acceptance test
+
+`scripts/e2e-cloud-acceptance.sh` is the single test that proves Hydra's north
+star — _the machine runs while the operator sleeps._ It scripts the full
+"assign a ticket, go offline, wake up to a merged PR" loop as 9 steps:
+
+1. Fresh Fly deploy against the `hello-hydra-demo` fixture repo.
+2. Register an MCP bearer (`./hydra mcp register-agent`).
+3. Enable autopickup on the cloud commander.
+4. Assign fixture issue #1 to the bot (honoring the assignee override).
+5. **Disconnect** — the operator simulator goes offline.
+6. Wait for the autopickup tick to fire (clamped via `HYDRA_FAKE_NOW`).
+7. Poll for PR creation (or the commander review-gate label).
+8. Reconnect — verify the PR exists, CI is green, `commander-review-clean`
+   is applied.
+9. Flip to T1 auto-merge and confirm the PR auto-merged.
+
+The script exits `0` only if the full loop succeeds. On any step failure it
+prints which step failed plus the expected-vs-actual state and exits `1`.
+
+### Dry-run (offline, zero side effects)
+
+Always rehearse with `--dry-run` first. It runs all 9 steps against a **mocked
+Fly API + mocked GitHub state machine** — no real `fly` / `gh` / `curl` /
+`./hydra` calls, no lingering infrastructure, no real sleeps (the tick clock is
+faked). This is the mode wired into CI via the `e2e-cloud-dry-run` self-test
+case.
+
+```bash
+# Rehearse the entire loop offline. Exits 0; prints a 9-step trace.
+bash scripts/e2e-cloud-acceptance.sh --dry-run
+
+# The same check the self-test runs:
+self-test/run.sh --case e2e-cloud-dry-run
+```
+
+### Real run
+
+A real run deploys actual Fly infrastructure and depends on prereqs that are
+**out of scope** for the test itself (#119 `fly deploy`, #123 launcher
+auto-regen, #115 memory-sync). It tears the Fly app down on every exit path
+(success or failure) unless you pass `--keep`.
+
+```bash
+bash scripts/e2e-cloud-acceptance.sh \
+  --fly-app hydra-e2e-<you> \
+  --repo <owner>/hello-hydra-demo \
+  --assignee @hydra-bot
+```
+
+If a prerequisite binary (`fly` / `gh` / `curl`) or `infra/fly.toml` is missing,
+the script exits `3` and names what's missing rather than half-completing.
+
+### The README badge
+
+Both modes print a paste-ready shields.io badge line at the end reflecting the
+result + date. After a successful **real** run, paste the printed
+`brightgreen` badge over the `cloud_e2e` badge in `README.md`; if a run fails,
+paste the `⚠ failing` variant. The badge ships seeded to `not yet run`.
+
 ## Migrating from local to cloud
 
 If you've been running Hydra locally (`./hydra` in a terminal) and want to move to cloud without losing memory, learnings, or ticket state, use `scripts/hydra-migrate-to-cloud.sh`. The script walks you through: generate both OAuth tokens (Claude + Codex, if desired) → push to `fly secrets` → generate MCP bearer for your main agent → deploy and health-check.

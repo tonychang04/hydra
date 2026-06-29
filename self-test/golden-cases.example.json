@@ -3520,6 +3520,65 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "e2e-cloud-dry-run",
+      "_description": "Script-only self-test for scripts/e2e-cloud-acceptance.sh (ticket #127, spec docs/specs/2026-04-17-e2e-cloud-acceptance.md). The cloud acceptance test scripts the full 'assign ticket, go offline, wake to a merged PR' loop; this case exercises its --dry-run mode, which runs all 9 steps against a mocked Fly API + mocked GitHub state machine. Asserts: (a) bash-syntax-clean; (b) --help usage + --dry-run advertised; (c) --dry-run completes exit 0 through Step 9/9 with 'E2E dry-run complete'; (d) with a stub PATH that screams+exit99 if invoked, the dry-run calls NO real fly/flyctl/gh/curl/claude (zero side effects, mirroring migrate-to-cloud-dry-run); (e) no fake secret value leaks into output; (f) the cleanup trap removes the mock state dir (no lingering tmp); (g) a failed step (HYDRA_E2E_FAIL_STEP) exits 1 and names the step with expected-vs-actual. Runs anywhere bash+jq is present; no network, no docker, no Claude auth.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "e2e-cloud-acceptance.sh bash -n clean",
+          "cmd": "bash -n scripts/e2e-cloud-acceptance.sh && echo SYNTAX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SYNTAX_OK"
+        },
+        {
+          "name": "--help prints usage",
+          "cmd": "NO_COLOR=1 scripts/e2e-cloud-acceptance.sh --help",
+          "expected_exit": 0,
+          "expected_stdout_contains": "Usage: scripts/e2e-cloud-acceptance.sh"
+        },
+        {
+          "name": "--help advertises --dry-run",
+          "cmd": "NO_COLOR=1 scripts/e2e-cloud-acceptance.sh --help | grep -q '\\-\\-dry-run' && echo DRY_RUN_DOCUMENTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DRY_RUN_DOCUMENTED"
+        },
+        {
+          "name": "--dry-run completes all 9 steps and exits 0",
+          "cmd": "out=$(NO_COLOR=1 scripts/e2e-cloud-acceptance.sh --dry-run 2>&1); ec=$?; echo \"$out\" | grep -q 'Step 9/9' && echo \"$out\" | grep -q 'E2E dry-run complete' && [ \"$ec\" -eq 0 ] && echo DRY_RUN_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "DRY_RUN_OK"
+        },
+        {
+          "name": "--dry-run with stubbed PATH invokes no real fly/flyctl/gh/curl/claude",
+          "cmd": "TMP=$(mktemp -d) && trap \"rm -rf $TMP\" EXIT; for bin in fly flyctl gh curl claude; do cat > \"$TMP/$bin\" <<'STUB'\n#!/usr/bin/env bash\necho \"REAL_$(basename \"$0\")_CALLED\" >&2\nexit 99\nSTUB\nchmod +x \"$TMP/$bin\"; done; SCRIPT=\"$(pwd)/scripts/e2e-cloud-acceptance.sh\"; out=$(HYDRA_FLY_APP=test-fixture-app NO_COLOR=1 PATH=\"$TMP:/usr/bin:/bin\" \"$SCRIPT\" --dry-run 2>&1); ec=$?; ! echo \"$out\" | grep -q 'REAL_fly_CALLED' && ! echo \"$out\" | grep -q 'REAL_flyctl_CALLED' && ! echo \"$out\" | grep -q 'REAL_gh_CALLED' && ! echo \"$out\" | grep -q 'REAL_curl_CALLED' && ! echo \"$out\" | grep -q 'REAL_claude_CALLED' && [ \"$ec\" -eq 0 ] && echo NO_SIDE_EFFECTS",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NO_SIDE_EFFECTS"
+        },
+        {
+          "name": "--dry-run does not leak fake secret values",
+          "cmd": "out=$(HYDRA_FLY_APP=test-app GITHUB_TOKEN=ghp_SECRETMARKER NO_COLOR=1 scripts/e2e-cloud-acceptance.sh --dry-run 2>&1); ! echo \"$out\" | grep -q 'SECRETMARKER' && echo NO_LEAK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NO_LEAK"
+        },
+        {
+          "name": "--dry-run cleanup trap removes the mock state dir (no lingering tmp)",
+          "cmd": "before=$(ls -d \"${TMPDIR:-/tmp}\"/hydra-e2e-mock.* 2>/dev/null | wc -l); NO_COLOR=1 scripts/e2e-cloud-acceptance.sh --dry-run >/dev/null 2>&1; after=$(ls -d \"${TMPDIR:-/tmp}\"/hydra-e2e-mock.* 2>/dev/null | wc -l); [ \"$before\" -eq \"$after\" ] && echo CLEANUP_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "CLEANUP_OK"
+        },
+        {
+          "name": "an injected step failure exits 1 and names the step (expected vs actual)",
+          "cmd": "out=$(NO_COLOR=1 HYDRA_E2E_FAIL_STEP=6 scripts/e2e-cloud-acceptance.sh --dry-run 2>&1); ec=$?; [ \"$ec\" -eq 1 ] && echo \"$out\" | grep -q 'Step 6/9' && echo \"$out\" | grep -q 'expected:' && echo \"$out\" | grep -q 'actual:' && echo FAIL_REPORTED",
+          "expected_exit": 0,
+          "expected_stdout_contains": "FAIL_REPORTED"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }

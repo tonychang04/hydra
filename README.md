@@ -5,6 +5,7 @@
 [![Version](https://img.shields.io/github/v/tag/tonychang04/hydra?label=version)](https://github.com/tonychang04/hydra/releases)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#)
 [![Built with Claude Code](https://img.shields.io/badge/built_with-Claude_Code-8a63d2.svg)](https://claude.com/claude-code)
+[![Cloud E2E](https://img.shields.io/badge/cloud_e2e-not_yet_run-lightgrey.svg)](docs/phase2-vps-runbook.md#running-the-cloud-acceptance-test)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](DEVELOPING.md)
 [![GitHub issues](https://img.shields.io/github/issues/tonychang04/hydra.svg)](https://github.com/tonychang04/hydra/issues)
 [![Last commit](https://img.shields.io/github/last-commit/tonychang04/hydra.svg)](https://github.com/tonychang04/hydra/commits/main)
