@@ -160,3 +160,101 @@ the validation-contract spec edit have valid frontmatter).
 - No table-schema change: the 6-column header shared with `validate-contract.sh`
   / `contract-path.sh` / every existing contract is untouched; the "structured
   exit field" is the pre-existing leading `exit <N>` clause, parsed strictly.
+
+## Addendum (#320): third false-MISMATCH class — free-prose Command cells
+
+### Problem (the gap #310 left open)
+
+`command_authoring_error()` recognizes only **two** authoring classes — an
+unfilled `<placeholder>` and a bare unbound `$VAR`. Both are *static* signals
+(detectable by reading the Command string before running it). A **third** class
+slips past: a Command cell that is plain **English prose** with neither a
+`<...>` token nor a `$VAR` — e.g. `stub-PATH run, assert no REAL_*_CALLED`. It
+clears both static arms, gets executed verbatim, the shell can't find its first
+word, it exits **127 (command not found)**, and the gate reports a code
+**MISMATCH** — the exact false positive #310 set out to eliminate.
+
+Freshly observed on **PR #319 (#127)**: `revalidate-contract.sh --ticket 127`
+exited 1 with 4 MISMATCHes on rows 5-8, all of which were prose-command
+authoring artifacts (the `worker-validator` independently reproduced all four
+assertions PASSING). Same false-MISMATCH family as #307/#309 — it erodes the
+truth gate's signal, a P1 concern.
+
+Prose is not statically distinguishable from valid shell in general (the
+halting-adjacent undecidability the ticket flags), so the third arm uses a
+**runtime** signal instead of trying to parse the prose.
+
+### Goal (extends Goal 2)
+
+A Command cell that is free prose (no `<...>`, no `$VAR`) whose first word is
+not a real command is surfaced as the **same distinct `AUTHORING-ERROR` /
+exit 3** status as the other two classes — never a `MISMATCH`. True-positive
+detection is preserved exactly (Goal 4 is load-bearing here).
+
+### Proposed approach — exit-127 runtime authoring arm
+
+A third detection point, **after** `run_bounded` returns, gated on a precise
+runtime signal:
+
+> When a self-contained Command (it already cleared static arms 1+2) executes
+> and exits **127**, AND its first command word does **not** resolve via
+> `command -v`, classify the row as `AUTHORING-ERROR` (exit 3), recording the
+> offending first word in `$AUTHORING_REASON` — NOT a code MISMATCH.
+
+Rationale: exit 127 is the shell's own "command not found" code, and a genuine
+code-failure assertion would not invoke a non-existent command. The
+`command -v` guard is the **load-bearing safety**: if the first word *is* a real
+command, a 127 it returns is a legitimate runtime result and the row stays a
+`MISMATCH`. A new helper `first_command_token()` extracts the word bash would
+execute — the first whitespace token after skipping any leading `NAME=value`
+environment-assignment prefixes — so an env-prefixed real command
+(`FOO=bar realcmd`) is judged on `realcmd`, not on `FOO=bar`.
+
+Detection placement matters: the arm runs in the run/verdict flow *between*
+capturing `actual_rc` and the reproduced/MISMATCH determination, so a
+command-not-found 127 takes the authoring path before it can be read as a code
+failure. A row caught here is counted as an authoring error (not a re-run), so
+the final tally stays consistent with the static arms.
+
+### Alternatives considered (#320)
+
+- **Pre-flight prose heuristic only** (flag a leading bare word followed by
+  `, ` connective prose). Rejected as the *primary* signal: it over-broadens
+  onto legitimate pipelines/one-liners and is exactly the undecidable
+  prose-vs-shell guess the ticket warns against. Exit-127-from-a-nonexistent-
+  command is a precise, runtime-grounded signal with no such ambiguity.
+- **Treat every 127 as authoring** (no `command -v` guard). Rejected: it would
+  silence a real command that legitimately exits 127, weakening true-positive
+  detection — a direct violation of the load-bearing constraint.
+
+### Test plan (#320)
+
+`scripts/test-revalidate-contract.sh` gains:
+
+- **(a)** a free-prose Command row (nonexistent first word) → `AUTHORING-ERROR`,
+  exit 3, never `MISMATCH` (reconstructs PR #319 rows 5-8 → 0 false MISMATCHes).
+- **(b)** no-regression: a **real** command (`sh`) that legitimately exits 127 →
+  STILL `MISMATCH`, exit 1 (the `command -v` guard holds).
+- **(c)** a well-formed self-contained PASS row still reproduces → exit 0.
+
+Committed fixtures `issue-320-prose-command.md` and `issue-320-real-127.md`
+under `self-test/fixtures/revalidate-contract/`. All pre-existing
+`test-revalidate-contract.sh` / `test-validate-contract.sh` cases still pass;
+`scripts/validate-state-all.sh` exits 0; the repo-wide syntax-check prints
+`syntax-check: OK`.
+
+### Risks / rollback (#320)
+
+- **Risk: a prose Command's first word collides with a real command** (e.g. the
+  prose happens to start with `grep`/`echo`), so it exits non-127 and is read as
+  a MISMATCH rather than AUTHORING-ERROR. This is the *conservative* direction —
+  it never hides a real failure; it only labels a contract defect less precisely.
+  Acceptable: the row still fails the gate loudly, prompting a contract fix.
+- **Risk: a real command's internal-function name shadows `command -v`.** The
+  guard runs `command -v` in the gate's own shell; a Command literally named like
+  one of this script's helper functions could mis-resolve. Astronomically
+  unlikely in a real contract, and the failure mode is the same conservative
+  "MISMATCH instead of AUTHORING-ERROR" direction — never a silenced failure.
+- **Rollback:** revert this addendum + the `first_command_token()` helper + the
+  exit-127 arm + the two new fixtures/test cases. The exit-3 status and consumer
+  routing (`worker-validator.md`) are unchanged; removal is clean.

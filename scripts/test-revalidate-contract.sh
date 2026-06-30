@@ -29,6 +29,9 @@
 #   - #310 (c) non-runnable Command (#307 repro) AUTHORING-ERROR      -> exit 3
 #   - #310 (d) genuine wrong exit STILL a MISMATCH (no-regression)    -> exit 1
 #   - #310 over-flagging guards (bound/env/loop var, quoted markup)   -> exit 0
+#   - #320 (a) free-prose Command (127, no real cmd) AUTHORING-ERROR   -> exit 3
+#   - #320 (b) REAL command exits 127 STILL a MISMATCH (no-regression) -> exit 1
+#   - #320 (c) well-formed self-contained row still reproduces         -> exit 0
 #
 # Style: matches scripts/test-validate-contract.sh (bash, colored output,
 # pass/fail counter, no external harness). Spec:
@@ -428,6 +431,58 @@ cat > "$tmpdir/t21b.md" <<'EOF'
 EOF
 run --file "$tmpdir/t21b.md"
 if [[ "$EC" -eq 1 ]]; then ok "MISMATCH takes precedence over authoring-error -> exit 1"; else bad "expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# =============================================================================
+# #320 — third false-MISMATCH class: free-prose Command cells. A Command that is
+# English prose (no <placeholder>, no $VAR) clears the static authoring arms,
+# runs verbatim, exits 127 (command not found), and the OLD gate called it a
+# code MISMATCH. The widened gate detects a 127 whose first word does not resolve
+# via `command -v` and reports AUTHORING-ERROR (exit 3) instead. Load-bearing:
+# a REAL command that legitimately exits 127 STILL MISMATCHes.
+# =============================================================================
+
+# ---------- Test 22 (a): free-prose Command -> AUTHORING-ERROR (exit 3), not MISMATCH ----------
+say "Test 22 (a): free-prose Command rows (exit 127, no real cmd) -> AUTHORING-ERROR, exit 3 (reconstructs PR #319 rows 5-8)"
+run --file "$FIXDIR/issue-320-prose-command.md"
+if [[ "$EC" -eq 3 ]]; then ok "prose-command rows -> exit 3 (distinct authoring code)"; else bad "expected 3, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qE "AUTHORING-ERROR row " "$tmpdir/out"; then ok "reports a distinct AUTHORING-ERROR status"; else bad "expected AUTHORING-ERROR in output; out: $(cat "$tmpdir/out")"; fi
+if grep -qE "MISMATCH row " "$tmpdir/out"; then bad "a free-prose Command was wrongly reported as MISMATCH (the #320 false positive)"; else ok "0 false MISMATCHes on the #319 reconstruction (the #320 fix)"; fi
+# 22a-inline: a single prose row with a comma-connective description still exits 3.
+cat > "$tmpdir/t22a.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | prose with a leading non-command word | `stub-the-PATH then assert no real network call` | exit 0 | PASS | (prose, not runnable) |
+EOF
+run --file "$tmpdir/t22a.md"
+if [[ "$EC" -eq 3 ]]; then ok "single prose row -> exit 3 (not a MISMATCH, not no-runs)"; else bad "expected 3, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 22 (b): NO-REGRESSION — a REAL command that exits 127 is STILL a MISMATCH ----------
+# The load-bearing guard: exit 127 is an authoring signal ONLY when the first word
+# is not a real command. `sh -c 'exit 127'` has first word `sh` (a real command)
+# that legitimately returns 127 -> must STAY a MISMATCH, never silenced.
+say "Test 22 (b): real command (sh) exiting 127 -> STILL MISMATCH (exit 1), guard holds"
+run --file "$FIXDIR/issue-320-real-127.md"
+if [[ "$EC" -eq 1 ]]; then ok "real-command 127 still caught -> exit 1"; else bad "REGRESSION: real-command 127 silenced; expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+if grep -qE "MISMATCH row " "$tmpdir/out"; then ok "reports MISMATCH for the real 127 failure"; else bad "expected MISMATCH in output; out: $(cat "$tmpdir/out")"; fi
+if grep -qE "AUTHORING-ERROR row " "$tmpdir/out"; then bad "a real command's 127 was wrongly classified AUTHORING-ERROR (guard weakened true-positive detection)"; else ok "real-command 127 NOT classified as authoring (command -v guard)"; fi
+# 22b-inline: an env-prefixed real command that exits 127 -> guard still resolves `sh`, STILL MISMATCH.
+cat > "$tmpdir/t22b.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | env-prefixed real command exits 127 | `FOO=bar sh -c 'exit 127'` | exit 0 | PASS | claimed exit 0 |
+EOF
+run --file "$tmpdir/t22b.md"
+if [[ "$EC" -eq 1 ]]; then ok "env-prefixed real command 127 still MISMATCH (first_command_token skips FOO=bar)"; else bad "REGRESSION: expected 1, got $EC; out: $(cat "$tmpdir/out")"; fi
+
+# ---------- Test 22 (c): well-formed self-contained row still reproduces -> exit 0 ----------
+say "Test 22 (c): well-formed self-contained PASS row unaffected by the #320 arm -> exit 0"
+cat > "$tmpdir/t22c.md" <<'EOF'
+| # | Assertion | Command | Expected | Verdict | Evidence |
+|---|---|---|---|---|---|
+| 1 | a self-contained command reproduces | `sh -c 'exit 0'` | exit 0 | PASS | ran it -> exit 0 |
+EOF
+run --file "$tmpdir/t22c.md"
+if [[ "$EC" -eq 0 ]]; then ok "well-formed row still -> exit 0"; else bad "expected 0, got $EC; out: $(cat "$tmpdir/out")"; fi
 
 # ---------- summary ----------
 echo ""
