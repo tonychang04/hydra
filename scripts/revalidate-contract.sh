@@ -51,6 +51,11 @@
 #     distinct status AUTHORING-ERROR, is NOT executed (running it would produce
 #     a shell error that masquerades as a code MISMATCH — the #307 false
 #     positive), and fails the gate with the distinct exit 3.
+#   - A third authoring class is detected at RUNTIME (#320): a free-prose Command
+#     cell (no `<placeholder>`, no `$VAR`, so it clears the static check) that
+#     runs and exits 127 because its FIRST word is not a real command (`command
+#     -v` fails) is the same AUTHORING-ERROR / exit 3 — never a MISMATCH. A 127
+#     from a command that DOES resolve stays a MISMATCH (true-positive preserved).
 #   - Compare actual vs claimed. The expected exit code is read ONLY from the
 #     STRUCTURED leading clause of Expected — the `exit <N>` token before the
 #     first ` / ` output separator — never scraped from free-text prose elsewhere
@@ -577,6 +582,29 @@ command_authoring_error() {
 }
 
 # -----------------------------------------------------------------------------
+# first_command_token — the command WORD bash would try to execute: the first
+# whitespace-delimited token after skipping any leading `NAME=value`
+# environment-assignment prefixes. Used by the exit-127 authoring guard (#320):
+# a free-prose Command cell (an English description with no <placeholder> and no
+# $VAR — it clears the static arms) runs verbatim, the shell cannot find its
+# first word, and it exits 127. We classify that as an AUTHORING-ERROR rather
+# than a code MISMATCH, BUT only when this first word does not resolve via
+# `command -v` — an env-prefixed REAL command (`FOO=bar realcmd`) must be judged
+# on `realcmd`, not on `FOO=bar`, so the no-regression guard is not weakened.
+# Echoes the token (possibly empty).
+# -----------------------------------------------------------------------------
+first_command_token() {
+  local s tok
+  s="$(trim "$1")"
+  # strip leading env-assignment words: VAR=val VAR2=val2 ... (value up to space)
+  while [[ "$s" =~ ^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+ ]]; do
+    s="$(trim "${s#*[[:space:]]}")"
+  done
+  tok="${s%%[[:space:]]*}"
+  printf '%s' "$tok"
+}
+
+# -----------------------------------------------------------------------------
 # walk data rows: re-run + compare
 # -----------------------------------------------------------------------------
 mismatches=0
@@ -636,6 +664,31 @@ for ((ln = data_start; ln <= ${#LINES[@]}; ln++)); do
   run_bounded "$cmd_str" "$tmp_out"
   actual_rc=$?
   set -e
+
+  # Third authoring-error class (#320): a self-contained Command (it cleared the
+  # static arms 1+2 above) that executes and exits 127 (command not found)
+  # because its FIRST command word does not exist is a FREE-PROSE Command cell —
+  # an English description typed into the Command column — NOT a code MISMATCH. A
+  # genuine code-failure assertion would not invoke a non-existent command. Guard
+  # with `command -v`: if the first word IS a real command, a 127 it returns is a
+  # legitimate runtime result and stays a MISMATCH (load-bearing — never weaken
+  # true-positive detection; exit 127 is the ONLY new authoring signal). This is
+  # checked HERE, right after the run, so a command-not-found 127 takes the
+  # authoring path before the reproduced/MISMATCH logic can read it as a code
+  # failure. A row caught here counts as an authoring error, not a re-run.
+  if [[ "$actual_rc" -eq 127 ]]; then
+    first_tok="$(first_command_token "$cmd_str")"
+    if [[ -n "$first_tok" ]] && ! command -v "$first_tok" >/dev/null 2>&1; then
+      AUTHORING_REASON="free-prose command — first word '$first_tok' is not a runnable command (exit 127 command-not-found)"
+      echo "${C_YELLOW}AUTHORING-ERROR${C_RESET} row $rownum: $(trim "$assertion")" >&2
+      echo "${C_DIM}    command : $cmd_str${C_RESET}" >&2
+      echo "${C_DIM}    $AUTHORING_REASON${C_RESET}" >&2
+      echo "${C_DIM}    -> the contract names a non-runnable command; fix the contract, not the code (NOT a MISMATCH).${C_RESET}" >&2
+      authoring_errors=$((authoring_errors + 1))
+      ran=$((ran - 1))   # caught as an authoring error, not a genuine re-run
+      continue
+    fi
+  fi
   # $tmp_out is the re-run's ACTUAL output — arbitrary bytes (UTF-8, raw binary,
   # a multibyte char truncated at the head -c 200 boundary). Prefix LC_ALL=C so
   # `tr` operates byte-wise and never throws "Illegal byte sequence" (BSD/macOS
@@ -733,7 +786,7 @@ fi
 # -----------------------------------------------------------------------------
 if [[ "$authoring_errors" -gt 0 ]]; then
   echo "${C_RED}${C_BOLD}revalidate-contract: CONTRACT-AUTHORING-ERROR${C_RESET} ($authoring_errors non-runnable command(s); $ran re-run, $skipped skipped, $warns warn) over $row_count row(s)" >&2
-  echo "${C_DIM}  A Command cell is not self-contained (unfilled <placeholder> or bare unbound \$VAR). Fix the contract; this is NOT a code MISMATCH. See docs/specs/2026-06-26-revalidate-parser-hardening.md${C_RESET}" >&2
+  echo "${C_DIM}  A Command cell is not self-contained (unfilled <placeholder>, bare unbound \$VAR, or free-prose whose first word is not a real command — exit 127). Fix the contract; this is NOT a code MISMATCH. See docs/specs/2026-06-26-revalidate-parser-hardening.md${C_RESET}" >&2
   exit 3
 fi
 
