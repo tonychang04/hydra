@@ -3579,6 +3579,53 @@
       ],
       "last_run": null,
       "last_result": null
+    },
+    {
+      "id": "apply-review-verdict-mapping",
+      "_description": "Script-only self-test for scripts/apply-review-verdict.sh (ticket #322, spec docs/specs/2026-07-01-commander-owns-review-verdict-actuation.md). Commander runs this actuator on a worker's *_VERDICT: marker to move review-gate labels (workers are classifier-blocked from PR writes). Asserts: (a) bash-syntax-clean; (b) --help exits 0 with usage; (c) the hermetic test suite (gh stubbed on PATH) passes with 0 failures; (d) --dry-run reviewed prints the add/remove plan and, under a PATH whose gh screams+exit99 if invoked, calls NO real gh (zero mutation); (e) --dry-run review-clean names BOTH commander-reviewed and commander-review-clean (the superset that fixes the shepherd loop and feeds auto_if_review_clean); (f) a bad verdict exits 2. Runs anywhere bash is present; no network, no gh auth, no docker.",
+      "kind": "script",
+      "worker_type": null,
+      "tier": "T2",
+      "steps": [
+        {
+          "name": "apply-review-verdict.sh bash -n clean",
+          "cmd": "bash -n scripts/apply-review-verdict.sh && echo SYNTAX_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SYNTAX_OK"
+        },
+        {
+          "name": "--help prints usage and exits 0",
+          "cmd": "NO_COLOR=1 bash scripts/apply-review-verdict.sh --help | grep -q 'Usage: apply-review-verdict.sh' && echo HELP_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "HELP_OK"
+        },
+        {
+          "name": "hermetic test suite passes with 0 failures",
+          "cmd": "out=$(NO_COLOR=1 bash scripts/test-apply-review-verdict.sh 2>&1); ec=$?; echo \"$out\" | grep -q '0 failed' && [ \"$ec\" -eq 0 ] && echo TESTS_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "TESTS_OK"
+        },
+        {
+          "name": "--dry-run reviewed prints the add/remove plan and mutates nothing (no real gh)",
+          "cmd": "TMP=$(mktemp -d) && trap \"rm -rf $TMP\" EXIT; cat > \"$TMP/gh\" <<'STUB'\n#!/usr/bin/env bash\necho REAL_gh_CALLED >&2\nexit 99\nSTUB\nchmod +x \"$TMP/gh\"; SCRIPT=\"$(pwd)/scripts/apply-review-verdict.sh\"; out=$(NO_COLOR=1 PATH=\"$TMP:/usr/bin:/bin\" \"$SCRIPT\" tonychang04/hydra 999 reviewed --dry-run 2>&1); ec=$?; ! echo \"$out\" | grep -q REAL_gh_CALLED && echo \"$out\" | grep -q 'add    commander-reviewed' && echo \"$out\" | grep -q 'remove commander-review' && [ \"$ec\" -eq 0 ] && echo NO_MUTATION",
+          "expected_exit": 0,
+          "expected_stdout_contains": "NO_MUTATION"
+        },
+        {
+          "name": "--dry-run review-clean names both commander-reviewed and commander-review-clean",
+          "cmd": "out=$(NO_COLOR=1 bash scripts/apply-review-verdict.sh tonychang04/hydra 999 review-clean --dry-run 2>&1); echo \"$out\" | grep -q 'add    commander-reviewed' && echo \"$out\" | grep -q 'add    commander-review-clean' && echo SUPERSET_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "SUPERSET_OK"
+        },
+        {
+          "name": "a bad verdict exits 2 (usage error)",
+          "cmd": "NO_COLOR=1 bash scripts/apply-review-verdict.sh tonychang04/hydra 999 bogus >/dev/null 2>&1; [ \"$?\" -eq 2 ] && echo USAGE_ERR_OK",
+          "expected_exit": 0,
+          "expected_stdout_contains": "USAGE_ERR_OK"
+        }
+      ],
+      "last_run": null,
+      "last_result": null
     }
   ]
 }
